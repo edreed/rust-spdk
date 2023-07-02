@@ -1,0 +1,6 @@
+{
+    "C_Cpp.default.includePath": [
+        "spdk-sys/spdk/include"
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": false
+}
