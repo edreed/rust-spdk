@@ -1,24 +1,65 @@
-use std::{ffi::c_void};
+use std::{ffi::c_void, future::Future};
+
+
 
 use spdk_sys::{
     Errno,
     spdk_get_thread,
     spdk_thread,
+    spdk_thread_get_app_thread,
     spdk_thread_send_msg,
     to_result,
 };
 
+use crate::task::{Task, ArcTask, JoinHandle};
+
 /// A lightweight, stackless thread of execution.
+#[derive(Clone, Copy, PartialEq)]
 pub struct Thread(*mut spdk_thread);
 
 impl Thread {
+    /// Tries to return the application thread object.
+    /// 
+    /// The application thread is the thread that initialized the SPDK Application
+    /// Framework.
+    /// 
+    /// # Return
+    /// 
+    /// If the Application Framework has been initialized, this function returns
+    /// `Some(t)` where `t` is the SPDK application thread object. Otherwise, this
+    /// function returns `None`.
+    pub fn try_application() -> Option<Self> {
+        unsafe {
+            let sthread = spdk_thread_get_app_thread();
+
+            if !sthread.is_null() {
+                return Some(Thread(sthread));
+            }
+
+            None
+        }
+    }
+
+    /// Returns the application thread object.
+    /// 
+    /// The application thread is the thread that initialized the SPDK Application
+    /// Framework.
+    /// 
+    /// # Panics
+    /// 
+    /// This function panics if the SPDK Application Framework has not been
+    /// initialized.
+    pub fn application() -> Self {
+        Self::try_application().expect("SDPK Application Framework has been initialized")
+    }
+
     /// Tries to return the current thread object.
     /// 
     /// # Return
     /// 
     /// If the current system thread is an SPDK thread, this function returns
     /// `Some(t)` where `t` is the current SPDK thread object. Otherwise, this
-    /// funciton returns `None`.
+    /// function returns `None`.
     pub fn try_current() -> Option<Self> {
         unsafe {
             let sthread = spdk_get_thread();
@@ -38,6 +79,15 @@ impl Thread {
     /// This function panics if the current system thread is not an SPDK thread.
     pub fn current() -> Self {
         Self::try_current().expect("must be called on spdk thread")
+    }
+
+    /// Returns whether this thread is the current thread.
+    pub fn is_current(&self) -> bool {
+        if let Some(t) = Self::try_current() {
+            return *self == t;
+        }
+
+        false
     }
 
     /// Sends a message function to be executed on this thread.
@@ -86,4 +136,18 @@ impl Thread {
             to_result!(spdk_thread_send_msg(self.0, Some(handle_msg), ctx))
         }
     }
+
+    /// Spawns a new asynchronous task to be executed on this thread and returns a
+    /// [`JoinHandle`] to await results.
+    pub fn spawn<T: Send + 'static>(&self, fut: impl Future<Output = T> + Send + 'static) -> JoinHandle<T> {
+        let (task, join_handle) = Task::with_future(self, fut);
+
+        ArcTask::schedule(&task);
+
+        join_handle
+    }
+
 }
+
+unsafe impl Send for Thread{}
+unsafe impl Sync for Thread{}

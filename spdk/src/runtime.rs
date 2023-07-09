@@ -6,8 +6,8 @@ use std::{
     cell::Cell
 };
 
-use async_task::Runnable;
 use byte_strings::c_str;
+
 use spdk_sys::{
     spdk_app_opts,
     spdk_app_opts_init,
@@ -15,7 +15,7 @@ use spdk_sys::{
     spdk_app_start
     };
 
-use crate::thread::Thread;
+use crate::{thread::Thread, task::{Task, ArcTask}};
 
 /// Builds a runtime using the Application Framework component of the
 /// [SPDK Event Framework][SPEF].
@@ -138,10 +138,10 @@ impl Runtime {
     ///     });
     /// }
     /// ```
-    pub fn block_on<F>(&self, f: F)
+    pub fn block_on<F>(&self, fut: F)
     where
-        F: Future<Output = ()> + 'static,
-        F::Output: 'static
+        F: Future<Output = ()> + Send + 'static,
+        F::Output: Send + 'static
     {
         struct StopGuard;
 
@@ -151,27 +151,26 @@ impl Runtime {
             }
         }
         
-        let future = async move {
+        unsafe extern "C" fn start(ctx: *mut c_void) {
+            let start_ctx = Box::from_raw(ctx as *mut StartCtx);
+            let start_fut = Box::into_pin(start_ctx.future);
+            let thread = Thread::current();
+            let (task, _rx) = Task::with_boxed(&thread, start_fut);
+
+            ArcTask::run(&task);
+        }
+
+        let wrapped_fut = async move {
             let _sg = StopGuard{};
 
-            f.await
+            fut.await
         };
 
-        let schedule = move |runnable: Runnable| Thread::current().send_msg(|| _ = runnable.run()).unwrap();
-        let (runnable, _task) = async_task::spawn_local(future, schedule);
-
-        struct StartMsg {
-            start: Box<dyn FnOnce()>
+        struct StartCtx {
+            future: Box<dyn Future<Output = ()> + Send + 'static>,
         }
 
-        unsafe extern "C" fn start(ctx: *mut c_void) {
-            let start_msg = Box::from_raw(ctx as *mut StartMsg);
-
-            (start_msg.start)();
-        }
-
-        let start_msg = StartMsg{ start: Box::new(move || _ = runnable.run()) };
-        let ctx = Box::into_raw(Box::new(start_msg)).cast();
+        let ctx = Box::into_raw(Box::new(StartCtx{ future: Box::new(wrapped_fut) })).cast();
 
         unsafe {
             if spdk_app_start(self.0.as_ptr(), Some(start), ctx) != 0 {
