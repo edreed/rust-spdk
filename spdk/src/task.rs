@@ -1,6 +1,6 @@
-use std::{future::Future, sync::{Mutex, Arc}, task::{Context, Poll}, pin::{Pin}};
+use std::{future::Future, sync::{Mutex, Arc}, task::{Context, Poll}, pin::Pin};
 
-use futures::{channel::oneshot, future::{BoxFuture}, task::{ArcWake, waker_ref}, FutureExt};
+use futures::{channel::oneshot, future::BoxFuture, task::{ArcWake, waker_ref}, FutureExt};
 
 use crate::thread::Thread;
 

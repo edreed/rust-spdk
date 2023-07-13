@@ -1,7 +1,7 @@
 use std::{
     ffi::{CStr, c_void},
     mem::{size_of, MaybeUninit},
-    ptr::{addr_of_mut},
+    ptr::addr_of_mut,
     future::Future,
     cell::Cell
 };
