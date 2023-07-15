@@ -6,4 +6,5 @@
 pub mod errors;
 pub mod runtime;
 pub mod task;
+pub mod time;
 pub mod thread;

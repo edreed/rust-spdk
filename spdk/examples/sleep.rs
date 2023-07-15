@@ -1,6 +1,6 @@
-use std::io::{self, Write};
+use std::{time::Duration, io::{self, Write}};
 
-use spdk::{runtime, task};
+use spdk::{runtime, time};
 
 fn main() {
     let rt = runtime::Runtime::new();
@@ -8,7 +8,7 @@ fn main() {
     rt.block_on(async {
         print!("Hello, ");
         io::stdout().flush().unwrap();
-        task::yield_now().await;
+        time::sleep(Duration::from_secs(1)).await;
         println!("World!");
     });
 }
