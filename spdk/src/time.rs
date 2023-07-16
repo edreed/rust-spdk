@@ -1,8 +1,8 @@
 use std::{
+    cell::UnsafeCell,
     option::Option,
     os::raw::c_void,
     ptr::null_mut,
-    rc::Rc,
     task::{Context, Poll, Waker},
     time::{Instant, Duration},
 };
@@ -28,7 +28,7 @@ struct IntervalState {
 /// with a fixed period.
 pub struct Interval {
     poller: *mut spdk_poller,
-    state: Rc<IntervalState>
+    state: Box<UnsafeCell<IntervalState>>
 }
 
 impl Interval {
@@ -41,7 +41,7 @@ impl Interval {
 
     /// Polls for the next instant in the interval to be reached.
     fn poll_tick(&mut self, ctx: &mut Context<'_>) -> Poll<Instant> {
-        let mut inner = Rc::get_mut(&mut self.state).unwrap();
+        let mut inner = self.state.get_mut();
 
         if inner.ticker == 0 {
             inner.waker = Some(ctx.waker().clone());
@@ -89,15 +89,15 @@ pub fn interval(period: Duration) -> Interval {
     let period_us = period.as_micros().try_into().unwrap();
     let mut interval = Interval {
         poller: null_mut(),
-        state: Rc::new(IntervalState {
+        state: Box::new(UnsafeCell::new(IntervalState {
             ticker: 0,
             waker: None,
-        }),
+        })),
     };
     let poller = unsafe {
         spdk_poller_register(
             Some(poll),
-            Rc::as_ptr(&interval.state) as *mut c_void,
+            interval.state.get() as *mut c_void,
             period_us
         )
     };
