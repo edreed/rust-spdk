@@ -1,2 +1,2 @@
 [workspace]
-members = ["spdk", "spdk-sys"]
+members = ["spdk", "spdk-macros", "spdk-sys"]

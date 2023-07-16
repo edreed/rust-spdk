@@ -8,3 +8,5 @@ pub mod runtime;
 pub mod task;
 pub mod time;
 pub mod thread;
+
+pub use spdk_macros::main;
