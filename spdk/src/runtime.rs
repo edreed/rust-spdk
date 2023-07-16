@@ -7,8 +7,6 @@ use std::{
     ptr::{addr_of_mut, null},
 };
 
-use byte_strings::c_str;
-
 use spdk_sys::{
     spdk_app_opts,
     spdk_app_parse_args_rvals,
@@ -37,6 +35,16 @@ pub struct Builder(spdk_app_opts);
 static ARGV_CSTRING: Vec<CString> = env::args()
     .map(|a| CString::new(a).unwrap())
     .collect();
+
+#[dynamic]
+static APP_NAME: CString = CString::new(
+    env::current_exe()
+        .unwrap()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
+    ).unwrap();
 
 impl Builder {
     /// Returns a new builder with default values.
@@ -142,17 +150,15 @@ pub fn default() -> Builder {
 /// [SPEF]: https://spdk.io/doc/event.html
 pub struct Runtime(Cell<spdk_app_opts>);
 
-const NAME: &CStr = c_str!("spdk_app");
-
 impl Runtime {
     /// Returns a new default runtime.
     pub fn new() -> Self {
-        Builder::new().with_name(NAME).build()
+        Builder::new().with_name(APP_NAME.as_c_str()).build()
     }
 
     /// Returns a new runtime initialized from the command line.
     pub fn from_cmdline()  -> Result<Self, spdk_app_parse_args_rvals> {
-        Ok(Builder::from_cmdline()?.with_name(NAME).build())
+        Ok(Builder::from_cmdline()?.with_name(APP_NAME.as_c_str()).build())
     }
 
     /// Runs a future to completion on the SPDK Application Framework.
