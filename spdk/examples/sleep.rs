@@ -3,7 +3,7 @@ use std::{time::Duration, io::{self, Write}};
 use spdk::{runtime, time};
 
 fn main() {
-    let rt = runtime::Runtime::new();
+    let rt = runtime::Runtime::from_cmdline().unwrap();
 
     rt.block_on(async {
         print!("Hello, ");

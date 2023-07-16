@@ -1,19 +1,24 @@
 use std::{
-    ffi::{CStr, c_void},
-    mem::{size_of, MaybeUninit},
-    ptr::addr_of_mut,
+    cell::Cell, env,
+    ffi::{CStr, c_void, CString},
     future::Future,
-    cell::Cell
+    mem::{size_of, MaybeUninit},
+    os::raw::{c_char, c_int},
+    ptr::{addr_of_mut, null},
 };
 
 use byte_strings::c_str;
 
 use spdk_sys::{
     spdk_app_opts,
+    spdk_app_parse_args_rvals,
     spdk_app_opts_init,
+    spdk_app_parse_args,
     spdk_app_stop,
-    spdk_app_start
+    spdk_app_start,
+    SPDK_APP_PARSE_ARGS_SUCCESS,
     };
+use static_init::dynamic;
 
 use crate::{thread::Thread, task::{Task, ArcTask}};
 
@@ -21,17 +26,47 @@ use crate::{thread::Thread, task::{Task, ArcTask}};
 /// [SPDK Event Framework][SPEF].
 /// 
 /// `Builder` implements a fluent-style interface enabling custom configuration
-/// through chanining function calls. The `Runtime` object is constructed by
+/// through chaining function calls. The `Runtime` object is constructed by
 /// calling the [`build`] method.
 ///
 /// [SPEF]: https://spdk.io/doc/event.html
 /// [`build`]: method@Self::build
 pub struct Builder(spdk_app_opts);
 
+#[dynamic]
+static ARGV_CSTRING: Vec<CString> = env::args()
+    .map(|a| CString::new(a).unwrap())
+    .collect();
+
 impl Builder {
     /// Returns a new builder with default values.
     pub fn new() -> Self {
         default()
+    }
+
+    /// Returns a new builder with values initialized from the command line.
+    pub fn from_cmdline() -> Result<Self, spdk_app_parse_args_rvals> {
+        let argv: Vec<*const c_char> = ARGV_CSTRING.iter()
+            .map(|a| a.as_ptr())
+            .collect();
+        let mut builder = default();
+
+        unsafe {
+            let rc = spdk_app_parse_args(
+                argv.len() as c_int,
+                argv.as_ptr() as *mut *mut c_char,
+                addr_of_mut!(builder.0),
+                null(),
+                null(),
+                None,
+                None);
+
+            if rc != SPDK_APP_PARSE_ARGS_SUCCESS {
+                return Err(rc.into())
+            }
+        }
+
+        Ok(builder)
     }
 
     /// Sets the runtime name.
@@ -93,7 +128,7 @@ impl Builder {
 
 /// Returns a new builder with default values.
 pub fn default() -> Builder {
-    let mut opts = MaybeUninit::<Builder>::uninit();
+    let mut opts: MaybeUninit<Builder> = MaybeUninit::<Builder>::uninit();
 
     unsafe {
         spdk_app_opts_init(addr_of_mut!((*opts.as_mut_ptr()).0), size_of::<spdk_app_opts>());
@@ -113,6 +148,11 @@ impl Runtime {
     /// Returns a new default runtime.
     pub fn new() -> Self {
         Builder::new().with_name(NAME).build()
+    }
+
+    /// Returns a new runtime initialized from the command line.
+    pub fn from_cmdline()  -> Result<Self, spdk_app_parse_args_rvals> {
+        Ok(Builder::from_cmdline()?.with_name(NAME).build())
     }
 
     /// Runs a future to completion on the SPDK Application Framework.
@@ -155,7 +195,7 @@ impl Runtime {
             let start_ctx = Box::from_raw(ctx as *mut StartCtx);
             let start_fut = Box::into_pin(start_ctx.future);
             let thread = Thread::current();
-            let (task, _rx) = Task::with_boxed(&thread, start_fut);
+            let (task, _) = Task::with_boxed(&thread, start_fut);
 
             ArcTask::run(&task);
         }
@@ -170,7 +210,9 @@ impl Runtime {
             future: Box<dyn Future<Output = ()> + Send + 'static>,
         }
 
-        let ctx = Box::into_raw(Box::new(StartCtx{ future: Box::new(wrapped_fut) })).cast();
+        let ctx = Box::into_raw(Box::new(StartCtx {
+            future: Box::new(wrapped_fut)
+        })).cast();
 
         unsafe {
             if spdk_app_start(self.0.as_ptr(), Some(start), ctx) != 0 {
