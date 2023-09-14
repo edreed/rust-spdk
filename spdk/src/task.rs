@@ -1,3 +1,7 @@
+//! Asynchronous task management for Storage Performance Development Kit [Event
+//! Framework][SPEF].
+//! 
+//! [SPEF]: https://spdk.io/doc/event.html
 use std::{future::Future, sync::{Mutex, Arc}, task::{Context, Poll}, pin::Pin};
 
 use futures::{channel::oneshot, future::BoxFuture, task::{ArcWake, waker_ref}, FutureExt};

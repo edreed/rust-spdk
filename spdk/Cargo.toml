@@ -3,7 +3,9 @@ name = "spdk"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 errno = "0.3.1"
@@ -12,3 +14,15 @@ libc = "0.2.146"
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
 spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
 static_init = "1.0.3"
+
+[dev-dependencies]
+byte-strings= "0.3.1"
+
+[features]
+default = []
+bdev=[]
+bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
+
+[[example]]
+name = "bdev_hello_world"
+required-features = ["bdev-malloc"]

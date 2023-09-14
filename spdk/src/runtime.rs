@@ -1,3 +1,6 @@
+//! Support for Storage Performance Development Kit [Event Framework][SPEF].
+//! 
+//! [SPEF]: https://spdk.io/doc/event.html
 use std::{
     cell::Cell, env,
     ffi::{CStr, c_void, CString},

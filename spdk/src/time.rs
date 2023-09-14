@@ -1,3 +1,6 @@
+//! Utilities for tracking time in the Storage Performance Development Kit [Event Framework][SPEF].
+//! 
+//! [SPEF]: https://spdk.io/doc/event.html
 use std::{
     cell::UnsafeCell,
     option::Option,
@@ -41,7 +44,7 @@ impl Interval {
 
     /// Polls for the next instant in the interval to be reached.
     fn poll_tick(&mut self, ctx: &mut Context<'_>) -> Poll<Instant> {
-        let mut inner = self.state.get_mut();
+        let inner = self.state.get_mut();
 
         if inner.ticker == 0 {
             inner.waker = Some(ctx.waker().clone());
@@ -74,13 +77,13 @@ unsafe impl Sync for Interval {}
 /// TODO: Document drift behavior.
 pub fn interval(period: Duration) -> Interval {
     unsafe extern "C" fn poll(ctx: *mut c_void) -> i32 {
-        let mut inner = &mut *(ctx as *mut IntervalState);
+        let inner = &mut *(ctx as *mut IntervalState);
 
         inner.ticker += 1;
         
         if let Some(waker) = inner.waker.take() {
             waker.wake();
-            return SPDK_POLLER_BUSY.try_into().unwrap()
+            return SPDK_POLLER_BUSY.try_into().unwrap();
         }
 
         SPDK_POLLER_IDLE.try_into().unwrap()
