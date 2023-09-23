@@ -1,6 +1,5 @@
+//! Support for Storage Performance Development Kit threads.
 use std::{ffi::c_void, future::Future};
-
-
 
 use spdk_sys::{
     Errno,

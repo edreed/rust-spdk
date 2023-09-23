@@ -15,3 +15,7 @@ pkg-config = "0.3.27"
 
 [dependencies]
 errno = "0.3.1"
+
+[features]
+default = []
+bdev-malloc = []
