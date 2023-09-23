@@ -2,41 +2,32 @@
 //! Framework][SPEF].
 //! 
 //! [SPEF]: https://spdk.io/doc/event.html
-use std::{future::Future, sync::{Mutex, Arc}, task::{Context, Poll}, pin::Pin};
+use std::{
+    future::Future,
+    sync::{
+        Arc,
+        Mutex,
+    },
+    task::{
+        Context,
+        Poll,
+    }
+};
 
-use futures::{channel::oneshot, future::BoxFuture, task::{ArcWake, waker_ref}, FutureExt};
+use futures::{
+    channel::oneshot,
+    future::BoxFuture,
+    FutureExt,
+    task::{
+        ArcWake,
+
+        waker_ref
+    },
+};
 
 use crate::thread::Thread;
 
-/// A handle that awaits the result of a task.
-/// 
-/// Dropping a [`JoinHandle`] will detach the task leaving no way to join on
-/// it or obtain its result.
-/// 
-/// A [`JoinHandle`] is created when task is spawned.
-pub struct JoinHandle<T> {
-    rx: oneshot::Receiver<T>,
-}
-
-impl <T> JoinHandle<T> {
-    fn rx_pin_mut(self: Pin<&mut Self>) -> Pin<&mut oneshot::Receiver<T>> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.rx) }
-    }
-}
-
-impl <T> Future for JoinHandle<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let pinned_rx = self.rx_pin_mut();
-
-        match pinned_rx.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(r)) => Poll::Ready(r),
-            Poll::Ready(Err(_)) => panic!("sender dropped"),
-        }
-    }
-}
+use super::JoinHandle;
 
 /// A way of scheduling and executing a [`Task`] on a [`Thread`].
 pub(crate) trait ArcTask: Send + Sync {
@@ -49,7 +40,7 @@ pub(crate) trait ArcTask: Send + Sync {
     /// 
     /// This method returns `true` if the task was run synchronously. If it
     /// returns `false`, the task could not be executed synchronously and
-    /// should scheduled to run later.
+    /// should be scheduled to run later.
     /// 
     /// # Panics
     /// 
@@ -105,7 +96,7 @@ impl <T: Send + 'static> Task<T> {
             })
         });
 
-        (task, JoinHandle{ rx })
+        (task, JoinHandle::new(rx))
     }
 }
 
@@ -158,29 +149,4 @@ impl <T: Send + 'static> ArcWake for Task<T> {
     fn wake_by_ref(arc_self: &Arc<Self>) {
         ArcTask::schedule(arc_self);
     }
-}
-
-/// Yield execution back to the SPDK Event Framework.
-pub async fn yield_now() {
-    struct YieldNow {
-        yielded: bool,
-    }
-
-    impl Future for YieldNow {
-        type Output = ();
-
-        fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-            if self.yielded {
-                return Poll::Ready(());
-            }
-
-            self.yielded = true;
-
-            ctx.waker().wake_by_ref();
-
-            Poll::Pending
-        }
-    }
-
-    YieldNow{ yielded: false }.await
 }
