@@ -1,6 +1,6 @@
 use std::{time::Duration, io::{self, Write}};
 
-use spdk::{runtime, time};
+use spdk::time;
 
 #[spdk::main]
 async fn main() {

@@ -10,7 +10,6 @@ use byte_strings::c_str;
 use spdk::{
     bdev::malloc,
     dma,
-    runtime,
 };
 
 const BDEV_NAME: &CStr = c_str!("Malloc0");

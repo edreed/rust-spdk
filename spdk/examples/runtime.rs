@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use spdk::{runtime, task};
+use spdk::task;
 
 #[spdk::main]
 async fn main() {

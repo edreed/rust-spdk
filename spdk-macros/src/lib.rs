@@ -33,7 +33,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let block = fun.block;
     let expanded = quote!{
         fn main() {
-            let rt = runtime::Runtime::from_cmdline().unwrap();
+            let rt = spdk::runtime::Runtime::from_cmdline().unwrap();
 
             rt.block_on(async #block);
         }
