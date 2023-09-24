@@ -177,7 +177,6 @@ impl Future for DeleteMalloc {
 pub struct Malloc(*mut spdk_bdev);
 
 unsafe impl Send for Malloc {}
-unsafe impl Sync for Malloc {}
 
 impl Malloc {
     /// Returns the name of the device.

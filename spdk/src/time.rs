@@ -64,7 +64,6 @@ impl Drop for Interval {
 }
 
 unsafe impl Send for Interval {}
-unsafe impl Sync for Interval {}
 
 /// Creates a new [`Interval`] that yields with an interval of `period`.
 /// 

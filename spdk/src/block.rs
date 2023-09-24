@@ -4,6 +4,7 @@ use std::{
         Layout,
         LayoutError,
     },
+    cell::RefCell,
     ffi::CStr,
     future::Future,
     os::raw::c_void,
@@ -14,6 +15,7 @@ use std::{
         
         null_mut,
     },
+    rc::Rc,
     sync::{
         Arc,
         Mutex,
@@ -80,7 +82,6 @@ use crate::{
 pub struct Device(*mut spdk_bdev);
 
 unsafe impl Send for Device {}
-unsafe impl Sync for Device {}
 
 impl Device {
     /// Get a [`Device`] by its name.
@@ -259,7 +260,7 @@ impl IoInner<'_> {
 
 /// Represents the state of a block device I/O operation.
 struct Io<'a> {
-    inner: Arc<Mutex<IoInner<'a>>>,
+    inner: Rc<RefCell<IoInner<'a>>>,
 }
 
 unsafe impl Send for Io<'_> {}
@@ -267,7 +268,7 @@ unsafe impl Send for Io<'_> {}
 impl <'a> Io<'a> {
     /// Returns a new [`Io`] instance.
     fn new(channel: &'a IoChannel<'a>, op: IoOperation<'a>) -> Self {
-        let inner = Arc::new(Mutex::new(IoInner::<'a> {
+        let inner = Rc::new(RefCell::new(IoInner::<'a> {
             op,
             channel,
             result: None,
@@ -283,8 +284,8 @@ impl <'a> Io<'a> {
             }
         }));
 
-        inner.lock().unwrap().wait.cb_arg =
-            Arc::as_ptr(&inner).cast_mut() as *mut c_void;
+        inner.borrow_mut().wait.cb_arg =
+            Rc::as_ptr(&inner).cast_mut() as *mut c_void;
 
         Io { inner }
     }
@@ -347,7 +348,7 @@ impl <'a> Io<'a> {
     /// If the operation cannot be started for any other reason, this function
     /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
     fn poll_io(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.borrow_mut();
 
         if let Some(r) = inner.result.take() {
             return Poll::Ready(r);
@@ -355,7 +356,7 @@ impl <'a> Io<'a> {
 
         inner.waker = Some(cx.waker().clone());
 
-        let inner_raw = Arc::as_ptr(&self.inner).cast_mut();
+        let inner_raw = Rc::as_ptr(&self.inner).cast_mut();
 
         unsafe { Arc::increment_strong_count(inner_raw); }
 
@@ -507,11 +508,11 @@ impl <'a> Future for Io<'a> {
                     Err(e) if e != ENOMEM => Poll::Ready(Err(e)),
                     _ => {
                         unsafe {
-                            let inner_raw = Arc::as_ptr(&self.inner).cast_mut();
+                            let inner_raw = Rc::as_ptr(&self.inner).cast_mut();
 
                             Arc::increment_strong_count(inner_raw);
 
-                            let mut inner = self.inner.lock().unwrap();
+                            let mut inner = self.inner.borrow_mut();
 
                             to_result!(spdk_bdev_queue_io_wait(
                                 inner.channel.descriptor().device().as_ptr(),
@@ -534,7 +535,6 @@ pub struct IoChannel<'a> {
 }
 
 unsafe impl Send for IoChannel<'_> {}
-unsafe impl Sync for IoChannel<'_> {}
 
 impl IoChannel<'_> {
     /// Returns the [`Descriptor`] associated with this [`IoChannel`].
