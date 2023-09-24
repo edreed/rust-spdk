@@ -25,8 +25,18 @@ use super::JoinHandle;
 
 /// A way of scheduling and executing a [`LocalTask`] on the current [`Thread`].
 pub(crate) trait RcTask: Send {
-    /// Schedules a task on for execution on the current thread.
-    fn schedule(rc_self: &Rc<Self>);
+    /// Schedules a task for execution on its target thread, consuming the task
+    /// in the process.
+    fn schedule(rc_self: Rc<Self>);
+
+    /// Schedules a task for execution on the current thread without consuming
+    /// the task.
+    /// 
+    /// # Panics
+    /// 
+    /// This method panics if this task's target thread is not the current
+    /// thread.
+    fn schedule_by_ref(rc_self: &Rc<Self>);
 
     /// Executes a task on the current thread.
     /// 
@@ -43,45 +53,55 @@ pub(crate) trait RcTask: Send {
 }
 
 /// Encapsulates the execution state of a [`Future`].
-pub(crate) struct LocalTaskState<T: 'static> {
+pub(crate) struct TaskState<T: 'static> {
     future: Option<Pin<Box<dyn Future<Output = T> + 'static>>>,
     result_sender: Option<oneshot::Sender<T>>
 }
 
 /// Orchestrates the execution of a [`Future`].
-pub(crate) struct LocalTask<T: 'static> {
-    state: RefCell<LocalTaskState<T>>,
+pub(crate) struct Task<T: 'static> {
+    target_thread: Option<Thread>,
+    state: RefCell<TaskState<T>>,
 }
 
-unsafe impl <T: 'static> Send for LocalTask<T> {}
+unsafe impl <T: 'static> Send for Task<T> {}
 
-impl <T: 'static> LocalTask<T> {
+impl <T: 'static> Task<T> {
     /// Constructs a new task from a [`Future`].
+    /// 
+    /// If `target_thread` is `None`, the task will be scheduled to run on the
+    /// application thread.
     /// 
     /// # Return
     /// 
     /// This function returns both a newly constructed [`LocalTask`] and a
-    /// [`JoinHandle`] that can be used to await the result of
-    /// executing the [`Future`].
+    /// [`JoinHandle`] that can be used to await the result of executing the
+    /// [`Future`].
     pub(crate) fn with_future(
+        target_thread: Option<Thread>,
         fut: impl Future<Output = T> + 'static
-    ) -> (Rc<LocalTask<T>>, JoinHandle<T>) {
-        Self::with_boxed(Box::pin(fut))
+    ) -> (Rc<Task<T>>, JoinHandle<T>) {
+        Self::with_boxed(target_thread, Box::pin(fut))
     }
 
     /// Constructs a new task from a [`BoxFuture`].
     /// 
+    /// If `target_thread` is `None`, the task will be scheduled to run on the
+    /// application thread.
+    /// 
     /// # Return
     /// 
     /// This function returns both a newly constructed [`Task`] and a
-    /// [`JoinHandle`] that can be used to await the result of
-    /// executing the [`Future`].
+    /// [`JoinHandle`] that can be used to await the result of executing the
+    /// [`Future`].
     pub(crate) fn with_boxed(
+        target_thread: Option<Thread>,
         boxed_fut: Pin<Box<dyn Future<Output = T> + 'static>>
-    ) -> (Rc<LocalTask<T>>, JoinHandle<T>) {
+    ) -> (Rc<Task<T>>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
-        let task = Rc::new(LocalTask{
-            state: RefCell::new(LocalTaskState {
+        let task = Rc::new(Task{
+            target_thread: target_thread,
+            state: RefCell::new(TaskState {
                 future: Some(boxed_fut),
                 result_sender: Some(sx)
             })
@@ -112,7 +132,7 @@ impl <T: 'static> LocalTask<T> {
     unsafe fn waker_wake(data: *const ()) {
         let rc_task = Rc::<Self>::from_raw(data.cast());
 
-        RcTask::schedule(&rc_task);
+        RcTask::schedule(rc_task);
     }
 
     /// Wakes the [`LocalTask`] referenced by the given [`RawWaker`] without
@@ -125,7 +145,7 @@ impl <T: 'static> LocalTask<T> {
     unsafe fn waker_wake_by_ref(data: *const ()) {
         let rc_task = ManuallyDrop::new(Rc::<Self>::from_raw(data.cast()));
 
-        RcTask::schedule(&rc_task);
+        RcTask::schedule_by_ref(&rc_task);
     }
 
     /// Drops the given [`RawWaker`] releasing its resources.
@@ -160,18 +180,37 @@ impl <T: 'static> LocalTask<T> {
     }
 }
 
-impl <T: 'static> RcTask for LocalTask<T> {
-    fn schedule(rc_self: &Rc<Self>) {
-        let t = Thread::current();
+impl <T: 'static> RcTask for Task<T> {
+    fn schedule(rc_self: Rc<Self>) {
+        let target_thread = rc_self.target_thread.unwrap_or_else(|| Thread::application());
 
+        // If the current thread is the target of this task, attempt to run it
+        // synchronously.
+        if let Some(t) = Thread::try_current() {
+            if t == target_thread {
+                if Self::run(&rc_self) {
+                    return;
+                }
+            }
+        }
+
+        // The task could not be run synchronously, so enqueue it to run on the
+        // this thread at a later time.
+        target_thread.send_msg(move || assert!(RcTask::run(&rc_self))).unwrap();
+    }
+
+    fn schedule_by_ref(rc_self: &Rc<Self>) {
+        let target_thread = rc_self.target_thread.unwrap_or_else(|| Thread::application());
+
+        assert!(target_thread.is_current());
+
+        // First, attempt to run the task synchronously.
         if !Self::run(rc_self) {
             // The task could not be run synchronously, so enqueue it to run on the
             // this thread at a later time.
             let cloned_task = rc_self.clone();
 
-            t.send_msg(move || {
-                RcTask::run(&cloned_task);
-            }).unwrap();
+            target_thread.send_msg(move || assert!(RcTask::run(&cloned_task))).unwrap();
         }
     }
 

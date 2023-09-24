@@ -18,7 +18,11 @@ use std::{
         c_char,
         c_int,
     },
-    ptr::{addr_of_mut, null}, rc::Rc,
+    ptr::{
+        addr_of_mut,
+        null,
+    },
+    rc::Rc,
 };
 
 use spdk_sys::{
@@ -35,7 +39,7 @@ use spdk_sys::{
 use static_init::dynamic;
 
 use crate::task::{
-    LocalTask,
+    Task,
     RcTask,
 };
 
@@ -217,7 +221,7 @@ impl Runtime {
         }
         
         unsafe extern "C" fn start(ctx: *mut c_void) {
-            let task = Rc::from_raw(ctx.cast::<LocalTask<()>>());
+            let task = Rc::from_raw(ctx.cast::<Task<()>>());
 
             RcTask::run(&task);
         }
@@ -228,7 +232,7 @@ impl Runtime {
             fut.await
         };
 
-        let (task, _) = LocalTask::with_future(wrapped_fut);
+        let (task, _) = Task::with_future(None, wrapped_fut);
         let ctx = Rc::into_raw(task).cast_mut();
 
         unsafe {

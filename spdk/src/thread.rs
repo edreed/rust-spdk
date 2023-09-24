@@ -3,14 +3,20 @@ use std::{ffi::c_void, future::Future};
 
 use spdk_sys::{
     Errno,
-    spdk_get_thread,
     spdk_thread,
+    
+    to_result,
+
+    spdk_get_thread,
     spdk_thread_get_app_thread,
     spdk_thread_send_msg,
-    to_result,
 };
 
-use crate::task::{Task, ArcTask, JoinHandle};
+use crate::task::{
+    JoinHandle,
+    Task,
+    RcTask,
+};
 
 /// A lightweight, stackless thread of execution.
 #[derive(Clone, Copy, PartialEq)]
@@ -138,10 +144,13 @@ impl Thread {
 
     /// Spawns a new asynchronous task to be executed on this thread and returns a
     /// [`JoinHandle`] to await results.
-    pub fn spawn<T: Send + 'static>(&self, fut: impl Future<Output = T> + Send + 'static) -> JoinHandle<T> {
-        let (task, join_handle) = Task::with_future(self, fut);
+    pub fn spawn<T>(&self, fut: impl Future<Output = T> + Send + 'static) -> JoinHandle<T>
+    where
+        T: Send + 'static
+    {
+        let (task, join_handle) = Task::with_future(Some(self.clone()), fut);
 
-        ArcTask::schedule(&task);
+        RcTask::schedule(task);
 
         join_handle
     }
