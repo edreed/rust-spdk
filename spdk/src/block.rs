@@ -4,6 +4,7 @@ use std::{
         Layout,
         LayoutError,
     },
+    cell::RefCell,
     ffi::CStr,
     future::Future,
     os::raw::c_void,
@@ -14,10 +15,7 @@ use std::{
         
         null_mut,
     },
-    sync::{
-        Arc,
-        Mutex,
-    },
+    rc::Rc,
     task::{
         Context,
         Poll,
@@ -80,7 +78,6 @@ use crate::{
 pub struct Device(*mut spdk_bdev);
 
 unsafe impl Send for Device {}
-unsafe impl Sync for Device {}
 
 impl Device {
     /// Get a [`Device`] by its name.
@@ -259,7 +256,7 @@ impl IoInner<'_> {
 
 /// Represents the state of a block device I/O operation.
 struct Io<'a> {
-    inner: Arc<Mutex<IoInner<'a>>>,
+    inner: Rc<RefCell<IoInner<'a>>>,
 }
 
 unsafe impl Send for Io<'_> {}
@@ -267,7 +264,7 @@ unsafe impl Send for Io<'_> {}
 impl <'a> Io<'a> {
     /// Returns a new [`Io`] instance.
     fn new(channel: &'a IoChannel<'a>, op: IoOperation<'a>) -> Self {
-        let inner = Arc::new(Mutex::new(IoInner::<'a> {
+        let inner = Rc::new(RefCell::new(IoInner::<'a> {
             op,
             channel,
             result: None,
@@ -283,8 +280,8 @@ impl <'a> Io<'a> {
             }
         }));
 
-        inner.lock().unwrap().wait.cb_arg =
-            Arc::as_ptr(&inner).cast_mut() as *mut c_void;
+        inner.borrow_mut().wait.cb_arg =
+            Rc::as_ptr(&inner).cast_mut() as *mut c_void;
 
         Io { inner }
     }
@@ -295,17 +292,17 @@ impl <'a> Io<'a> {
         success: bool,
         ctx: *mut c_void
     ) {
-        let inner = Arc::from_raw(ctx as *mut Mutex<IoInner<'_>>);
+        let inner = Rc::from_raw(ctx as *mut RefCell<IoInner<'_>>);
 
         unsafe { spdk_bdev_free_io(bdev_io) };
 
-        let waker = match inner.try_lock() {
+        let waker = match inner.try_borrow_mut() {
             Ok(mut inner) => inner.set_result(success),
             Err(_) => {
                 let inner = inner.clone();
 
                 Thread::current().send_msg(move || {
-                    let waker = inner.lock().unwrap().set_result(success);
+                    let waker = inner.borrow_mut().set_result(success);
 
                     if let Some(w) = waker {
                         w.wake();
@@ -323,8 +320,8 @@ impl <'a> Io<'a> {
     /// A callback invoked when a queued block device I/O operation can be started.
     unsafe extern "C" fn retry(ctx: *mut c_void) {
         let wait = ctx as *mut spdk_bdev_io_wait_entry;
-        let inner = Arc::from_raw((*wait).cb_arg as *mut Mutex<IoInner<'_>>);
-        let waker = inner.lock().unwrap().waker.take();
+        let inner = Rc::from_raw((*wait).cb_arg as *mut RefCell<IoInner<'_>>);
+        let waker = inner.borrow_mut().waker.take();
 
         if let Some(w) = waker {
             w.wake();
@@ -347,7 +344,7 @@ impl <'a> Io<'a> {
     /// If the operation cannot be started for any other reason, this function
     /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
     fn poll_io(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.borrow_mut();
 
         if let Some(r) = inner.result.take() {
             return Poll::Ready(r);
@@ -355,9 +352,9 @@ impl <'a> Io<'a> {
 
         inner.waker = Some(cx.waker().clone());
 
-        let inner_raw = Arc::as_ptr(&self.inner).cast_mut();
+        let inner_raw = Rc::as_ptr(&self.inner).cast_mut();
 
-        unsafe { Arc::increment_strong_count(inner_raw); }
+        unsafe { Rc::increment_strong_count(inner_raw); }
 
         let descriptor = inner.channel.descriptor().as_ptr();
         let channel = inner.channel.as_ptr();
@@ -442,7 +439,7 @@ impl <'a> Io<'a> {
         };
 
         if let Err(e) = res {
-            unsafe { Arc::decrement_strong_count(inner_raw); }
+            unsafe { Rc::decrement_strong_count(inner_raw); }
 
             return Poll::Ready(Err(e));
         }
@@ -507,11 +504,11 @@ impl <'a> Future for Io<'a> {
                     Err(e) if e != ENOMEM => Poll::Ready(Err(e)),
                     _ => {
                         unsafe {
-                            let inner_raw = Arc::as_ptr(&self.inner).cast_mut();
+                            let inner_raw = Rc::as_ptr(&self.inner).cast_mut();
 
-                            Arc::increment_strong_count(inner_raw);
+                            Rc::increment_strong_count(inner_raw);
 
-                            let mut inner = self.inner.lock().unwrap();
+                            let mut inner = self.inner.borrow_mut();
 
                             to_result!(spdk_bdev_queue_io_wait(
                                 inner.channel.descriptor().device().as_ptr(),
@@ -534,7 +531,6 @@ pub struct IoChannel<'a> {
 }
 
 unsafe impl Send for IoChannel<'_> {}
-unsafe impl Sync for IoChannel<'_> {}
 
 impl IoChannel<'_> {
     /// Returns the [`Descriptor`] associated with this [`IoChannel`].

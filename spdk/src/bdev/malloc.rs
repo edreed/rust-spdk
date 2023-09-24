@@ -1,6 +1,7 @@
 //! Support for the Storage Performance Development Kit Malloc Block Device
 //! plug-in.
 use std::{
+    cell::RefCell,
     default::Default,
     ffi::CStr,
     future::Future,
@@ -11,10 +12,7 @@ use std::{
     },
     pin::Pin,
     ptr::null_mut,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    rc::Rc,
     task::{
         Context,
         Poll, Waker,
@@ -118,7 +116,7 @@ impl DeleteMallocState {
 
 /// Represents an asynchronous [`Malloc`] delete operation.
 struct DeleteMalloc {
-    inner: Arc<Mutex<DeleteMallocState>>
+    inner: Rc<RefCell<DeleteMallocState>>
 }
 
 unsafe impl Send for DeleteMalloc {}
@@ -126,14 +124,14 @@ unsafe impl Send for DeleteMalloc {}
 impl DeleteMalloc {
     /// A callback invoked with the result of the asynchronous delete operation.
     unsafe extern "C" fn complete(arg: *mut c_void, status: i32) {
-        let inner = Arc::from_raw(arg as *mut Mutex<DeleteMallocState>);
-        let waker = match inner.try_lock() {
+        let inner = Rc::from_raw(arg as *mut RefCell<DeleteMallocState>);
+        let waker = match inner.try_borrow_mut() {
             Ok(mut state) => state.set_result(status),
             Err(_) => {
                 let inner = inner.clone();
 
                 Thread::current().send_msg(move || {
-                    let waker = inner.lock().unwrap().set_result(status);
+                    let waker = inner.borrow_mut().set_result(status);
 
                     if let Some(waker) = waker {
                         waker.wake();
@@ -154,7 +152,7 @@ impl Future for DeleteMalloc {
     type Output = Result<(), Errno>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.borrow_mut();
 
         if let Some(result) = inner.result.take() {
             return Poll::Ready(result);
@@ -166,7 +164,7 @@ impl Future for DeleteMalloc {
             delete_malloc_disk(
                 spdk_bdev_get_name(inner.bdev),
                 Some(Self::complete),
-                Arc::into_raw(self.inner.clone()) as *mut c_void)
+                Rc::into_raw(self.inner.clone()) as *mut c_void)
         };
 
         Poll::Pending
@@ -177,7 +175,6 @@ impl Future for DeleteMalloc {
 pub struct Malloc(*mut spdk_bdev);
 
 unsafe impl Send for Malloc {}
-unsafe impl Sync for Malloc {}
 
 impl Malloc {
     /// Returns the name of the device.
@@ -201,7 +198,7 @@ impl Malloc {
             return Ok(());
         }
 
-        let inner = Arc::new(Mutex::new(DeleteMallocState {
+        let inner = Rc::new(RefCell::new(DeleteMallocState {
             bdev: self.0,
             waker: None,
             result: None,
