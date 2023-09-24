@@ -1,16 +1,14 @@
-mod arc_task;
+//! Asynchronous task management for Storage Performance Development Kit [Event
+//! Framework][SPEF].
+//! 
+//! [SPEF]: https://spdk.io/doc/event.html
 mod join_handle;
-mod rc_task;
+mod task;
 mod yield_now;
 
-pub(crate) use arc_task::{
-    ArcTask,
-    Task,
-};
-
-pub(crate) use rc_task::{
+pub(crate) use task::{
     RcTask,
-    LocalTask,
+    Task,
 };
 
 pub use join_handle::JoinHandle;
