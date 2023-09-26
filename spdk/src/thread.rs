@@ -1,5 +1,11 @@
 //! Support for Storage Performance Development Kit threads.
-use std::{ffi::c_void, future::Future};
+use std::{
+    ffi::{
+        c_void,
+        CStr,
+    },
+    future::Future,
+};
 
 use spdk_sys::{
     Errno,
@@ -9,13 +15,14 @@ use spdk_sys::{
 
     spdk_get_thread,
     spdk_thread_get_app_thread,
+    spdk_thread_get_name,
     spdk_thread_send_msg,
 };
 
 use crate::task::{
     JoinHandle,
-    Task,
     RcTask,
+    ThreadTask,
 };
 
 /// A lightweight, stackless thread of execution.
@@ -95,6 +102,15 @@ impl Thread {
         false
     }
 
+    /// Returns the name of this thread.
+    pub fn name(&self) -> &'static CStr {
+        unsafe {
+            let name = spdk_thread_get_name(self.0);
+
+            CStr::from_ptr(name)
+        }
+    }
+
     /// Sends a message function to be executed on this thread.
     /// 
     /// The message is sent asynchronously. This function may return before the
@@ -148,7 +164,7 @@ impl Thread {
     where
         T: Send + 'static
     {
-        let (task, join_handle) = Task::with_future(Some(self.clone()), fut);
+        let (task, join_handle) = ThreadTask::with_future(Some(self.clone()), fut);
 
         RcTask::schedule(task);
 
