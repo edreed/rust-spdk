@@ -22,6 +22,7 @@ use std::{
     rc::Rc,
 };
 
+use futures::future::join_all;
 use spdk_sys::{
     SPDK_APP_PARSE_ARGS_SUCCESS,
 
@@ -35,9 +36,16 @@ use spdk_sys::{
 };
 use static_init::dynamic;
 
-use crate::task::{
-    Task,
-    RcTask,
+use crate::{
+    task::{
+        ThreadTask,
+        RcTask,
+    },
+    runtime::{
+        Reactor,
+
+        reactors,
+    },
 };
 
 /// Builds a runtime using the Application Framework component of the
@@ -218,7 +226,7 @@ impl Runtime {
         }
         
         unsafe extern "C" fn start(ctx: *mut c_void) {
-            let task = Rc::from_raw(ctx.cast::<Task<()>>());
+            let task = Rc::from_raw(ctx.cast::<ThreadTask<()>>());
 
             RcTask::run(&task);
         }
@@ -226,10 +234,17 @@ impl Runtime {
         let wrapped_fut = async move {
             let _sg = StopGuard{};
 
-            fut.await
+            // Ensure each reactor has an spdk_thread associated with it and
+            // collect their exit signals.
+            let exits = join_all(reactors().filter_map(Reactor::init)).await;
+
+            fut.await;
+
+            // Send exit signals to each reactor.
+            exits.into_iter().for_each(|e| e.send(()).unwrap());
         };
 
-        let (task, _) = Task::with_future(None, wrapped_fut);
+        let (task, _) = ThreadTask::with_future(None, wrapped_fut);
         let ctx = Rc::into_raw(task).cast_mut();
 
         unsafe {

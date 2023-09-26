@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
         {
             "type": "lldb",
             "request": "launch",
@@ -49,20 +50,24 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in example 'bdev_hello_world'",
+            "name": "Debug example 'reactor'",
             "cargo": {
                 "args": [
-                    "test",
-                    "--no-run",
-                    "--example=bdev_hello_world",
+                    "build",
+                    "--example=reactor",
                     "--package=spdk"
                 ],
                 "filter": {
-                    "name": "bdev_hello_world",
+                    "name": "reactor",
                     "kind": "example"
                 }
             },
-            "args": [],
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/spdk_hugetlbfs",
+                "--logflag=all",
+                "--lcores=0,1"
+            ],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -80,26 +85,11 @@
                     "kind": "example"
                 }
             },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in example 'runtime'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--example=runtime",
-                    "--package=spdk"
-                ],
-                "filter": {
-                    "name": "runtime",
-                    "kind": "example"
-                }
-            },
-            "args": [],
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/spdk_hugetlbfs",
+                "--logflag=all"
+            ],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -123,48 +113,10 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in example 'sleep'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--example=sleep",
-                    "--package=spdk"
-                ],
-                "filter": {
-                    "name": "sleep",
-                    "kind": "example"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
             "name": "Debug example 'interval'",
             "cargo": {
                 "args": [
                     "build",
-                    "--example=interval",
-                    "--package=spdk"
-                ],
-                "filter": {
-                    "name": "interval",
-                    "kind": "example"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in example 'interval'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
                     "--example=interval",
                     "--package=spdk"
                 ],

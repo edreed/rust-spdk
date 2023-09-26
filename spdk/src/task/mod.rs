@@ -8,7 +8,8 @@ mod yield_now;
 
 pub(crate) use task::{
     RcTask,
-    Task,
+    ReactorTask,
+    ThreadTask,
 };
 
 pub use join_handle::JoinHandle;
