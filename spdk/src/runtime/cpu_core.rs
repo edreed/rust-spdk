@@ -7,6 +7,8 @@ use spdk_sys::{
     spdk_env_get_socket_id,
 };
 
+use super::CpuSet;
+
 const SPDK_ENV_LCORE_ID_ANY: u32 = u32::MAX;
 
 /// Represents a dedicated CPU core for this runtime.
@@ -63,6 +65,16 @@ impl CpuCore {
 impl From<CpuCore> for u32 {
     fn from(cpu_core: CpuCore) -> Self {
         cpu_core.0
+    }
+}
+
+impl From<CpuCore> for CpuSet {
+    fn from(cpu_core: CpuCore) -> Self {
+        let mut cpu_set = CpuSet::new();
+
+        cpu_set.set_cpu(cpu_core.0, true);
+
+        cpu_set
     }
 }
 
