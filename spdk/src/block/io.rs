@@ -2,10 +2,10 @@
 use std::{
     cell::RefCell,
     future::Future,
+    mem::ManuallyDrop,
     os::raw::c_void,
     pin::Pin,
     ptr::{
-        addr_of_mut,
         addr_of,
 
         null_mut,
@@ -48,7 +48,7 @@ use crate::{
 
 use super::IoChannel;
 
-/// Encapsulates a block device I/O operation and its parameters.
+/// Encapsulates a block device I/O operation's parameters.
 enum IoOperation<'a> {
     ManageZone {
         zone_id: u64,
@@ -78,17 +78,14 @@ enum IoOperation<'a> {
 }
 
 /// Encapsulates the state of a block device I/O operation.
-struct IoInner<'a> {
-    op: IoOperation<'a>,
-    channel: &'a IoChannel<'a>,
+struct IoState {
     result: Option<Result<(), Errno>>,
     waker: Option<Waker>,
     wait: spdk_bdev_io_wait_entry,
 }
 
-impl IoInner<'_> {
-    /// Sets the result to the waiting future and returns a [`Waker`] to awaken
-    /// the waiting future.
+impl IoState {
+    /// Sets the result and returns a [`Waker`] to awaken the waiting future.
     fn set_result(&mut self, success: bool) -> Option<Waker> {
         if success {
             self.result = Some(Ok(()));
@@ -100,36 +97,38 @@ impl IoInner<'_> {
     }
 }
 
-/// Represents the state of a block device I/O operation.
-pub(crate) struct Io<'a> {
-    inner: Rc<RefCell<IoInner<'a>>>,
+/// A function that starts a block device I/O operation.
+type StartIoFn = unsafe fn(data: *const (), cx: *mut Context<'_>) -> Poll<Result<(), Errno>>;
+
+/// Orchestrates the execution of a block device I/O operation.
+struct IoTask<'a> {
+    channel: &'a IoChannel<'a>,
+    start_io_fn: StartIoFn,
+    op: IoOperation<'a>,
+    state: RefCell<IoState>
 }
 
-unsafe impl Send for Io<'_> {}
-
-impl <'a> Io<'a> {
-    /// Returns a new [`Io`] instance.
-    fn new(channel: &'a IoChannel<'a>, op: IoOperation<'a>) -> Self {
-        let inner = Rc::new(RefCell::new(IoInner::<'a> {
-            op,
+impl <'a> IoTask<'a> {
+    /// Returns a new [`IoTask`] instance.
+    fn new(channel: &'a IoChannel<'a>, start_io_fn: StartIoFn, op: IoOperation<'a>) -> Rc::<Self> {
+        Rc::new(IoTask::<'a> {
             channel,
-            result: None,
-            waker: None,
-            wait: spdk_bdev_io_wait_entry {
-                bdev: channel.descriptor().device().as_ptr(),
-                cb_fn: Some(Self::retry),
-                cb_arg: null_mut(),
-                link: spdk_bdev_io_wait_entry__bindgen_ty_1 {
-                    tqe_next: null_mut(),
-                    tqe_prev: null_mut(),
-                },
-            }
-        }));
-
-        inner.borrow_mut().wait.cb_arg =
-            Rc::as_ptr(&inner).cast_mut() as *mut c_void;
-
-        Io { inner }
+            start_io_fn,
+            op,
+            state: RefCell::new(IoState{
+                result: None,
+                waker: None,
+                wait: spdk_bdev_io_wait_entry {
+                    bdev: channel.descriptor().device().as_ptr(),
+                    cb_fn: Some(Self::retry),
+                    cb_arg: null_mut(),
+                    link: spdk_bdev_io_wait_entry__bindgen_ty_1 {
+                        tqe_next: null_mut(),
+                        tqe_prev: null_mut(),
+                    },
+                }
+            }),
+        })
     }
 
     /// A callback invoked when a block device I/O operation completes.
@@ -138,17 +137,17 @@ impl <'a> Io<'a> {
         success: bool,
         ctx: *mut c_void
     ) {
-        let inner = Rc::from_raw(ctx as *mut RefCell<IoInner<'_>>);
+        let task = Rc::from_raw(ctx as *mut IoTask<'_>);
 
         unsafe { spdk_bdev_free_io(bdev_io) };
 
-        let waker = match inner.try_borrow_mut() {
-            Ok(mut inner) => inner.set_result(success),
+        let waker = match task.state.try_borrow_mut() {
+            Ok(mut state) => state.set_result(success),
             Err(_) => {
-                let inner = inner.clone();
+                let task = task.clone();
 
                 Thread::current().send_msg(move || {
-                    let waker = inner.borrow_mut().set_result(success);
+                    let waker = task.state.borrow_mut().set_result(success);
 
                     if let Some(w) = waker {
                         w.wake();
@@ -166,8 +165,8 @@ impl <'a> Io<'a> {
     /// A callback invoked when a queued block device I/O operation can be started.
     unsafe extern "C" fn retry(ctx: *mut c_void) {
         let wait = ctx as *mut spdk_bdev_io_wait_entry;
-        let inner = Rc::from_raw((*wait).cb_arg as *mut RefCell<IoInner<'_>>);
-        let waker = inner.borrow_mut().waker.take();
+        let task = Rc::from_raw((*wait).cb_arg as *mut IoTask<'_>);
+        let waker = task.state.borrow_mut().waker.take();
 
         if let Some(w) = waker {
             w.wake();
@@ -185,140 +184,367 @@ impl <'a> Io<'a> {
     /// [`Poll::Ready(Ok(()))`].
     /// 
     /// If the operation cannot be started because there are no available
-    /// `spdk_bdev_io` objects, this function returns `Poll::Ready(Err(ENOMEM))`.
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
     /// 
     /// If the operation cannot be started for any other reason, this function
     /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
-    fn poll_io(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
-        let mut inner = self.inner.borrow_mut();
+    fn poll_io(
+        rc_self: &Rc<IoTask>,
+        cx: &mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let mut state = rc_self.state.borrow_mut();
 
-        if let Some(r) = inner.result.take() {
+        if let Some(r) = state.result.take() {
             return Poll::Ready(r);
         }
 
-        inner.waker = Some(cx.waker().clone());
+        state.waker = Some(cx.waker().clone());
 
-        let inner_raw = Rc::as_ptr(&self.inner).cast_mut();
+        let self_raw = Rc::as_ptr(rc_self);
 
-        unsafe { Rc::increment_strong_count(inner_raw); }
+        unsafe {
+            Rc::increment_strong_count(self_raw);
 
-        let descriptor = inner.channel.descriptor().as_ptr();
-        let channel = inner.channel.as_ptr();
-        let res = match &mut inner.op {
-            IoOperation::ManageZone { zone_id, action } => {
-                unsafe {
-                    to_result!(spdk_bdev_zone_management(
-                        descriptor,
-                        channel,
-                        *zone_id,
-                        *action,
-                        Some(Self::complete),
-                        inner_raw as *mut c_void))
-                }
-            },
-            IoOperation::Write { buf, offset } => {
-                unsafe {
-                    to_result!(spdk_bdev_write(
-                        descriptor,
-                        channel,
-                        addr_of!(**buf) as *mut c_void,
-                        *offset,
-                        buf.len() as u64,
-                        Some(Self::complete),
-                        inner_raw as *mut c_void))
-                }
-            },
-            IoOperation::WriteZeroes { offset, len } => {
-                unsafe {
-                    to_result!(spdk_bdev_write_zeroes(
-                        descriptor,
-                        channel,
-                        *offset,
-                        *len,
-                        Some(Self::complete),
-                        inner_raw as *mut c_void))
-                }
+            return match (rc_self.start_io_fn)(self_raw.cast(), cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Err(e)) if e != ENOMEM => {
+                    Rc::decrement_strong_count(self_raw);
+
+                    Poll::Ready(Err(e))
+                },
+                Poll::Ready(Err(_)) => {
+                    to_result!(spdk_bdev_queue_io_wait(
+                        rc_self.channel.descriptor().device().as_ptr(),
+                        rc_self.channel.as_ptr(),
+                        &mut rc_self.state.borrow_mut().wait as *mut spdk_bdev_io_wait_entry))
+                        .expect("wait queued");
+                    Poll::Pending
+                },
+                Poll::Ready(Ok(())) => unreachable!(),
             }
-            IoOperation::Read { buf, offset } => {
-                unsafe {
-                    to_result!(spdk_bdev_read(
-                        descriptor,
-                        channel,
-                        addr_of_mut!(**buf) as *mut c_void,
-                        *offset,
-                        buf.len() as u64,
-                        Some(Self::complete),
-                        inner_raw as *mut c_void))
-                }
-            },
-            IoOperation::Unmap { offset, len } => {
-                unsafe {
-                    to_result!(spdk_bdev_unmap(
-                        descriptor,
-                        channel,
-                        *offset,
-                        *len,
-                        Some(Self::complete),
-                        inner_raw as *mut c_void))
-                }
-            },
-            IoOperation::Flush { offset, len } => {
-                unsafe {
-                    to_result!(spdk_bdev_flush(
-                        descriptor,
-                        channel,
-                        *offset,
-                        *len,
-                        Some(Self::complete),
-                        inner_raw as *mut c_void))
-                }
-            },
-            IoOperation::Reset => {
-                unsafe {
-                    to_result!(spdk_bdev_reset(
-                        descriptor,
-                        channel,
-                        Some(Self::complete),
-                        inner_raw as *mut c_void))
-                }
-            },
-        };
-
-        if let Err(e) = res {
-            unsafe { Rc::decrement_strong_count(inner_raw); }
-
-            return Poll::Ready(Err(e));
         }
-
-        Poll::Pending
     }
 
+    /// Starts a zone management operation on a block device.
+    /// 
+    /// # Returns
+    /// 
+    /// This function returns [`Poll::Pending`] if the I/O operation is started
+    /// successfully.
+    /// 
+    /// If the operation cannot be started because there are no available
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
+    /// 
+    /// If the operation cannot be started for any other reason, this function
+    /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
+    unsafe fn start_manage_zone(
+        data: *const (),
+        _cx: *mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let rc_io = ManuallyDrop::new(Rc::<IoTask<'_>>::from_raw(data.cast()));
+
+        if let IoOperation::ManageZone { zone_id, action } = rc_io.op  {
+            let res = to_result!(spdk_bdev_zone_management(
+                rc_io.channel.descriptor().as_ptr(),
+                rc_io.channel.as_ptr(),
+                zone_id,
+                action,
+                Some(Self::complete),
+                Rc::as_ptr(&rc_io) as *mut c_void));
+
+            return match res {
+                Ok(()) => Poll::Pending,
+                Err(e) => Poll::Ready(Err(e)),
+            }
+        }
+
+        unreachable!("parameter mismatch");
+    }
+
+    /// Starts a write operation on a block device.
+    /// 
+    /// # Returns
+    /// 
+    /// This function returns [`Poll::Pending`] if the I/O operation is started
+    /// successfully.
+    /// 
+    /// If the operation cannot be started because there are no available
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
+    /// 
+    /// If the operation cannot be started for any other reason, this function
+    /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
+    unsafe fn start_write(
+        data: *const (),
+        _cx: *mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let rc_io = ManuallyDrop::new(Rc::<IoTask<'_>>::from_raw(data.cast()));
+
+        if let IoOperation::Write { buf, offset } = rc_io.op  {
+            let res = to_result!(spdk_bdev_write(
+                rc_io.channel.descriptor().as_ptr(),
+                rc_io.channel.as_ptr(),
+                addr_of!(*buf) as *mut c_void,
+                offset,
+                buf.len() as u64,
+                Some(Self::complete),
+                Rc::as_ptr(&rc_io) as *mut c_void));
+
+            return match res {
+                Ok(()) => Poll::Pending,
+                Err(e) => Poll::Ready(Err(e)),
+            }
+        }
+
+        unreachable!("parameter mismatch");
+    }
+
+    /// Starts a write zeroes operation on a block device.
+    /// 
+    /// # Returns
+    /// 
+    /// This function returns [`Poll::Pending`] if the I/O operation is started
+    /// successfully.
+    /// 
+    /// If the operation cannot be started because there are no available
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
+    /// 
+    /// If the operation cannot be started for any other reason, this function
+    /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
+    unsafe fn start_write_zeroes(
+        data: *const (),
+        _cx: *mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let rc_io = ManuallyDrop::new(Rc::<IoTask<'_>>::from_raw(data.cast()));
+
+        if let IoOperation::WriteZeroes { offset, len } = rc_io.op  {
+            let res = to_result!(spdk_bdev_write_zeroes(
+                rc_io.channel.descriptor().as_ptr(),
+                rc_io.channel.as_ptr(),
+                offset,
+                len,
+                Some(Self::complete),
+                Rc::as_ptr(&rc_io) as *mut c_void));
+
+            return match res {
+                Ok(()) => Poll::Pending,
+                Err(e) => Poll::Ready(Err(e)),
+            }
+        }
+
+        unreachable!("parameter mismatch");
+    }
+
+    /// Starts a read operation on a block device.
+    /// 
+    /// # Returns
+    /// 
+    /// This function returns [`Poll::Pending`] if the I/O operation is started
+    /// successfully.
+    /// 
+    /// If the operation cannot be started because there are no available
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
+    /// 
+    /// If the operation cannot be started for any other reason, this function
+    /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
+    unsafe fn start_read(
+        data: *const (),
+        _cx: *mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let rc_io = ManuallyDrop::new(Rc::<IoTask<'_>>::from_raw(data.cast()));
+
+        if let IoOperation::Read { buf, offset } = &rc_io.op  {
+            let res = to_result!(spdk_bdev_read(
+                rc_io.channel.descriptor().as_ptr(),
+                rc_io.channel.as_ptr(),
+                addr_of!(**buf) as *mut c_void,
+                *offset,
+                buf.len() as u64,
+                Some(Self::complete),
+                Rc::as_ptr(&rc_io) as *mut c_void));
+
+            return match res {
+                Ok(()) => Poll::Pending,
+                Err(e) => Poll::Ready(Err(e)),
+            }
+        }
+
+        unreachable!("parameter mismatch");
+    }
+
+    /// Starts an unmap operation on a block device.
+    /// 
+    /// # Returns
+    /// 
+    /// This function returns [`Poll::Pending`] if the I/O operation is started
+    /// successfully.
+    /// 
+    /// If the operation cannot be started because there are no available
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
+    /// 
+    /// If the operation cannot be started for any other reason, this function
+    /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
+    unsafe fn start_unmap(
+        data: *const (),
+        _cx: *mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let rc_io = ManuallyDrop::new(Rc::<IoTask<'_>>::from_raw(data.cast()));
+
+        if let IoOperation::Unmap { offset, len } = rc_io.op  {
+            let res = to_result!(spdk_bdev_unmap(
+                rc_io.channel.descriptor().as_ptr(),
+                rc_io.channel.as_ptr(),
+                offset,
+                len,
+                Some(Self::complete),
+                Rc::as_ptr(&rc_io) as *mut c_void));
+
+            return match res {
+                Ok(()) => Poll::Pending,
+                Err(e) => Poll::Ready(Err(e)),
+            }
+        }
+
+        unreachable!("parameter mismatch");
+    }
+
+    /// Starts a flush operation on a block device.
+    /// 
+    /// # Returns
+    /// 
+    /// This function returns [`Poll::Pending`] if the I/O operation is started
+    /// successfully.
+    /// 
+    /// If the operation cannot be started because there are no available
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
+    /// 
+    /// If the operation cannot be started for any other reason, this function
+    /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
+    unsafe fn start_flush(
+        data: *const (),
+        _cx: *mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let rc_io = ManuallyDrop::new(Rc::<IoTask<'_>>::from_raw(data.cast()));
+
+        if let IoOperation::Flush { offset, len } = rc_io.op  {
+            let res = to_result!(spdk_bdev_flush(
+                rc_io.channel.descriptor().as_ptr(),
+                rc_io.channel.as_ptr(),
+                offset,
+                len,
+                Some(Self::complete),
+                Rc::as_ptr(&rc_io) as *mut c_void));
+
+            return match res {
+                Ok(()) => Poll::Pending,
+                Err(e) => Poll::Ready(Err(e)),
+            }
+        }
+
+        unreachable!("parameter mismatch");
+    }
+
+    /// Starts a reset operation on a block device.
+    /// 
+    /// # Returns
+    /// 
+    /// This function returns [`Poll::Pending`] if the I/O operation is started
+    /// successfully.
+    /// 
+    /// If the operation cannot be started because there are no available
+    /// `spdk_bdev_io` objects, this function returns
+    /// `Poll::Ready(Err(ENOMEM))`.
+    /// 
+    /// If the operation cannot be started for any other reason, this function
+    /// returns `Poll::Ready(Err(e))` where `e` is an [`Errno`] value.
+    unsafe fn start_reset(
+        data: *const (),
+        _cx: *mut Context<'_>
+    ) -> Poll<Result<(), Errno>> {
+        let rc_io = ManuallyDrop::new(Rc::<IoTask<'_>>::from_raw(data.cast()));
+
+        if let IoOperation::Reset = rc_io.op  {
+            let res = to_result!(spdk_bdev_reset(
+                rc_io.channel.descriptor().as_ptr(),
+                rc_io.channel.as_ptr(),
+                Some(Self::complete),
+                Rc::as_ptr(&rc_io) as *mut c_void));
+
+            return match res {
+                Ok(()) => Poll::Pending,
+                Err(e) => Poll::Ready(Err(e)),
+            }
+        }
+
+        unreachable!("parameter mismatch");
+    }
+}
+
+/// Represents the state of a block device I/O operation.
+pub(crate) struct Io<'a> {
+    task: Rc<IoTask<'a>>
+}
+
+unsafe impl Send for Io<'_> {}
+
+impl <'a> Io<'a> {
     /// Resets the block device zone.
     pub(crate) fn reset_zone(channel: &'a IoChannel<'a>, zone_id: u64) -> Self {
-        Io::<'a>::new(channel, IoOperation::ManageZone { zone_id, action: SPDK_BDEV_ZONE_RESET })
+        let task = IoTask::new(
+            channel,
+            IoTask::start_manage_zone,
+            IoOperation::ManageZone { zone_id, action: SPDK_BDEV_ZONE_RESET });
+
+        Self { task }
     }
 
     /// Writes the data in the buffer to the block device at the specified
     /// offset.
     pub(crate) fn write(channel: &'a IoChannel<'a>, buf: &'a [u8], offset: u64) -> Self {
-        Io::<'a>::new(channel, IoOperation::Write { buf, offset })
+        let task = IoTask::new(
+            channel,
+            IoTask::start_write,
+            IoOperation::Write { buf, offset });
+
+        Self { task }
     }
 
     /// Writes zeroes to the block device at the specified offset.
     pub(crate) fn write_zeroes(channel: &'a IoChannel<'a>, offset: u64, len: u64) -> Self {
-        Io::<'a>::new(channel, IoOperation::WriteZeroes { offset, len })
+        let task = IoTask::new(
+            channel,
+            IoTask::start_write_zeroes,
+            IoOperation::WriteZeroes { offset, len });
+
+        Self { task }
     }
 
     /// Reads data from the block device at the specified offset into the
     /// buffer.
     pub(crate) fn read(channel: &'a IoChannel<'a>, buf: &'a mut [u8], offset: u64) -> Self {
-        Io::<'a>::new(channel, IoOperation::Read { buf, offset })
+        let task = IoTask::new(
+            channel,
+            IoTask::start_read,
+            IoOperation::Read { buf, offset });
+
+        Self { task }
     }
 
     /// Notifies the block device that the specified range of bytes is no longer
     /// valid.
     pub(crate) fn unmap(channel: &'a IoChannel<'a>, offset: u64, len: u64) -> Self {
-        Io::<'a>::new(channel, IoOperation::Unmap { offset, len })
+        let task = IoTask::new(
+            channel,
+            IoTask::start_unmap,
+            IoOperation::Unmap { offset, len });
+
+        Self { task }
     }
 
     /// Flushes the specified range of bytes from the volatile cache to the
@@ -327,46 +553,30 @@ impl <'a> Io<'a> {
     /// For devices with volatile cache, data is not guaranteed to be persistent
     /// until the completion of the flush operation.
     pub(crate) fn flush(channel: &'a IoChannel<'a>, offset: u64, len: u64) -> Self {
-        Io::<'a>::new(channel, IoOperation::Flush { offset, len })
+        let task = IoTask::new(
+            channel,
+            IoTask::start_flush,
+            IoOperation::Flush { offset, len });
+
+        Self { task }
     }
 
     /// Resets the block device.
     pub(crate) fn reset(channel: &'a IoChannel<'a>) -> Self {
-        Io::<'a>::new(channel, IoOperation::Reset)
+        let task = IoTask::new(
+            channel,
+            IoTask::start_reset,
+            IoOperation::Reset);
+
+        Self { task }
     }
 }
 
 impl <'a> Future for Io<'a> {
     type Output = Result<(), Errno>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.poll_io(cx) {
-            Poll::Pending => {
-                Poll::Pending
-            },
-            Poll::Ready(r) => {
-                match r {
-                    Ok(()) => Poll::Ready(Ok(())),
-                    Err(e) if e != ENOMEM => Poll::Ready(Err(e)),
-                    _ => {
-                        unsafe {
-                            let inner_raw = Rc::as_ptr(&self.inner).cast_mut();
-
-                            Rc::increment_strong_count(inner_raw);
-
-                            let mut inner = self.inner.borrow_mut();
-
-                            to_result!(spdk_bdev_queue_io_wait(
-                                inner.channel.descriptor().device().as_ptr(),
-                                inner.channel.as_ptr(),
-                                &mut inner.wait as *mut spdk_bdev_io_wait_entry))
-                                .expect("wait queued")
-                        };
-                        Poll::Pending
-                    },
-                }
-            },
-        }
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        IoTask::poll_io(&self.task, cx)
     }
 }
 
