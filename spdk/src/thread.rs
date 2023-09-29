@@ -1,4 +1,18 @@
-//! Support for Storage Performance Development Kit threads.
+//! An abstraction of a lightweight, stackless thread of execution.
+//! 
+//! An SPDK thread does not correspond 1:1 with a posix thread. Instead, a
+//! lower-level framework like the SPDK Event Framework polls each SPDK thread
+//! for work. This allows the SPDK Event Framework to multiplex many SPDK
+//! threads on a smaller number of posix threads.
+//! 
+//! There are two mechanisms for scheduling work on an SPDK thread: messages and
+//! pollers. A message consists of a function and single context parameter. A
+//! poller is a function that is called periodically.
+//! 
+//! See [Message Passing and Concurrency] for more details on the SPDK
+//! threading model.
+//! 
+//! [Message Passing and Concurrency]: https://spdk.io/doc/concurrency.html
 use std::{
     ffi::{
         c_void,
@@ -25,7 +39,7 @@ use crate::task::{
     ThreadTask,
 };
 
-/// A lightweight, stackless thread of execution.
+/// An abstraction of a lightweight, stackless thread of execution.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Thread(*mut spdk_thread);
 

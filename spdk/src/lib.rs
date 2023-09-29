@@ -1,4 +1,3 @@
-#![cfg_attr(docsrs, feature(doc_cfg))]
 //! Rust programming language abstractions for the Storage Performance
 //! Development Kit ([SPDK]).
 //! 

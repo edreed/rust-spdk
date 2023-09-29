@@ -1,4 +1,3 @@
-//! Support for Storage Performance Development Kit block devices.
 use std::{
     cell::RefCell,
     future::Future,
