@@ -1,22 +1,84 @@
-//! Utilities for tracking time in the Storage Performance Development Kit [Event Framework][SPEF].
+//! Utilities for tracking time.
 //! 
-//! [SPEF]: https://spdk.io/doc/event.html
+//! This module provides functions for asynchronously executing code after a set
+//! period of time.
+//! 
+//! * The [`interval`] function enables code to asycnhronously wait on a
+//!   sequence of instants with a fixed period.
+//! * The [`sleep`] function enables code to asynchronously wait until a
+//!   duration has elapsed.
+//! 
+//! # Examples
+//! 
+//! Sleeps 1 second before printing "Hello, World!".
+//! 
+//! ```no_run
+//! 
+//! use spdk::time;
+//! 
+//! #[spdk::main]
+//! async fn main() {
+//!     print!("Hello, ");
+//!     io::stdout().flush().unwrap();
+//! 
+//!     time::sleep(Duration::from_secs(1)).await;
+//! 
+//!     println!("World!");
+//! }
+//! 
+//! ```
+//! 
+//! Counts down from 5 to 1, printing each number with a 1 second delay between
+//! each.
+//! 
+//! ```no_run
+//! use std::{time::Duration, io::{self, Write}};
+//!
+//! use spdk::time::interval;
+//! 
+//! #[spdk::main]
+//! async fn main() {
+//!     let mut timer = interval(Duration::from_secs(1));
+//! 
+//!     for countdown in (1..=5).rev() {
+//!         print!("{}...", countdown);
+//!         io::stdout().flush().unwrap();
+//! 
+//!         timer.tick().await;
+//! 
+//!         print!("\x08\x08\x08\x08");
+//!     }
+//! 
+//!     println!("Hello, World!");
+//! }
+//! 
+//! ```
+//! 
 use std::{
     cell::UnsafeCell,
     option::Option,
     os::raw::c_void,
     ptr::null_mut,
-    task::{Context, Poll, Waker},
-    time::{Instant, Duration},
+    task::{
+        Context,
+        Poll,
+        Waker,
+    },
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use futures::future::poll_fn;
 use spdk_sys::{
+    SPDK_POLLER_BUSY,
+    SPDK_POLLER_IDLE,
+
     spdk_poller,
+
     spdk_poller_register,
     spdk_poller_unregister,
-    SPDK_POLLER_IDLE,
-    SPDK_POLLER_BUSY,
 };
 
 /// Encapsulates the execution state of an [`Interval`].

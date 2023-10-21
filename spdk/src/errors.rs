@@ -1,3 +1,4 @@
+//! Common error definitions.
 use libc;
 use spdk_sys::Errno;
 

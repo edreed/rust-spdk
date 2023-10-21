@@ -8,7 +8,9 @@ async fn main() {
 
     for countdown in (1..=5).rev() {
         print!("{}...", countdown);
+
         io::stdout().flush().unwrap();
+        
         timer.tick().await;
         print!("\x08\x08\x08\x08");
     }

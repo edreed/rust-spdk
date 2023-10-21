@@ -1,4 +1,3 @@
-//! Support for Storage Performance Development Kit block devices.
 use std::{
     ffi::CStr,
     ptr::null_mut,

@@ -1,4 +1,12 @@
 //! Support for Storage Performance Development Kit DMA memory management.
+//! 
+//! This module implements standard Rust memory allocation interfaces using the
+//! SPDK memory allocator. The [`Buffer`] object manages a buffer allocated
+//! using the SPDK memory allocator that is suitable for use with device I/O.
+//! 
+//! See [Direct Memory Access (DMA) From User
+//! Space](https://spdk.io/doc/memory.html) for more information on the SPDK
+//! memory management.
 use std::{
     alloc::{
         Layout,

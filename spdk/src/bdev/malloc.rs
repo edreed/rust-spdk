@@ -1,4 +1,4 @@
-//! Support for the Storage Performance Development Kit Malloc Block Device
+//! Support for the Storage Performance Development Kit Malloc Block Device.
 //! plug-in.
 use std::{
     cell::RefCell,

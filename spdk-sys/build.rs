@@ -4,8 +4,18 @@ use std::{
     path::PathBuf,
 };
 
+use bindgen::callbacks::ParseCallbacks;
 use fs_extra::dir;
 use itertools::Itertools;
+
+#[derive(Debug)]
+struct DoxygenCallbacks;
+
+impl ParseCallbacks for DoxygenCallbacks {
+    fn process_comment(&self, comment: &str) -> Option<String> {
+        Some(doxygen_rs::transform(comment))
+    }
+}
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -96,6 +106,7 @@ fn main() {
     let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .parse_callbacks(Box::new(DoxygenCallbacks))
         .clang_args(&[
             "-I", spdk_include_dir.to_string_lossy().as_ref(),
             "-I", spdk_module_dir.to_string_lossy().as_ref(),
