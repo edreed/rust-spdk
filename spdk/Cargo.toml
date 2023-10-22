@@ -7,6 +7,7 @@ edition = "2021"
 all-features = true
 
 [dependencies]
+byte-strings = "0.3.1"
 errno = "0.3.1"
 futures = "0.3.28"
 libc = "0.2.146"
@@ -21,7 +22,12 @@ byte-strings= "0.3.1"
 default = []
 bdev=[]
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
+nvmf = ["bdev", "spdk-sys/nvmf"]
 
 [[example]]
 name = "bdev_hello_world"
 required-features = ["bdev-malloc"]
+
+[[example]]
+name = "nvmf"
+required-features = ["bdev-malloc", "nvmf"]

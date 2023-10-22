@@ -20,6 +20,7 @@ use std::{
         null,
     },
     rc::Rc,
+    sync::atomic::AtomicBool,
 };
 
 use futures::future::join_all;
@@ -28,6 +29,7 @@ use spdk_sys::{
 
     spdk_app_opts,
     spdk_app_parse_args_rvals,
+    spdk_app_shutdown_cb,
 
     spdk_app_opts_init,
     spdk_app_parse_args,
@@ -135,6 +137,11 @@ impl Builder {
         self
     }
 
+    pub fn with_shutdown_callback(&mut self, callback: spdk_app_shutdown_cb) -> &mut Self {
+        self.0.shutdown_cb = callback;
+        self
+    }
+
     /// Creates the configured `Runtime`.
     /// 
     /// # Examples
@@ -172,6 +179,8 @@ pub fn default() -> Builder {
     }
 }
 
+static SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
+
 /// A runtime implemented using the Application Framework component of the
 /// [SPDK Event Framework][SPEF].
 /// 
@@ -181,12 +190,26 @@ pub struct Runtime(Cell<spdk_app_opts>);
 impl Runtime {
     /// Returns a new default runtime.
     pub fn new() -> Self {
-        Builder::new().with_name(APP_NAME.as_c_str()).build()
+        Builder::new()
+            .with_name(APP_NAME.as_c_str())
+            .with_shutdown_callback(Some(Self::shutdown))
+            .build()
     }
 
     /// Returns a new runtime initialized from the command line.
     pub fn from_cmdline()  -> Result<Self, spdk_app_parse_args_rvals> {
-        Ok(Builder::from_cmdline()?.with_name(APP_NAME.as_c_str()).build())
+        Ok(Builder::from_cmdline()?
+            .with_name(APP_NAME.as_c_str())
+            .with_shutdown_callback(Some(Self::shutdown))
+            .build())
+    }
+
+    unsafe extern "C" fn shutdown() {
+        SHUTDOWN_STARTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_shutting_down() -> bool {
+        SHUTDOWN_STARTED.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Runs a future to completion on the SPDK Application Framework.
