@@ -80,6 +80,13 @@ fn main() {
         pkg_configs.push(pkg_config.probe("spdk_event_bdev").expect("spdk_event_bdev package config exists"));
     }
 
+    let include_target_nvmf = env::var_os("CARGO_FEATURE_NVMF").is_some();
+
+    if include_target_nvmf {
+        pkg_configs.push(pkg_config.probe("spdk_nvmf").expect("spdk_nvmf package config exists"));
+        pkg_configs.push(pkg_config.probe("spdk_event_nvmf").expect("spdk_event_nvmf package config exists"));
+    }
+
     let link_paths: Vec<PathBuf> = pkg_configs
         .iter()
         .flat_map(|l| l.link_paths.iter())
@@ -114,7 +121,9 @@ fn main() {
         .allowlist_function("spdk_.*")
         .allowlist_type("spdk_.*")
         .allowlist_var("spdk_.*")
-        .opaque_type("spdk_nvme_(sgl_descriptor|ctrlr_data|health_information_page)")
+        .allowlist_var("SPDK_.*")
+        .opaque_type("spdk_nvme_(ctrlr|health|sgl|tcp)_.*")
+        .opaque_type("spdk_nvmf_fabric_.*")
         .wrap_unsafe_ops(true)
         .prepend_enum_name(false)
         .layout_tests(false);
@@ -124,6 +133,12 @@ fn main() {
             .clang_arg("-D CARGO_FEATURE_BDEV_MALLOC=1")
             .allowlist_function(".*_malloc_disk")
             .allowlist_type("malloc_bdev_opts");
+    }
+
+    if include_target_nvmf {
+        builder = builder
+            .clang_arg("-D CARGO_FEATURE_NVMF=1")
+            .allowlist_var("g_spdk_.*")
     }
 
     let _ = builder

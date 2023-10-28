@@ -8,3 +8,10 @@
 #if defined(CARGO_FEATURE_BDEV_MALLOC)
 #include "bdev/malloc/bdev_malloc.h"
 #endif
+
+#if defined(CARGO_FEATURE_NVMF)
+#include "spdk/nvme.h"
+#include "spdk/nvmf.h"
+#include "spdk/nvmf_spec.h"
+#include "event/subsystems/nvmf/event_nvmf.h"
+#endif
