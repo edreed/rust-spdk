@@ -30,28 +30,34 @@ impl CpuSet {
         Default::default()
     }
 
-    pub fn as_ptr(&self) -> *const spdk_cpuset {
-        &self.0 as *const _ as *const _
+    /// Returns a pointer to the underlying `spdk_cpuset` structure.
+    pub(crate) fn as_ptr(&self) -> *const spdk_cpuset {
+        &self.0 as *const _
+    }
+
+    /// Returns a  pointer to the mutable underlying `spdk_cpuset` structure.
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut spdk_cpuset {
+        &self.0 as *const _ as *mut _
     }
 
     /// Set or clear the CPU state in the set.
     pub fn set_cpu(&mut self, cpu: u32, enable: bool) {
         unsafe {
-            spdk_cpuset_set_cpu(&mut self.0 as *mut _ as *mut _, cpu, enable);
+            spdk_cpuset_set_cpu(self.as_mut_ptr(), cpu, enable);
         }
     }
 
     /// Clear all CPUs in the set.
     pub fn clear(&mut self) {
         unsafe {
-            spdk_cpuset_zero(&mut self.0 as *mut _ as *mut _);
+            spdk_cpuset_zero(self.as_mut_ptr());
         }
     }
 
     /// Returns the number of CPUs in the set.
     pub fn count(&self) -> u32 {
         unsafe {
-            spdk_cpuset_count(&self.0 as *const _ as *const _)
+            spdk_cpuset_count(self.as_ptr())
         }
     }
 }
@@ -61,7 +67,7 @@ impl Default for CpuSet {
         unsafe {
             let mut cpu_set = MaybeUninit::<spdk_cpuset>::uninit();
 
-            spdk_cpuset_zero(&mut cpu_set as *mut _ as *mut _);
+            spdk_cpuset_zero(cpu_set.as_mut_ptr());
 
             Self(cpu_set.assume_init())
         }
@@ -71,7 +77,7 @@ impl Default for CpuSet {
 impl PartialEq for CpuSet {
     fn eq(&self, other: &Self) -> bool {
         unsafe {
-            spdk_cpuset_equal(&self.0 as *const _ as *const _, &other.0 as *const _ as *const _)
+            spdk_cpuset_equal(self.as_ptr(), other.as_ptr())
         }
     }
 }
@@ -83,7 +89,7 @@ impl Clone for CpuSet {
         unsafe {
             let mut cpu_set = MaybeUninit::<spdk_cpuset>::uninit();
 
-            spdk_cpuset_copy(&mut cpu_set as *mut _ as *mut _, &self.0 as *const _ as *const _);
+            spdk_cpuset_copy(cpu_set.as_mut_ptr(), self.as_ptr());
 
             Self(cpu_set.assume_init())
         }
@@ -95,7 +101,7 @@ impl Copy for CpuSet {}
 impl BitAndAssign for CpuSet {
     fn bitand_assign(&mut self, rhs: Self) {
         unsafe {
-            spdk_cpuset_and(&mut self.0 as *mut _ as *mut _, &rhs.0 as *const _ as *const _);
+            spdk_cpuset_and(self.as_mut_ptr(), rhs.as_ptr());
         }
     }
 }
@@ -103,7 +109,7 @@ impl BitAndAssign for CpuSet {
 impl BitOrAssign for CpuSet {
     fn bitor_assign(&mut self, rhs: Self) {
         unsafe {
-            spdk_cpuset_or(&mut self.0 as *mut _ as *mut _, &rhs.0 as *const _ as *const _);
+            spdk_cpuset_or(self.as_mut_ptr(), rhs.as_ptr());
         }
     }
 }
@@ -111,7 +117,7 @@ impl BitOrAssign for CpuSet {
 impl BitXorAssign for CpuSet {
     fn bitxor_assign(&mut self, rhs: Self) {
         unsafe {
-            spdk_cpuset_xor(&mut self.0 as *mut _ as *mut _, &rhs.0 as *const _ as *const _);
+            spdk_cpuset_xor(self.as_mut_ptr(), rhs.as_ptr());
         }
     }
 }
@@ -123,11 +129,16 @@ impl Not for CpuSet {
         unsafe {
             let mut cpu_set = MaybeUninit::<spdk_cpuset>::uninit();
 
-            spdk_cpuset_copy(&mut cpu_set as *mut _ as *mut _, &self.0 as *const _ as *const _);
-
-            spdk_cpuset_negate(&mut cpu_set as *mut _ as *mut _);
+            spdk_cpuset_copy(cpu_set.as_mut_ptr(), self.as_ptr());
+            spdk_cpuset_negate(cpu_set.as_mut_ptr());
 
             Self(cpu_set.assume_init())
         }
+    }
+}
+
+impl From<spdk_cpuset> for CpuSet {
+   fn from(cpu_set: spdk_cpuset) -> Self {
+        Self(cpu_set)
     }
 }
