@@ -174,7 +174,10 @@ impl <T: 'static> ThreadTask<T> {
 
 impl <T: 'static> RcTask for ThreadTask<T> {
     fn schedule(rc_self: Rc<Self>) {
-        let target_thread = rc_self.target_thread.unwrap_or_else(|| Thread::application());
+        let target_thread = rc_self.target_thread
+            .as_ref()
+            .map(Thread::borrow)
+            .unwrap_or_else(|| Thread::application());
 
         // If the current thread is the target of this task, attempt to run it
         // synchronously.
@@ -192,7 +195,10 @@ impl <T: 'static> RcTask for ThreadTask<T> {
     }
 
     fn schedule_by_ref(rc_self: &Rc<Self>) {
-        let target_thread = rc_self.target_thread.unwrap_or_else(|| Thread::application());
+        let target_thread = rc_self.target_thread
+            .as_ref()
+            .map(Thread::borrow)
+            .unwrap_or_else(|| Thread::application());
 
         assert!(target_thread.is_current());
 
