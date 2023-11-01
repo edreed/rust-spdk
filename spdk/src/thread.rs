@@ -20,12 +20,13 @@ use std::{
     },
     future::Future,
     mem::MaybeUninit,
+    pin::Pin,
 };
 
 use spdk_sys::{
     Errno,
     spdk_thread,
-    
+
     to_result,
 
     spdk_cpuset_copy,
@@ -40,6 +41,7 @@ use spdk_sys::{
     spdk_thread_get_name,
     spdk_thread_is_bound,
     spdk_thread_is_running,
+    spdk_thread_poll,
     spdk_thread_send_msg,
 };
 
@@ -275,6 +277,15 @@ impl Thread {
         }
     }
 
+    /// Perform one iteration worth of processing on the thread.
+    /// 
+    /// # Returns
+    /// 
+    /// This method returns `true` if work was done and `false` otherwise.
+    pub(crate) fn poll(&self) -> bool {
+        unsafe { spdk_thread_poll(self.as_ptr() as *mut _, 0, 0) != 0 }
+    }
+
     /// Spawns a new asynchronous task to be executed on this thread and returns a
     /// [`JoinHandle`] to await results.
     pub fn spawn<F, T>(&self, fut: F) -> JoinHandle<T>
@@ -298,7 +309,8 @@ impl Drop for Thread {
     }
 }
 
-/// Spawns a new asynchronous task to be executed on the current thread and
+
+/// Spawns a new asynchronous task to be executed on the current SPDK thread and
 /// returns a [`JoinHandle`] to await results.
 pub fn spawn<F, T>(fut: F) -> JoinHandle<T>
 where
@@ -306,4 +318,33 @@ where
     T: Send + 'static
 {
     Thread::current().spawn(fut)
+}
+
+/// Runs the provided future on the current SPDK thread until completion.
+/// 
+/// # Notes
+/// 
+/// This function blocks the current reactor until the future completes on the
+/// current SPDK thread. Although the given future may spawn concurrent tasks on
+/// this thread, tasks on other threads associated with the current reactor will
+/// not run. The given future must not depend on the result of concurrent tasks
+/// associated with other threads, otherwise a deadlock will occur.
+pub fn block_on<F, T>(fut: F) -> T
+where
+    F: Future<Output = T> + Send + 'static,
+    T: Send + 'static
+{
+    let current_thread = Thread::current();
+    let (task, mut join_handle) = 
+        ThreadTask::with_future(Some(current_thread.borrow()), fut);
+
+    RcTask::schedule_by_ref(&task);
+
+    loop {
+        match Pin::new(&mut join_handle).rx_pin_mut().try_recv() {
+            Ok(Some(r)) => return r,
+            Ok(None) => _ = current_thread.poll(),
+            Err(_) => panic!("sender dropped"),
+        }
+    }
 }

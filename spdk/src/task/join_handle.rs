@@ -21,11 +21,14 @@ pub struct JoinHandle<T> {
 }
 
 impl <T> JoinHandle<T> {
+    /// Create a new [`JoinHandle`] from a [`oneshot::Receiver`].
     pub(crate) fn new(rx: oneshot::Receiver<T>) -> Self {
         Self { rx }
     }
 
-    fn rx_pin_mut(self: Pin<&mut Self>) -> Pin<&mut oneshot::Receiver<T>> {
+    /// Returns a pinned reference to the [`oneshot::Receiver`] used to receive
+    /// the result of the task.
+    pub(crate) fn rx_pin_mut(self: Pin<&mut Self>) -> Pin<&mut oneshot::Receiver<T>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.rx) }
     }
 }

@@ -17,6 +17,9 @@ pub static EBADF: Errno = Errno(libc::EBADF);
 /// Not enough space/cannot allocate memory
 pub static ENOMEM: Errno = Errno(libc::ENOMEM);
 
+/// No such device
+pub static ENODEV: Errno = Errno(libc::ENODEV);
+
 /// Invalid argument
 pub static EINVAL: Errno = Errno(libc::EINVAL);
 

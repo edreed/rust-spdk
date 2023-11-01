@@ -5,7 +5,11 @@ use std::{
     default::Default,
     ffi::CStr,
     future::Future,
-    mem::zeroed,
+    mem::{
+        self,
+
+        ManuallyDrop,
+    },
     os::raw:: {
         c_char,
         c_void,
@@ -19,25 +23,26 @@ use std::{
     },
 };
 
+use async_trait::async_trait;
 use spdk_sys::{
     Errno,
     malloc_bdev_opts,
     spdk_bdev,
-    
+
     to_result,
-    
+
     create_malloc_disk,
     delete_malloc_disk, 
     spdk_bdev_get_name,
 };
 
 use crate::{
-    block::{
-        Device,
-        Descriptor,
-    },
+    block::Device,
     thread::Thread,
+    errors::EBADF,
 };
+
+use super::BDev;
 
 /// Builds a [`Malloc`] instance using the Malloc Block Device module of the
 /// SPDK.
@@ -75,32 +80,32 @@ impl Builder {
         self
     }
 
-    /// Creates a new [`Malloc`] instance.
-    pub fn build(self) -> Result<Malloc, Errno>{
+    /// Creates a new [`Device<Malloc>`] instance.
+    pub fn build(self) -> Result<Device<Malloc>, Errno>{
         let mut malloc = null_mut();
         
         unsafe { to_result!(create_malloc_disk(&mut malloc, &self.0))? };
 
-        Ok(Malloc(malloc))
+        Ok(Device::Owned(malloc, Default::default()))
     }
 }
 
 impl Default for Builder {
     fn default() -> Self {
-        unsafe { zeroed::<Self>() }
+        unsafe { mem::zeroed::<Self>() }
     }
 }
 
-struct DeleteMallocState {
-    bdev: *mut spdk_bdev,
+#[derive(Default)]
+struct DestroyState {
     waker: Option<Waker>,
     result: Option<Result<(), Errno>>,
 }
 
-unsafe impl Send for DeleteMallocState {}
+unsafe impl Send for DestroyState {}
 
 /// Encapsulates the state of an asynchronous [`Malloc`] delete operation.
-impl DeleteMallocState {
+impl DestroyState {
     /// Sets the result to the waiting future and returns a [`Waker`] to awaken
     /// the waiting future.
     fn set_result(&mut self, status: i32) -> Option<Waker> {
@@ -115,16 +120,33 @@ impl DeleteMallocState {
 }
 
 /// Represents an asynchronous [`Malloc`] delete operation.
-struct DeleteMalloc {
-    inner: Rc<RefCell<DeleteMallocState>>
+struct Destroy {
+    bdev: *mut spdk_bdev,
+    state: Rc<RefCell<DestroyState>>
 }
 
-unsafe impl Send for DeleteMalloc {}
+unsafe impl Send for Destroy {}
 
-impl DeleteMalloc {
+impl Destroy {
+    /// Creates a new [`Destroy`] instance tp asynchronously destroy the
+    /// specified [`Malloc`] block device.
+    fn new(malloc: Malloc) -> Result<Self, Errno> {
+        let mut malloc = ManuallyDrop::new(malloc);
+        let bdev = mem::replace(&mut malloc.0, null_mut());
+
+        if bdev.is_null() {
+            return Err(EBADF);
+        }
+
+        Ok(Self {
+            bdev,
+            state: Rc::new(RefCell::new(Default::default())),
+        })
+    }
+
     /// A callback invoked with the result of the asynchronous delete operation.
     unsafe extern "C" fn complete(arg: *mut c_void, status: i32) {
-        let inner = Rc::from_raw(arg as *mut RefCell<DeleteMallocState>);
+        let inner = Rc::from_raw(arg as *mut RefCell<DestroyState>);
         let waker = match inner.try_borrow_mut() {
             Ok(mut state) => state.set_result(status),
             Err(_) => {
@@ -148,11 +170,11 @@ impl DeleteMalloc {
     }
 }
 
-impl Future for DeleteMalloc {
+impl Future for Destroy {
     type Output = Result<(), Errno>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.state.borrow_mut();
 
         if let Some(result) = inner.result.take() {
             return Poll::Ready(result);
@@ -162,9 +184,9 @@ impl Future for DeleteMalloc {
 
         unsafe {
             delete_malloc_disk(
-                spdk_bdev_get_name(inner.bdev),
+                spdk_bdev_get_name(self.bdev),
                 Some(Self::complete),
-                Rc::into_raw(self.inner.clone()) as *mut c_void)
+                Rc::into_raw(self.state.clone()) as *mut c_void)
         };
 
         Poll::Pending
@@ -176,44 +198,19 @@ pub struct Malloc(*mut spdk_bdev);
 
 unsafe impl Send for Malloc {}
 
-impl Malloc {
-    /// Returns the name of the device.
-    pub fn name(&self) -> &CStr {
-        unsafe { CStr::from_ptr(spdk_bdev_get_name(self.0)) }
-    }
-
-    /// Returns a [`Device`] representing the underlying SPDK block device.
-    pub fn to_block_device(&self) -> Device {
-        Device::from_bdev(self.0)
-    }
-
-    /// Opens the device asynchronously.
-    pub async fn open(&self, write: bool) -> Result<Descriptor, Errno> {
-        Descriptor::open(self.name(), write).await
-    }
-
-    /// Deletes the device asynchronously.
-    pub async fn delete(&mut self) -> Result<(), Errno> {
+#[async_trait]
+impl BDev for Malloc {
+    async fn destroy(self) -> Result<(), Errno> {
         if self.0.is_null() {
             return Ok(());
         }
 
-        let inner = Rc::new(RefCell::new(DeleteMallocState {
-            bdev: self.0,
-            waker: None,
-            result: None,
-        }));
-
-        self.0 = null_mut();
-
-        DeleteMalloc { inner }.await
+        Destroy::new(self)?.await
     }
 }
 
-impl Drop for Malloc {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe { delete_malloc_disk(spdk_bdev_get_name(self.0), None, null_mut()) };
-        }
+impl From<Device<Malloc>> for Malloc {
+    fn from(device: Device<Malloc>) -> Self {
+        Self(ManuallyDrop::new(device).as_ptr())
     }
 }
