@@ -7,6 +7,7 @@ edition = "2021"
 all-features = true
 
 [dependencies]
+async-trait = "0.1.74"
 byte-strings = "0.3.1"
 errno = "0.3.1"
 futures = "0.3.28"

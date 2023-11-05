@@ -18,6 +18,7 @@ pub struct IoChannel<'a> {
 }
 
 unsafe impl Send for IoChannel<'_> {}
+unsafe impl Sync for IoChannel<'_> {}
 
 impl <'a> IoChannel<'a> {
     /// Creates a new [`IoChannel`].

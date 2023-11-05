@@ -9,15 +9,22 @@ use spdk_sys::{
     Errno,
     spdk_bdev,
     spdk_bdev_desc,
+
     spdk_bdev_close,
     spdk_bdev_desc_get_bdev,
     spdk_bdev_get_io_channel,
     spdk_bdev_open_ext,
 };
 
-use crate::errors::EBADF;
+use crate::{
+    bdev::Any,
+    errors::EBADF,
+};
 
-use super::{Device, IoChannel};
+use super::{
+    Device,
+    IoChannel,
+};
 
 /// A handle to an open block device.
 pub struct Descriptor(*mut spdk_bdev_desc);
@@ -50,8 +57,8 @@ impl Descriptor {
     }
 
     /// Returns the [`Device`] associated with this [`Descriptor`].
-    pub fn device(&self) -> Device {
-        Device(unsafe { spdk_bdev_desc_get_bdev(self.0) })
+    pub fn device(&self) -> Device<Any> {
+        Device::from_ptr(unsafe { spdk_bdev_desc_get_bdev(self.0) })
     }
 
     /// Returns an [`IoChannel`] for this [`Descriptor`].

@@ -1,6 +1,16 @@
-use spdk_sys::{spdk_nvmf_ns, spdk_nvmf_ns_get_id, spdk_nvmf_ns_get_bdev, spdk_nvmf_subsystem_get_first_ns, spdk_nvmf_subsystem_get_next_ns};
+use spdk_sys::{
+    spdk_nvmf_ns,
+    
+    spdk_nvmf_ns_get_bdev,
+    spdk_nvmf_ns_get_id,
+    spdk_nvmf_subsystem_get_first_ns,
+    spdk_nvmf_subsystem_get_next_ns,
+};
 
-use crate::block::{self};
+use crate::{
+    bdev::Any,
+    block::{self},
+};
 
 use super::Subsystem;
 
@@ -14,12 +24,12 @@ impl Namespace {
     }
 
     /// Returns the block device backing the namespace.
-    pub fn device(&self) -> block::Device {
+    pub fn device(&self) -> block::Device<Any> {
         let bdev = unsafe { spdk_nvmf_ns_get_bdev(self.0) };
 
         assert!(!bdev.is_null());
 
-        block::Device::from_bdev(bdev)
+        block::Device::from_ptr(bdev)
     }
 }
 
