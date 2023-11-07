@@ -18,7 +18,7 @@ async fn main() {
                     // Create a new thread on the current reactor's core and
                     // spawn a a task on it.
                     let name = CString::new(format!("thread_{}", core.id())).unwrap();
-                    let t = Thread::new(name.as_c_str(), &core.into());
+                    let t = Thread::new(name.as_c_str(), &core.into()).unwrap();
 
                     t.spawn(async move {
                         time::sleep(Duration::from_secs(1 * core.id() as u64)).await;
