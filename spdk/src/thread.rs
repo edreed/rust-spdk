@@ -54,12 +54,26 @@ use crate::{
     },
 };
 
-/// An abstraction of a lightweight, stackless thread of execution.
+/// Represents the ownership state of a [`Thread`].
 #[derive(PartialEq)]
-pub enum Thread {
-    Borrowed(*mut spdk_thread),
+enum OwnershipState {
     Owned(*mut spdk_thread),
+    Borrowed(*mut spdk_thread),
 }
+
+/// An abstraction of a lightweight, stackless thread of execution.
+/// 
+/// `Thread` wraps an `spdk_thread` pointer and can be in one of two ownership
+/// states: owned or borrowed.
+/// 
+/// An owned thread owns the underlying `spdk_thread` pointer and will mark it
+/// for exit when dropped. Any further processing requests on this thread will
+/// fail.
+/// 
+/// A borrowed thread borrows the underlying `spdk_thread` pointer. Dropping a
+/// borrowed thread has no effect on the underlying `spdk_thread` pointer.
+#[derive(PartialEq)]
+pub struct Thread(OwnershipState);
 
 unsafe impl Send for Thread{}
 unsafe impl Sync for Thread{}
@@ -77,7 +91,7 @@ impl Thread {
             spdk_thread_create(name.as_ptr(), cpuset.as_ptr())
         };
 
-        Self::Owned(t)
+        Self(OwnershipState::Owned(t))
     }
 
     /// Returns the thread with the specified unique identifier.
@@ -86,7 +100,7 @@ impl Thread {
             let t = spdk_thread_get_by_id(id);
 
             if !t.is_null() {
-                return Some(Self::Borrowed(t));
+                return Some(Self(OwnershipState::Borrowed(t)));
             }
 
             None
@@ -105,10 +119,10 @@ impl Thread {
     /// function returns `None`.
     pub fn try_application() -> Option<Self> {
         unsafe {
-            let sthread = spdk_thread_get_app_thread();
+            let t = spdk_thread_get_app_thread();
 
-            if !sthread.is_null() {
-                return Some(Self::Borrowed(sthread));
+            if !t.is_null() {
+                return Some(Self(OwnershipState::Borrowed(t)));
             }
 
             None
@@ -137,10 +151,10 @@ impl Thread {
     /// function returns `None`.
     pub fn try_current() -> Option<Self> {
         unsafe {
-            let sthread = spdk_get_thread();
+            let t = spdk_get_thread();
 
-            if !sthread.is_null() {
-                return Some(Self::Borrowed(sthread));
+            if !t.is_null() {
+                return Some(Self(OwnershipState::Borrowed(t)));
             }
 
             None
@@ -167,15 +181,15 @@ impl Thread {
 
     /// Returns a pointer to the underlying `spdk_thread` structure.
     pub(crate) fn as_ptr(&self) -> *const spdk_thread {
-        match self {
-            Self::Borrowed(t) | Self::Owned(t) => *t
+        match self.0 {
+            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t
         }
     }
 
     /// Returns a pointer to the mutable underlying `spdk_thread` structure.
     pub(crate) fn as_mut_ptr(&mut self) -> *mut spdk_thread {
-        match self {
-            Self::Borrowed(t) | Self::Owned(t) => *t
+        match self.0 {
+            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t
         }
     }
 
@@ -192,7 +206,7 @@ impl Thread {
             "thread {} is no longer running",
             self.name().to_string_lossy());
 
-        Self::Borrowed(t as *mut _)
+        Self(OwnershipState::Borrowed(t as *mut _))
     }
 
     /// Returns the name of this thread.
@@ -303,8 +317,8 @@ impl Thread {
 
 impl Drop for Thread {
     fn drop(&mut self) {
-        if let Self::Owned(t) = self {
-            unsafe { spdk_thread_exit(*t); }
+        if let OwnershipState::Owned(t) = self.0 {
+            unsafe { spdk_thread_exit(t); }
         }
     }
 }
