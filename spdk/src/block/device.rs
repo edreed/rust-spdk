@@ -41,12 +41,38 @@ use crate::{
 
 use super::Descriptor;
 
-/// Represents a block device.
-pub enum Device<T: BDev + Send + From<Device<T>> + 'static> {
-    Owned(*mut spdk_bdev, PhantomData<T>),
+/// Represents the ownership state of a [`Device`].
+enum OwnershipState {
+    Owned(*mut spdk_bdev),
     Borrowed(*mut spdk_bdev),
     None,
 }
+
+unsafe impl Send for OwnershipState {}
+
+/// Represents a block device.
+/// 
+/// `Device` wraps an `spdk_bdev` pointer and can be in one of three ownership
+/// states: owned, borrowed, or none.
+/// 
+/// An owned device owns the underlying `spdk_bdev` pointer and will destroy it
+/// when dropped. The caller must ensure that the drop occurs in the same thread
+/// that created the device. It must also occur as part of thread event handling
+/// by explicitly calling [`task::yield_now`] before dropping the device.
+/// However, it is easiest and safest to explicitly call [`Device<T>::destroy`]
+/// on the device rather than let it drop naturally.
+/// 
+/// A borrowed device borrows the underlying `spdk_bdev` pointer. Dropping a
+/// borrowed device has no effect on the underlying `spdk_bdev` pointer.
+/// 
+/// A device with no ownership state can only be safely queried for ownership
+/// state or dropped. Any other operation will panic. A device will be left in
+/// this state after the [`Device<T>::take`] method is called.
+/// 
+/// [`Device<T>::destroy`]: method@Device<T>::destroy
+/// [`Device<T>::take`]: method@Device<T>::take
+/// [`task::yield_now`]: function@crate::task::yield_now
+pub struct Device<T: BDev + Send + From<Device<T>> + 'static>(OwnershipState, PhantomData<T>);
 
 unsafe impl <T: BDev + Send + From<Device<T>> + 'static> Send for Device<T> {}
 unsafe impl <T: BDev + Send + From<Device<T>> + 'static> Sync for Device<T> {}
@@ -64,64 +90,70 @@ impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
         if bdev.is_null() {
             None
         } else {
-            Some(Self::Borrowed(bdev))
+            Some(Self(OwnershipState::Borrowed(bdev), Default::default()))
         }
     }
 
+    /// Get an owned [`Device`] for a raw `spdk_bdev` pointer.
+    pub fn from_ptr_owned(bdev: *mut spdk_bdev) -> Self {
+        Self(OwnershipState::Owned(bdev), Default::default())
+    }
+
     /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
-    pub(crate) fn from_ptr(bdev: *mut spdk_bdev) -> Self {
-        Self::Borrowed(bdev)
+    pub fn from_ptr(bdev: *mut spdk_bdev) -> Self {
+        Self(OwnershipState::Borrowed(bdev), Default::default())
     }
 
     /// Get a pointer to the underlying `spdk_bdev` struct.
     /// 
     /// # Panics
     /// 
-    /// This method panics if this device is [`Device::None`].
+    /// This method panics if this device has no ownership state.
     pub(crate) fn as_ptr(&self) -> *mut spdk_bdev {
-        match self {
-            Self::Owned(bdev, _) | Self::Borrowed(bdev) => *bdev,
+        match self.0 {
+            OwnershipState::Owned(bdev) | OwnershipState::Borrowed(bdev) => bdev,
             _ => panic!("no device"),
         }
     }
 
     /// Borrow this device.
     pub fn borrow(&self) -> Self {
-        Self::Borrowed(self.as_ptr())
+        Self(OwnershipState::Borrowed(self.as_ptr()), Default::default())
     }
 
     /// Returns whether this device is owned.
     pub fn is_owned(&self) -> bool {
-        matches!(self, Self::Owned(_, _))
+        matches!(self.0, OwnershipState::Owned(_))
     }
 
     /// Returns whether this device is borrowed.
     pub fn is_borrowed(&self) -> bool {
-        matches!(self, Self::Borrowed(_))
+        matches!(self.0, OwnershipState::Borrowed(_))
     }
 
-    /// Returns whether this device is [`Device::None`].
+    /// Returns whether this device has no ownership state.
     pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
+        matches!(self.0, OwnershipState::None)
     }
 
-    /// Takes the value from this device and replaces it with [`Device::None`].
+    /// Takes the value from this device and replaces with a value having no
+    /// ownership.
     pub fn take(&mut self) -> Self {
-        mem::replace(self, Self::None)
+        mem::replace(self, Self(OwnershipState::None, Default::default()))
     }
 
     /// Destroy the block device asynchronously.
     /// 
     /// # Returns
     /// 
-    /// Only an owned device can be destroyed. This function returns
-    /// [`Err(EPERM)`] if called on a borrowed device and [`Err(ENODEV)`] if
-    /// called on [`Device::None`].
+    /// Only an owned device can be destroyed. This function returns `Err(EPERM)`
+    /// if called on a borrowed device and `Err(ENODEV)` if called on a device
+    /// that neither owns nor borrows the underlying `spdk_bdev` pointer.
     pub async fn destroy(mut self) -> Result<(), Errno> {
-        match self {
-            Self::Borrowed(_) => Err(EPERM),
-            Self::None => Err(ENODEV),
-            Self::Owned(_, _) => {
+        match self.0 {
+            OwnershipState::Borrowed(_) => Err(EPERM),
+            OwnershipState::None => Err(ENODEV),
+            OwnershipState::Owned(_) => {
                 T::destroy(self.take().into()).await
             },
         }
@@ -227,7 +259,7 @@ impl Iterator for Devices {
 
             self.0 = unsafe { spdk_bdev_next(self.0) };
 
-            Some(Device::Borrowed(current))
+            Some(Device::from_ptr(current))
         }
     }
 }

@@ -1,4 +1,4 @@
-//! Support for the Storage Performance Development Kit Malloc Block Device.
+//! Support for the Storage Performance Development Kit Malloc Block Device
 //! plug-in.
 use std::{
     cell::RefCell,
@@ -19,7 +19,8 @@ use std::{
     rc::Rc,
     task::{
         Context,
-        Poll, Waker,
+        Poll,
+        Waker,
     },
 };
 
@@ -38,8 +39,8 @@ use spdk_sys::{
 
 use crate::{
     block::Device,
-    thread::Thread,
     errors::EBADF,
+    thread::Thread,
 };
 
 use super::BDev;
@@ -80,13 +81,23 @@ impl Builder {
         self
     }
 
-    /// Creates a new [`Device<Malloc>`] instance.
+    /// Creates a new [`Device<Malloc>`] instance that owns the underlying
+    /// `spdk_bdev` pointer.
+    /// 
+    /// # Notes
+    /// 
+    /// The returned [`Device<Malloc>`] instance owns the underlying `spdk_bdev`
+    /// pointer and will destroy it when dropped. See [`Device<T>`] for a detailed
+    /// discussion of ownership semantics and requirements.
+    /// 
+    /// [`Device<Malloc>::destroy`]: method@crate::block::Device<Malloc>::destroy
+    /// [`task::yield_now`]: function@crate::task::yield_now
     pub fn build(self) -> Result<Device<Malloc>, Errno>{
         let mut malloc = null_mut();
         
         unsafe { to_result!(create_malloc_disk(&mut malloc, &self.0))? };
 
-        Ok(Device::Owned(malloc, Default::default()))
+        Ok(Device::from_ptr_owned(malloc))
     }
 }
 
