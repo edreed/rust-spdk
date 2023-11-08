@@ -1,6 +1,10 @@
 use std::{
     ffi::CStr,
-    ptr::null_mut,
+    ptr::{
+        NonNull,
+
+        null_mut,
+    },
 };
 
 use spdk_sys::{
@@ -27,7 +31,7 @@ use super::{
 };
 
 /// A handle to an open block device.
-pub struct Descriptor(*mut spdk_bdev_desc);
+pub struct Descriptor(NonNull<spdk_bdev_desc>);
 
 unsafe impl Send for Descriptor {}
 
@@ -48,17 +52,17 @@ impl Descriptor {
                 &mut desc))?;
         }
 
-        Ok(Descriptor(desc))
+        Ok(Descriptor(NonNull::new(desc).unwrap()))
     }
 
     /// Returns a pointer to the underlying `spdk_bdev_desc` struct.
     pub fn as_ptr(&self) -> *mut spdk_bdev_desc {
-        self.0
+        self.0.as_ptr()
     }
 
     /// Returns the [`Device`] associated with this [`Descriptor`].
     pub fn device(&self) -> Device<Any> {
-        Device::from_ptr(unsafe { spdk_bdev_desc_get_bdev(self.0) })
+        Device::from_ptr(unsafe { spdk_bdev_desc_get_bdev(self.0.as_ptr()) })
     }
 
     /// Returns an [`IoChannel`] for this [`Descriptor`].
@@ -66,7 +70,7 @@ impl Descriptor {
     /// I/O channels are bound to the `spdk_thread` on which this function is
     /// called. The returned [`IoChannel`] cannot be used from any other thread.
     pub fn io_channel(&self) -> Result<IoChannel<'_>, Errno> {
-        let channel = unsafe { spdk_bdev_get_io_channel(self.0) };
+        let channel = unsafe { spdk_bdev_get_io_channel(self.0.as_ptr()) };
 
         if channel.is_null() {
             return Err(EBADF);
@@ -78,6 +82,6 @@ impl Descriptor {
 
 impl Drop for Descriptor {
     fn drop(&mut self) {
-        unsafe { spdk_bdev_close(self.0) }
+        unsafe { spdk_bdev_close(self.0.as_ptr()) }
     }
 }
