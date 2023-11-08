@@ -16,14 +16,10 @@ use spdk_sys::{
 
     spdk_bdev_close,
     spdk_bdev_desc_get_bdev,
-    spdk_bdev_get_io_channel,
     spdk_bdev_open_ext,
 };
 
-use crate::{
-    bdev::Any,
-    errors::EBADF,
-};
+use crate::bdev::Any;
 
 use super::{
     Device,
@@ -70,13 +66,7 @@ impl Descriptor {
     /// I/O channels are bound to the `spdk_thread` on which this function is
     /// called. The returned [`IoChannel`] cannot be used from any other thread.
     pub fn io_channel(&self) -> Result<IoChannel<'_>, Errno> {
-        let channel = unsafe { spdk_bdev_get_io_channel(self.0.as_ptr()) };
-
-        if channel.is_null() {
-            return Err(EBADF);
-        }
-
-        Ok(IoChannel::new(self, channel))
+        IoChannel::new(self)
     }
 }
 
