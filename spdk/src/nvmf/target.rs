@@ -202,7 +202,7 @@ impl Target {
             return Err(ENOMEM);
         }
 
-        Ok(Subsystem(subsys))
+        Ok(Subsystem::from_ptr(subsys))
     }
 
     /// Returns an iterator over the subsystems on this target.
