@@ -6,6 +6,7 @@ use std::{
 
         size_of_val,
     },
+    ptr::NonNull,
     rc::Rc,
     task::{
         Poll,
@@ -115,7 +116,7 @@ impl Future for AddTransport<'_> {
                     Rc::increment_strong_count(state_raw);
 
                     spdk_nvmf_tgt_add_transport(
-                        self.target.0,
+                        self.target.as_ptr(),
                         self.transport.as_ptr() as *mut _,
                         Some(Self::complete),
                         state_raw as *mut std::ffi::c_void,
@@ -129,7 +130,7 @@ impl Future for AddTransport<'_> {
 }
 
 /// Represents a NVMe-oF target.
-pub struct Target(*mut spdk_nvmf_tgt);
+pub struct Target(NonNull<spdk_nvmf_tgt>);
 
 unsafe impl Send for Target {}
 
@@ -137,15 +138,23 @@ impl Target {
     /// Returns the name of the target.
     pub fn name(&self) -> &'static CStr {
         unsafe {
-            let name = spdk_nvmf_tgt_get_name(self.0);
+            let name = spdk_nvmf_tgt_get_name(self.as_ptr());
 
             CStr::from_ptr(name)
         }
     }
 
+    /// Returns a NVMf target from a raw `spdk_nvmf_target` pointer.
+    pub fn from_ptr(ptr: *mut spdk_nvmf_tgt) -> Self {
+        match NonNull::new(ptr) {
+            Some(ptr) => Self(ptr),
+            None => panic!("target pointer must not be null"),
+        }
+    }
+
     /// Returns a pointer to the underlying `spdk_nvmf_target` structure.
-    pub(crate) fn as_ptr(&self) -> *mut spdk_nvmf_tgt {
-        self.0
+    pub fn as_ptr(&self) -> *mut spdk_nvmf_tgt {
+        self.0.as_ptr()
     }
 
     /// Adds a transport to the target.
@@ -186,7 +195,7 @@ impl Target {
     /// [`start`]: method@Subsystem::start
     pub fn add_subsystem(&mut self, nqn: &CStr, subtype: SubsystemType, num_ns: u32) -> Result<Subsystem, Errno> {
         let subsys = unsafe {
-            spdk_nvmf_subsystem_create(self.0, nqn.as_ptr(), subtype.into(), num_ns)
+            spdk_nvmf_subsystem_create(self.as_ptr(), nqn.as_ptr(), subtype.into(), num_ns)
         };
 
         if subsys.is_null() {
@@ -246,7 +255,7 @@ impl Target {
 
             let mut opts = opts.assume_init();
 
-            to_result!(spdk_nvmf_tgt_listen_ext(self.0, transport_id.as_ptr(), &mut opts as *mut _))
+            to_result!(spdk_nvmf_tgt_listen_ext(self.as_ptr(), transport_id.as_ptr(), &mut opts as *mut _))
         }
     }
 }
@@ -268,7 +277,7 @@ impl Iterator for Targets {
 
                 self.0 = spdk_nvmf_get_next_tgt(tgt);
 
-                Some(Target(tgt))
+                Some(Target::from_ptr(tgt))
             }
         }
     }
