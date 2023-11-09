@@ -1,4 +1,7 @@
-use std::ffi::CStr;
+use std::{
+    ffi::CStr,
+    ptr::NonNull,
+};
 
 use spdk_sys::{
     spdk_nvmf_host,
@@ -11,14 +14,27 @@ use spdk_sys::{
 use super::Subsystem;
 
 /// Represents a host allowed to connect to a NVMe-oF subsystem.
-pub struct Host(*mut spdk_nvmf_host);
+pub struct Host(NonNull<spdk_nvmf_host>);
 
 unsafe impl Send for Host {}
 
 impl Host {
+    /// Returns a host from a raw `spdk_nvmf_host` pointer.
+    pub fn from_ptr(ptr: *mut spdk_nvmf_host) -> Self {
+        match NonNull::new(ptr) {
+            Some(ptr) => Self(ptr),
+            None => panic!("host pointer must not be null"),
+        }
+    }
+
+    /// Returns a pointer to the underlying `spdk_nvmf_host` structure.
+    pub fn as_ptr(&self) -> *mut spdk_nvmf_host {
+        self.0.as_ptr()
+    }
+
     /// Returns the NQN of the host.
     pub fn nqn(&self) -> &CStr {
-        unsafe { CStr::from_ptr(spdk_nvmf_host_get_nqn(self.0)) }
+        unsafe { CStr::from_ptr(spdk_nvmf_host_get_nqn(self.as_ptr())) }
     }
 }
 
@@ -57,7 +73,7 @@ impl Iterator for AllowedHosts<'_> {
                 self.subsys.as_ptr(),
                 self.next);
 
-            Some(Host(next))
+            Some(Host::from_ptr(next))
         }
     }
 }
