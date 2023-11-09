@@ -1,10 +1,15 @@
+use std::ptr::NonNull;
+
 use spdk_sys::{
     Errno,
     spdk_io_channel,
 
+    spdk_bdev_get_io_channel,
     spdk_put_io_channel,
 };
 
+
+use crate::errors::ENOMEM;
 
 use super::{
     Descriptor,
@@ -14,7 +19,7 @@ use super::{
 /// A handle to a block device I/O channel.
 pub struct IoChannel<'a> {
     desc: &'a Descriptor,
-    channel: *mut spdk_io_channel,
+    channel: NonNull<spdk_io_channel>,
 }
 
 unsafe impl Send for IoChannel<'_> {}
@@ -22,8 +27,13 @@ unsafe impl Sync for IoChannel<'_> {}
 
 impl <'a> IoChannel<'a> {
     /// Creates a new [`IoChannel`].
-    pub(crate) fn new(desc: &'a Descriptor, channel: *mut spdk_io_channel) -> Self {
-        Self { desc, channel }
+    pub(crate) fn new(desc: &'a Descriptor) -> Result<Self, Errno> {
+        let channel = unsafe { spdk_bdev_get_io_channel(desc.as_ptr()) };
+        
+        match NonNull::new(channel) {
+            Some(channel) => Ok(Self { desc, channel }),
+            None => Err(ENOMEM),
+        }
     }
 
     /// Returns the [`Descriptor`] associated with this [`IoChannel`].
@@ -33,7 +43,7 @@ impl <'a> IoChannel<'a> {
 
     /// Returns a pointer to the underlying `spdk_io_channel` struct.
     pub fn as_ptr(&self) -> *mut spdk_io_channel {
-        self.channel
+        self.channel.as_ptr()
     }
 
     /// Resets the block device zone.
@@ -81,7 +91,7 @@ impl <'a> IoChannel<'a> {
 
 impl Drop for IoChannel<'_> {
     fn drop(&mut self) {
-        unsafe { spdk_put_io_channel(self.channel) }
+        unsafe { spdk_put_io_channel(self.channel.as_ptr()) }
     }
 }
 

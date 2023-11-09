@@ -21,6 +21,7 @@ use std::{
     future::Future,
     mem::MaybeUninit,
     pin::Pin,
+    ptr::NonNull,
 };
 
 use spdk_sys::{
@@ -46,6 +47,7 @@ use spdk_sys::{
 };
 
 use crate::{
+    errors::ENOMEM,
     runtime::CpuSet,
     task::{
         JoinHandle,
@@ -57,8 +59,8 @@ use crate::{
 /// Represents the ownership state of a [`Thread`].
 #[derive(PartialEq)]
 enum OwnershipState {
-    Owned(*mut spdk_thread),
-    Borrowed(*mut spdk_thread),
+    Owned(NonNull<spdk_thread>),
+    Borrowed(NonNull<spdk_thread>),
 }
 
 /// An abstraction of a lightweight, stackless thread of execution.
@@ -86,24 +88,42 @@ impl Thread {
     /// The thread object returned is owned by the caller. When dropped, the
     /// thread will be marked for exit causing any further processing requests
     /// on this thread to fail.
-    pub fn new(name: &CStr, cpuset: &CpuSet) -> Self {
+    pub fn new(name: &CStr, cpuset: &CpuSet) -> Result<Self, Errno> {
         let t = unsafe {
             spdk_thread_create(name.as_ptr(), cpuset.as_ptr())
         };
 
-        Self(OwnershipState::Owned(t))
+        match NonNull::new(t) {
+            Some(t) => Ok(Self(OwnershipState::Owned(t))),
+            None => Err(ENOMEM),
+        }
     }
 
-    /// Returns the thread with the specified unique identifier.
+    /// Returns an owned thread object for the specified pointer.
+    pub fn from_ptr_owned(thread: *mut spdk_thread) -> Self {
+        match NonNull::new(thread) {
+            Some(t) => Self(OwnershipState::Owned(t)),
+            None => panic!("thread pointer must not be null"),
+        }
+    }
+
+    /// Returns a borrowed thread object for the specified pointer.
+    pub fn from_ptr(thread: *mut spdk_thread) -> Self {
+        match NonNull::new(thread) {
+            Some(t) => Self(OwnershipState::Borrowed(t)),
+            None => panic!("thread pointer must not be null"),
+        }
+    }
+
+    /// Returns the borrowed thread with the specified unique identifier.
     pub fn from_id(id: u64) -> Option<Self> {
         unsafe {
             let t = spdk_thread_get_by_id(id);
 
-            if !t.is_null() {
-                return Some(Self(OwnershipState::Borrowed(t)));
+            match NonNull::new(t) {
+                Some(t) => Some(Self(OwnershipState::Borrowed(t))),
+                None => None,
             }
-
-            None
         }
     }
 
@@ -121,11 +141,10 @@ impl Thread {
         unsafe {
             let t = spdk_thread_get_app_thread();
 
-            if !t.is_null() {
-                return Some(Self(OwnershipState::Borrowed(t)));
+            match NonNull::new(t) {
+                Some(t) => Some(Self(OwnershipState::Borrowed(t))),
+                None => None,
             }
-
-            None
         }
     }
 
@@ -153,11 +172,10 @@ impl Thread {
         unsafe {
             let t = spdk_get_thread();
 
-            if !t.is_null() {
-                return Some(Self(OwnershipState::Borrowed(t)));
+            match NonNull::new(t) {
+                Some(t) => Some(Self(OwnershipState::Borrowed(t))),
+                None => None,
             }
-
-            None
         }
     }
 
@@ -182,14 +200,14 @@ impl Thread {
     /// Returns a pointer to the underlying `spdk_thread` structure.
     pub(crate) fn as_ptr(&self) -> *const spdk_thread {
         match self.0 {
-            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t
+            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t.as_ptr()
         }
     }
 
     /// Returns a pointer to the mutable underlying `spdk_thread` structure.
     pub(crate) fn as_mut_ptr(&mut self) -> *mut spdk_thread {
         match self.0 {
-            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t
+            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t.as_ptr()
         }
     }
 
@@ -206,7 +224,9 @@ impl Thread {
             "thread {} is no longer running",
             self.name().to_string_lossy());
 
-        Self(OwnershipState::Borrowed(t as *mut _))
+        let t = unsafe { NonNull::new_unchecked(t as *mut _) };
+
+        Self(OwnershipState::Borrowed(t))
     }
 
     /// Returns the name of this thread.
@@ -318,7 +338,7 @@ impl Thread {
 impl Drop for Thread {
     fn drop(&mut self) {
         if let OwnershipState::Owned(t) = self.0 {
-            unsafe { spdk_thread_exit(t); }
+            unsafe { spdk_thread_exit(t.as_ptr()); }
         }
     }
 }

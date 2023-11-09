@@ -7,7 +7,7 @@ use std::{
         Poll,
         Waker,
     },
-    ptr::null_mut, ffi::{CStr, c_void},
+    ptr::{null_mut, NonNull}, ffi::{CStr, c_void},
 };
 
 use futures::Future;
@@ -143,7 +143,7 @@ impl TaskInner<'_> {
     unsafe fn start(data: *const ()) -> Result<(), Errno> {
         let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
 
-        to_result!(spdk_nvmf_subsystem_start(this.subsystem.0, Some(Self::state_change_complete), data as *mut c_void))
+        to_result!(spdk_nvmf_subsystem_start(this.subsystem.as_ptr(), Some(Self::state_change_complete), data as *mut c_void))
     }
 
     /// Stops the subsystem.
@@ -152,7 +152,7 @@ impl TaskInner<'_> {
     unsafe fn stop(data: *const ()) -> Result<(), Errno> {
         let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
 
-        to_result!(spdk_nvmf_subsystem_stop(this.subsystem.0, Some(Self::state_change_complete), data as *mut c_void))
+        to_result!(spdk_nvmf_subsystem_stop(this.subsystem.as_ptr(), Some(Self::state_change_complete), data as *mut c_void))
     }
 
     /// Pauses the subsystem.
@@ -162,7 +162,7 @@ impl TaskInner<'_> {
         let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
 
         if let Operation::Pause { ns } = this.op {
-            return to_result!(spdk_nvmf_subsystem_pause(this.subsystem.0, ns, Some(Self::state_change_complete), data as *mut c_void));
+            return to_result!(spdk_nvmf_subsystem_pause(this.subsystem.as_ptr(), ns, Some(Self::state_change_complete), data as *mut c_void));
         }
 
         unreachable!("parameter mismatch");
@@ -174,7 +174,7 @@ impl TaskInner<'_> {
     unsafe fn resume(data: *const ()) -> Result<(), Errno> {
         let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
 
-        to_result!(spdk_nvmf_subsystem_resume(this.subsystem.0, Some(Self::state_change_complete), data as *mut c_void))
+        to_result!(spdk_nvmf_subsystem_resume(this.subsystem.as_ptr(), Some(Self::state_change_complete), data as *mut c_void))
     }
 
     unsafe fn add_listener(data: *const ()) -> Result<(), Errno> {
@@ -182,7 +182,7 @@ impl TaskInner<'_> {
 
         if let Operation::AddListener { transport_id } = this.op {
             spdk_nvmf_subsystem_add_listener(
-                this.subsystem.0,
+                this.subsystem.as_ptr(),
                 transport_id.as_ptr() as *mut _,
                 Some(Self::complete),
                 data as *mut c_void);
@@ -260,20 +260,28 @@ impl From<SubsystemType> for spdk_nvmf_subtype {
 }
 
 /// Represents a NVMe-oF .
-pub struct Subsystem(pub(crate) *mut spdk_nvmf_subsystem);
+pub struct Subsystem(NonNull<spdk_nvmf_subsystem>);
 
 unsafe impl Send for Subsystem {}
 
 impl Subsystem {
+    /// Returns a subsystem from a raw `spdk_nvmf_subsystem`.
+    pub fn from_ptr(ptr: *mut spdk_nvmf_subsystem) -> Self {
+        match NonNull::new(ptr) {
+            Some(subsys) => Self(subsys),
+            None => panic!("subsystem pointer must not be null"),
+        }
+    }
+
     /// Returns the pointer to the underlying `spdk_nvmf_subsystem` structure.
     pub(crate) fn as_ptr(&self) -> *mut spdk_nvmf_subsystem{
-        self.0
+        self.0.as_ptr()
     }
 
     /// Sets the serial number of the subsystem.
     pub fn set_serial_number(&self, sn: &CStr) -> Result<(), Errno> {
         unsafe {
-            if spdk_nvmf_subsystem_set_sn(self.0, sn.as_ptr()) < 0 {
+            if spdk_nvmf_subsystem_set_sn(self.as_ptr(), sn.as_ptr()) < 0 {
                 return Err(EINVAL);
             }
         }
@@ -284,14 +292,14 @@ impl Subsystem {
     /// Returns the serial number of the subsystem.
     pub fn serial_number(&self) -> &CStr {
         unsafe {
-            CStr::from_ptr(spdk_nvmf_subsystem_get_sn(self.0))
+            CStr::from_ptr(spdk_nvmf_subsystem_get_sn(self.as_ptr()))
         }
     }
 
     /// Sets the model number of the subsystem.
     pub fn set_model_number(&self, mn: &CStr) -> Result<(), Errno> {
         unsafe {
-            if spdk_nvmf_subsystem_set_mn(self.0, mn.as_ptr()) < 0 {
+            if spdk_nvmf_subsystem_set_mn(self.as_ptr(), mn.as_ptr()) < 0 {
                 return Err(EINVAL);
             }
         }
@@ -302,21 +310,21 @@ impl Subsystem {
     /// Returns the model number of the subsystem.
     pub fn model_number(&self) -> &CStr {
         unsafe {
-            CStr::from_ptr(spdk_nvmf_subsystem_get_mn(self.0))
+            CStr::from_ptr(spdk_nvmf_subsystem_get_mn(self.as_ptr()))
         }
     }
 
     /// Returns the NQN of the subsystem.
     pub fn nqn(&self) -> &CStr {
         unsafe {
-            CStr::from_ptr(spdk_nvmf_subsystem_get_nqn(self.0))
+            CStr::from_ptr(spdk_nvmf_subsystem_get_nqn(self.as_ptr()))
         }
     }
 
     /// Return the type of the subsystem.
     pub fn subtype(&self) -> SubsystemType {
         unsafe {
-            spdk_nvmf_subsystem_get_type(self.0).into()
+            spdk_nvmf_subsystem_get_type(self.as_ptr()).into()
         }
     }
 
@@ -329,7 +337,7 @@ impl Subsystem {
     /// the allowed list.
     pub fn allow_any_host(&self, allow: bool) {
         unsafe {
-            spdk_nvmf_subsystem_set_allow_any_host(self.0, allow);
+            spdk_nvmf_subsystem_set_allow_any_host(self.as_ptr(), allow);
         }
     }
 
@@ -337,14 +345,14 @@ impl Subsystem {
     /// in the allowed list.
     pub fn is_any_host_allowed(&self) -> bool {
         unsafe {
-            spdk_nvmf_subsystem_get_allow_any_host(self.0)
+            spdk_nvmf_subsystem_get_allow_any_host(self.as_ptr())
         }
     }
 
     /// Adds a host NQN to the allowed list.
     pub fn allow_host(&self, host_nqn: &CStr) -> Result<(), Errno> {
         unsafe {
-            to_result!(spdk_nvmf_subsystem_add_host(self.0, host_nqn.as_ptr(), null_mut()))
+            to_result!(spdk_nvmf_subsystem_add_host(self.as_ptr(), host_nqn.as_ptr(), null_mut()))
         }
     }
 
@@ -359,7 +367,7 @@ impl Subsystem {
     /// `Ok(false)` if the host was not in the allowed list.
     pub fn deny_host(&self, host_nqn: &CStr) -> Result<bool, Errno> {
         let res = unsafe {
-            to_result!(spdk_nvmf_subsystem_remove_host(self.0, host_nqn.as_ptr()))
+            to_result!(spdk_nvmf_subsystem_remove_host(self.as_ptr(), host_nqn.as_ptr()))
         };
 
         match res {
@@ -372,7 +380,7 @@ impl Subsystem {
     /// Returns whether the given host is allowed to connect to the subsystem.
     pub fn is_host_allowed(&self, host_nqn: &CStr) -> bool {
         unsafe {
-            spdk_nvmf_subsystem_host_allowed(self.0, host_nqn.as_ptr())
+            spdk_nvmf_subsystem_host_allowed(self.as_ptr(), host_nqn.as_ptr())
         }
     }
 
@@ -444,7 +452,7 @@ impl Subsystem {
     pub fn add_namespace(&self, device_name: &CStr) -> Result<Namespace, Errno> {
         unsafe {
             let nsid = spdk_nvmf_subsystem_add_ns_ext(
-                self.0,
+                self.as_ptr(),
                 device_name.as_ptr(),
                 null_mut(),
                 0,
@@ -453,8 +461,10 @@ impl Subsystem {
             if nsid == 0 {
                 return Err(EINVAL);
             }
-    
-            return Ok(Namespace(spdk_nvmf_subsystem_get_ns(self.0, nsid)));
+
+            let ns = spdk_nvmf_subsystem_get_ns(self.as_ptr(), nsid);
+
+            return Ok(Namespace::from_ptr(ns));
         }
     }
 
@@ -464,7 +474,7 @@ impl Subsystem {
     /// namespace.
     pub fn remove_namespace(&self, nsid: u32) -> Result<(), Errno> {
         unsafe {
-            to_result!(spdk_nvmf_subsystem_remove_ns(self.0, nsid))
+            to_result!(spdk_nvmf_subsystem_remove_ns(self.as_ptr(), nsid))
         }
     }
 
@@ -497,7 +507,7 @@ impl Subsystem {
     pub fn remove_listener(&self, transport_id: &TransportId) -> Result<bool, Errno> {
         let res = unsafe {
             to_result!(spdk_nvmf_subsystem_remove_listener(
-                self.0,
+                self.as_ptr(),
                 transport_id.as_ptr()))
         };
 
@@ -526,10 +536,10 @@ impl Iterator for Subsystems {
             return None;
         }
 
-        let subsystem = Subsystem(self.0);
+        let subsystem = Subsystem::from_ptr(self.0);
 
         unsafe {
-            self.0 = spdk_nvmf_subsystem_get_next(subsystem.0);
+            self.0 = spdk_nvmf_subsystem_get_next(subsystem.as_ptr());
         }
 
         Some(subsystem)

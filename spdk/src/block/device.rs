@@ -6,6 +6,7 @@ use std::{
     ffi::CStr,
     marker::PhantomData,
     mem::{self},
+    ptr::NonNull,
 };
 
 use spdk_sys::{
@@ -43,8 +44,8 @@ use super::Descriptor;
 
 /// Represents the ownership state of a [`Device`].
 enum OwnershipState {
-    Owned(*mut spdk_bdev),
-    Borrowed(*mut spdk_bdev),
+    Owned(NonNull<spdk_bdev>),
+    Borrowed(NonNull<spdk_bdev>),
     None,
 }
 
@@ -87,21 +88,32 @@ impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
     pub fn from_name(name: &CStr) -> Option<Self> {
         let bdev = unsafe { spdk_bdev_get_by_name(name.as_ptr()) };
 
-        if bdev.is_null() {
-            None
-        } else {
-            Some(Self(OwnershipState::Borrowed(bdev), Default::default()))
+        match NonNull::new(bdev) {
+            Some(b) => {
+                Some(Self(OwnershipState::Borrowed(b), Default::default()))
+            },
+            None => None,
         }
     }
 
     /// Get an owned [`Device`] for a raw `spdk_bdev` pointer.
     pub fn from_ptr_owned(bdev: *mut spdk_bdev) -> Self {
-        Self(OwnershipState::Owned(bdev), Default::default())
+        match NonNull::new(bdev) {
+            Some(b) => {
+                Self(OwnershipState::Owned(b), Default::default())
+            },
+            None => panic!("device pointer must not be null"),
+        }
     }
 
     /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
     pub fn from_ptr(bdev: *mut spdk_bdev) -> Self {
-        Self(OwnershipState::Borrowed(bdev), Default::default())
+        match NonNull::new(bdev) {
+            Some(b) => {
+                Self(OwnershipState::Borrowed(b), Default::default())
+            },
+            None => panic!("device pointer must not be null"),
+        }
     }
 
     /// Get a pointer to the underlying `spdk_bdev` struct.
@@ -111,14 +123,19 @@ impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
     /// This method panics if this device has no ownership state.
     pub(crate) fn as_ptr(&self) -> *mut spdk_bdev {
         match self.0 {
-            OwnershipState::Owned(bdev) | OwnershipState::Borrowed(bdev) => bdev,
+            OwnershipState::Owned(bdev) | OwnershipState::Borrowed(bdev) => bdev.as_ptr(),
             _ => panic!("no device"),
         }
     }
 
     /// Borrow this device.
     pub fn borrow(&self) -> Self {
-        Self(OwnershipState::Borrowed(self.as_ptr()), Default::default())
+        match self.0 {
+            OwnershipState::Owned(bdev)  | OwnershipState::Borrowed(bdev) => {
+                Self(OwnershipState::Borrowed(bdev), Default::default())
+            },
+            OwnershipState::None => panic!("no device"),
+        }
     }
 
     /// Returns whether this device is owned.

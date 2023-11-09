@@ -15,7 +15,11 @@ use std::{
         c_void,
     },
     pin::Pin,
-    ptr::null_mut,
+    ptr::{
+        NonNull,
+
+        null_mut,
+    },
     rc::Rc,
     task::{
         Context,
@@ -39,7 +43,6 @@ use spdk_sys::{
 
 use crate::{
     block::Device,
-    errors::EBADF,
     thread::Thread,
 };
 
@@ -132,25 +135,18 @@ impl DestroyState {
 
 /// Represents an asynchronous [`Malloc`] delete operation.
 struct Destroy {
-    bdev: *mut spdk_bdev,
+    bdev: NonNull<spdk_bdev>,
     state: Rc<RefCell<DestroyState>>
 }
 
 unsafe impl Send for Destroy {}
 
 impl Destroy {
-    /// Creates a new [`Destroy`] instance tp asynchronously destroy the
+    /// Creates a new [`Destroy`] instance to asynchronously destroy the
     /// specified [`Malloc`] block device.
     fn new(malloc: Malloc) -> Result<Self, Errno> {
-        let mut malloc = ManuallyDrop::new(malloc);
-        let bdev = mem::replace(&mut malloc.0, null_mut());
-
-        if bdev.is_null() {
-            return Err(EBADF);
-        }
-
         Ok(Self {
-            bdev,
+            bdev: malloc.0,
             state: Rc::new(RefCell::new(Default::default())),
         })
     }
@@ -195,7 +191,7 @@ impl Future for Destroy {
 
         unsafe {
             delete_malloc_disk(
-                spdk_bdev_get_name(self.bdev),
+                spdk_bdev_get_name(self.bdev.as_ptr()),
                 Some(Self::complete),
                 Rc::into_raw(self.state.clone()) as *mut c_void)
         };
@@ -205,23 +201,19 @@ impl Future for Destroy {
 }
 
 /// Represents a Malloc Block Device.
-pub struct Malloc(*mut spdk_bdev);
+pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}
 
 #[async_trait]
 impl BDev for Malloc {
     async fn destroy(self) -> Result<(), Errno> {
-        if self.0.is_null() {
-            return Ok(());
-        }
-
         Destroy::new(self)?.await
     }
 }
 
 impl From<Device<Malloc>> for Malloc {
     fn from(device: Device<Malloc>) -> Self {
-        Self(ManuallyDrop::new(device).as_ptr())
+        Self(NonNull::new(ManuallyDrop::new(device).as_ptr()).unwrap())
     }
 }

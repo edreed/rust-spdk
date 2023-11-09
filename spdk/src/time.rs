@@ -58,7 +58,7 @@ use std::{
     cell::UnsafeCell,
     option::Option,
     os::raw::c_void,
-    ptr::null_mut,
+    ptr::NonNull,
     task::{
         Context,
         Poll,
@@ -92,7 +92,7 @@ struct IntervalState {
 /// [`Interval`] enables you to wait asynchronously on a sequence of instants
 /// with a fixed period.
 pub struct Interval {
-    poller: *mut spdk_poller,
+    poller: NonNull<spdk_poller>,
     state: Box<UnsafeCell<IntervalState>>
 }
 
@@ -121,7 +121,7 @@ impl Interval {
 
 impl Drop for Interval {
     fn drop(&mut self) {
-        unsafe { spdk_poller_unregister(&mut self.poller as *mut _) }
+        unsafe { spdk_poller_unregister(&mut self.poller.as_ptr()) }
     }
 }
 
@@ -151,24 +151,19 @@ pub fn interval(period: Duration) -> Interval {
     }
 
     let period_us = period.as_micros().try_into().unwrap();
-    let mut interval = Interval {
-        poller: null_mut(),
-        state: Box::new(UnsafeCell::new(IntervalState {
+    let state = Box::new(UnsafeCell::new(IntervalState {
             ticker: 0,
             waker: None,
-        })),
-    };
-    let poller = unsafe {
+        }));
+    let poller = NonNull::new(unsafe {
         spdk_poller_register(
             Some(poll),
-            interval.state.get() as *mut c_void,
+            state.get() as *mut c_void,
             period_us
         )
-    };
+    }).unwrap();
 
-    interval.poller = poller;
-
-    interval
+    Interval { poller, state }
 }
 
 /// Waits until `duration` has elapsed.
