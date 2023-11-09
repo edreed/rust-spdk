@@ -9,6 +9,7 @@ use std::{
     },
     os::raw::c_void,
     pin::Pin,
+    ptr::NonNull,
     rc::Rc,
     task::{
         Context,
@@ -138,7 +139,7 @@ impl CreateTransportState {
         if transport.is_null() {
             self.result = Some(Err(ENOMEM));
         } else {
-            self.result = Some(Ok(Transport(transport)));
+            self.result = Some(Ok(Transport::from_ptr(transport)));
         }
 
         self.waker.take()
@@ -348,26 +349,34 @@ impl Builder {
 }
 
 /// Represents a NVMe-oF transport.
-pub struct Transport(*mut spdk_nvmf_transport);
+pub struct Transport(NonNull<spdk_nvmf_transport>);
 
 unsafe impl Send for Transport {}
 
 impl Transport {
+    /// Returns a transport from a raw `spdk_nvmf_transport` pointer.
+    pub fn from_ptr(ptr: *const spdk_nvmf_transport) -> Self {
+        match NonNull::new(ptr as *mut spdk_nvmf_transport) {
+            Some(ptr) => Self(ptr),
+            None => panic!("transport pointer must not be null"),
+        }
+    }
+
     /// Returns a pointer to the underlying `spdk_nvmf_transport` structure.
-    pub(crate) fn as_ptr(&self) -> *const spdk_nvmf_transport {
-        self.0
+    pub fn as_ptr(&self) -> *mut spdk_nvmf_transport {
+        self.0.as_ptr()
     }
 
     /// Returns the name of the transport.
     pub fn name(&self) -> &'static CStr {
         unsafe {
-            CStr::from_ptr(spdk_nvmf_get_transport_name(self.0))
+            CStr::from_ptr(spdk_nvmf_get_transport_name(self.as_ptr()))
         }
     }
 
     /// Returns the type of the transport.
     pub fn r#type(&self) -> TransportType {
-        unsafe { spdk_nvmf_get_transport_type(self.0).into() }
+        unsafe { spdk_nvmf_get_transport_type(self.as_ptr()).into() }
     }
 }
 
@@ -393,6 +402,6 @@ impl Iterator for Transports {
 
         self.0 = unsafe { spdk_nvmf_transport_get_next(self.0) };
 
-        Some(Transport(transport))
+        Some(Transport::from_ptr(transport))
     }
 }
