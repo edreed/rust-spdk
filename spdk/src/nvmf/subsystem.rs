@@ -461,8 +461,10 @@ impl Subsystem {
             if nsid == 0 {
                 return Err(EINVAL);
             }
-    
-            return Ok(Namespace(spdk_nvmf_subsystem_get_ns(self.as_ptr(), nsid)));
+
+            let ns = spdk_nvmf_subsystem_get_ns(self.as_ptr(), nsid);
+
+            return Ok(Namespace::from_ptr(ns));
         }
     }
 

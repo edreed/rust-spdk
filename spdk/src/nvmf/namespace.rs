@@ -1,3 +1,5 @@
+use std::ptr::NonNull;
+
 use spdk_sys::{
     spdk_nvmf_ns,
     
@@ -15,17 +17,30 @@ use crate::{
 use super::Subsystem;
 
 /// Represents a namespace in a NVMe-oF subsystem.
-pub struct Namespace(pub(crate) *mut spdk_nvmf_ns);
+pub struct Namespace(NonNull<spdk_nvmf_ns>);
 
 impl Namespace {
+    /// Returns a namespace from a raw `spdk_nvmf_ns` pointer.
+    pub fn from_ptr(ptr: *mut spdk_nvmf_ns) -> Self {
+        match NonNull::new(ptr) {
+            Some(ptr) => Self(ptr),
+            None => panic!("namespace pointer must not be null"),
+        }
+    }
+
+    /// Returns the pointer to the underlying `spdk_nvmf_ns` object.
+    pub fn as_ptr(&self) -> *mut spdk_nvmf_ns {
+        self.0.as_ptr()
+    }
+
     /// Returns the ID of the namespace.
     pub fn id(&self) -> u32 {
-        unsafe { spdk_nvmf_ns_get_id(self.0) }
+        unsafe { spdk_nvmf_ns_get_id(self.as_ptr()) }
     }
 
     /// Returns the block device backing the namespace.
     pub fn device(&self) -> block::Device<Any> {
-        let bdev = unsafe { spdk_nvmf_ns_get_bdev(self.0) };
+        let bdev = unsafe { spdk_nvmf_ns_get_bdev(self.as_ptr()) };
 
         assert!(!bdev.is_null());
 
@@ -63,11 +78,12 @@ impl Iterator for Namespaces<'_> {
             }
 
             let namespace = self.next;
+
             self.next = spdk_nvmf_subsystem_get_next_ns(
                 self.subsys.as_ptr(),
                 self.next);
 
-            Some(Namespace(namespace))
+            Some(Namespace::from_ptr(namespace))
         }
     }
 }
