@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     ffi::CStr,
     fmt::Display,
     mem::{
@@ -7,19 +6,10 @@ use std::{
 
         size_of_val,
     },
-    os::raw::c_void,
-    pin::Pin,
     ptr::NonNull,
-    rc::Rc,
-    task::{
-        Context,
-        Poll,
-        Waker,
-    },
     time::Duration,
 };
 
-use futures::Future;
 use spdk_sys::{
     Errno,
     spdk_nvmf_transport,
@@ -50,11 +40,12 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::{
-        EINVAL,
-        ENOMEM,
+    errors::{EINVAL, ENOMEM},
+    task::{
+        Promise,
+
+        complete_with_object,
     },
-    thread::Thread,
 };
 
 use super::Target;
@@ -127,101 +118,6 @@ impl Display for TransportType {
     }
 }
 
-/// Encapsulates the state of creating a NVMe-oF transport.
-#[derive(Default)]
-struct CreateTransportState {
-    result: Option<Result<Transport, Errno>>,
-    waker: Option<Waker>,
-}
-
-impl CreateTransportState {
-    fn set_result(&mut self, transport: *mut spdk_nvmf_transport) -> Option<Waker> {
-        if transport.is_null() {
-            self.result = Some(Err(ENOMEM));
-        } else {
-            self.result = Some(Ok(Transport::from_ptr(transport)));
-        }
-
-        self.waker.take()
-    }
-}
-
-/// Orchestrates creating a NVMe-oF transport.
-struct CreateTransport {
-    transport_name: &'static CStr,
-    opts: Box<spdk_nvmf_transport_opts>,
-    state: Rc<RefCell<CreateTransportState>>,
-}
-
-unsafe impl Send for CreateTransport {}
-
-impl CreateTransport {
-    /// A callback invoked with the result of creating a NVMe-oF transport.
-    unsafe extern "C" fn complete(
-        cx: *mut std::ffi::c_void,
-        transport: *mut spdk_nvmf_transport,
-    ) {
-        let state = Rc::from_raw(cx as *const RefCell<CreateTransportState>);
-
-        let waker = match state.try_borrow_mut() {
-            Ok(mut state) => state.set_result(transport),
-            Err(_) => {
-                let state = Rc::clone(&state);
-
-                Thread::current().send_msg(move || {
-                    let waker = state.borrow_mut().set_result(transport);
-
-                    if let Some(w) = waker {
-                        w.wake();
-                    }
-                }).expect("send result");
-
-                None
-            },
-        };
-
-        if let Some(w) = waker {
-            w.wake();
-        }
-    }
-}
-
-impl Future for CreateTransport {
-    type Output = Result<Transport, Errno>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.state.borrow_mut();
-
-        match state.result.take() {
-            Some(result) => Poll::Ready(result),
-            None => {
-                state.waker = Some(cx.waker().clone());
-
-                let state_raw = Rc::as_ptr(&self.state);
-
-                unsafe {
-                    Rc::increment_strong_count(state_raw);
-
-                    let rc = 
-                        to_result!(spdk_nvmf_transport_create_async(
-                            self.transport_name.as_ptr(),
-                            self.opts.as_ref() as *const _ as *mut _,
-                            Some(Self::complete),
-                            state_raw as *mut c_void));
-
-                    if let Err(e) = rc {
-                        Rc::decrement_strong_count(state_raw);
-
-                        return Poll::Ready(Err(e));
-                    }
-
-                    Poll::Pending
-                }
-            }
-        }
-    }
-}
-
 /// Builds a NVMe-oF transport.
 pub struct Builder {
     transport_name: &'static CStr,
@@ -250,11 +146,15 @@ impl Builder {
 
     /// Creates the configured `Transport`.
     pub async fn build(self) -> Result<Transport, Errno> {
-        CreateTransport {
-            transport_name: self.transport_name,
-            opts: self.opts,
-            state: Default::default()
-        }.await
+        Promise::new(move |cx| {
+            unsafe {
+                to_result!(spdk_nvmf_transport_create_async(
+                    self.transport_name.as_ptr(),
+                    self.opts.as_ref() as *const _ as *mut _,
+                    Some(complete_with_object::<Transport, spdk_nvmf_transport>),
+                    cx))
+            }
+        }).await
     }
 
     /// Sets the maximum queue depth.
@@ -377,6 +277,17 @@ impl Transport {
     /// Returns the type of the transport.
     pub fn r#type(&self) -> TransportType {
         unsafe { spdk_nvmf_get_transport_type(self.as_ptr()).into() }
+    }
+}
+
+impl TryFrom<*mut spdk_nvmf_transport> for Transport {
+    type Error = Errno;
+
+    fn try_from(ptr: *mut spdk_nvmf_transport) -> Result<Self, Self::Error> {
+        match NonNull::new(ptr) {
+            Some(ptr) => Ok(Self(ptr)),
+            None => Err(ENOMEM),
+        }
     }
 }
 

@@ -1,30 +1,18 @@
 //! Support for the Storage Performance Development Kit Malloc Block Device
 //! plug-in.
 use std::{
-    cell::RefCell,
     default::Default,
     ffi::CStr,
-    future::Future,
     mem::{
         self,
 
         ManuallyDrop,
     },
-    os::raw:: {
-        c_char,
-        c_void,
-    },
-    pin::Pin,
+    os::raw:: c_char,
     ptr::{
         NonNull,
 
         null_mut,
-    },
-    rc::Rc,
-    task::{
-        Context,
-        Poll,
-        Waker,
     },
 };
 
@@ -43,7 +31,10 @@ use spdk_sys::{
 
 use crate::{
     block::Device,
-    thread::Thread,
+    task::{
+        Promise,
+        complete_with_status,
+    },
 };
 
 use super::BDev;
@@ -110,105 +101,31 @@ impl Default for Builder {
     }
 }
 
-#[derive(Default)]
-struct DestroyState {
-    waker: Option<Waker>,
-    result: Option<Result<(), Errno>>,
-}
-
-unsafe impl Send for DestroyState {}
-
-/// Encapsulates the state of an asynchronous [`Malloc`] delete operation.
-impl DestroyState {
-    /// Sets the result to the waiting future and returns a [`Waker`] to awaken
-    /// the waiting future.
-    fn set_result(&mut self, status: i32) -> Option<Waker> {
-        self.result = if status == 0 {
-            Some(Ok(()))
-        } else {
-            Some(Err(Errno(-status)))
-        };
-
-        self.waker.take()
-    }
-}
-
-/// Represents an asynchronous [`Malloc`] delete operation.
-struct Destroy {
-    bdev: NonNull<spdk_bdev>,
-    state: Rc<RefCell<DestroyState>>
-}
-
-unsafe impl Send for Destroy {}
-
-impl Destroy {
-    /// Creates a new [`Destroy`] instance to asynchronously destroy the
-    /// specified [`Malloc`] block device.
-    fn new(malloc: Malloc) -> Result<Self, Errno> {
-        Ok(Self {
-            bdev: malloc.0,
-            state: Rc::new(RefCell::new(Default::default())),
-        })
-    }
-
-    /// A callback invoked with the result of the asynchronous delete operation.
-    unsafe extern "C" fn complete(arg: *mut c_void, status: i32) {
-        let inner = Rc::from_raw(arg as *mut RefCell<DestroyState>);
-        let waker = match inner.try_borrow_mut() {
-            Ok(mut state) => state.set_result(status),
-            Err(_) => {
-                let inner = inner.clone();
-
-                Thread::current().send_msg(move || {
-                    let waker = inner.borrow_mut().set_result(status);
-
-                    if let Some(waker) = waker {
-                        waker.wake();
-                    }
-                }).expect("send result");
-
-                None
-            },
-        };
-
-        if let Some(waker) = waker {
-            waker.wake();
-        }
-    }
-}
-
-impl Future for Destroy {
-    type Output = Result<(), Errno>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut inner = self.state.borrow_mut();
-
-        if let Some(result) = inner.result.take() {
-            return Poll::Ready(result);
-        }
-
-        inner.waker = Some(cx.waker().clone());
-
-        unsafe {
-            delete_malloc_disk(
-                spdk_bdev_get_name(self.bdev.as_ptr()),
-                Some(Self::complete),
-                Rc::into_raw(self.state.clone()) as *mut c_void)
-        };
-
-        Poll::Pending
-    }
-}
-
 /// Represents a Malloc Block Device.
 pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}
 
+impl Malloc {
+    /// Returns a pointer to the underlying `spdk_bdev` structure.
+    fn as_ptr(&self) -> *mut spdk_bdev {
+        self.0.as_ptr()
+    }
+}
+
 #[async_trait]
 impl BDev for Malloc {
     async fn destroy(self) -> Result<(), Errno> {
-        Destroy::new(self)?.await
+        Promise::new(move |cx| {
+            unsafe {
+                delete_malloc_disk(
+                    spdk_bdev_get_name(self.as_ptr()),
+                    Some(complete_with_status),
+                    cx);
+            }
+
+            Ok(())
+        }).await
     }
 }
 

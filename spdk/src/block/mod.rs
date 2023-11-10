@@ -2,7 +2,6 @@
 mod descriptor;
 mod device;
 mod io_channel;
-mod io;
 
 pub use descriptor::Descriptor;
 
@@ -11,5 +10,3 @@ pub use device::Devices;
 pub use device::devices;
 
 pub use io_channel::IoChannel;
-
-pub(crate) use io::Io;

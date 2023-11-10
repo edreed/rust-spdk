@@ -1,16 +1,15 @@
 use std::{
-    cell::RefCell,
-    mem::ManuallyDrop,
-    rc::Rc,
-    task::{
-        Context,
-        Poll,
-        Waker,
+    ffi::{
+        CStr,
+        c_void,
     },
-    ptr::{null_mut, NonNull}, ffi::{CStr, c_void},
+    ptr::{
+        NonNull,
+
+        null_mut,
+    },
 };
 
-use futures::Future;
 use spdk_sys::{
     Errno,
     spdk_nvmf_subsystem,
@@ -51,184 +50,20 @@ use crate::{
         ENOENT,
     },
     nvme::TransportId,
-    thread::Thread,
+    task::{
+        Promise,
+
+        complete_with_status,
+    },
 };
 
-use super::{Namespace, Target, AllowedHosts, Namespaces};
+use super::{
+    AllowedHosts,
+    Namespace,
+    Namespaces,
+    Target,
+};
 
-/// Encapsulates the state of a NVMe-oF  operation.
-#[derive(Default)]
-struct TaskState {
-    result: Option<Result<(), Errno>>,
-    waker: Option<Waker>,
-}
-
-impl TaskState {
-    /// Sets the result and returns a [`Waker`] to awaken the waiting future.
-    fn set_result(&mut self, status: i32) -> Option<Waker> {
-        if status < 0 {
-            self.result = Some(Err(Errno(-status)));
-        } else {
-            self.result = Some(Ok(()));
-        }
-
-        self.waker.take()
-    }
-}
-
-/// A function that starts a subsystem operation.
-type SubsystemFn = unsafe fn(data: *const ()) -> Result<(), Errno>;
-
-enum Operation<'a> {
-    Start,
-    Stop,
-    Pause {
-        ns: u32
-    },
-    Resume,
-    AddListener {
-        transport_id: &'a TransportId,
-    },
-}
-
-/// Orchestrates a NVMe-oF  operation.
-struct TaskInner<'a> {
-    subsystem: &'a Subsystem,
-    op: Operation<'a>,
-    subsystem_fn: SubsystemFn,
-    state: RefCell<TaskState>,
-}
-
-impl TaskInner<'_> {
-    /// A callback invoked with the result of a NVMe-oF 
-    /// operation.
-    unsafe extern "C" fn complete(cx: *mut c_void, status: i32) {
-        let this = Rc::from_raw(cx as *mut TaskInner);
-
-        let waker = match this.state.try_borrow_mut() {
-            Ok(mut state) => state.set_result(status),
-            Err(_) => {
-                let this = Rc::clone(&this);
-
-                Thread::current().send_msg(move || {
-                    let waker = this.state.borrow_mut().set_result(status);
-
-                    if let Some(w) = waker {
-                        w.wake();
-                    }
-                }).expect("send result");
-
-                None
-            }
-        };
-
-        if let Some(w) = waker {
-            w.wake();
-        }
-    }
-
-    /// A callback invoked with the result of a NVMe-oF  state
-    /// change operation.
-    unsafe extern "C" fn state_change_complete(
-        _subsys: *mut spdk_nvmf_subsystem,
-        cx: *mut c_void,
-        status: i32,
-    ) {
-        Self::complete(cx, status);
-    }
-
-    /// Starts the subsystem.
-    /// 
-    /// This method begins the transition of the subsystem from the Inactive to Active state.
-    unsafe fn start(data: *const ()) -> Result<(), Errno> {
-        let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
-
-        to_result!(spdk_nvmf_subsystem_start(this.subsystem.as_ptr(), Some(Self::state_change_complete), data as *mut c_void))
-    }
-
-    /// Stops the subsystem.
-    /// 
-    /// This method begins the transition of the subsystem from the Active to Inactive state.
-    unsafe fn stop(data: *const ()) -> Result<(), Errno> {
-        let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
-
-        to_result!(spdk_nvmf_subsystem_stop(this.subsystem.as_ptr(), Some(Self::state_change_complete), data as *mut c_void))
-    }
-
-    /// Pauses the subsystem.
-    /// 
-    /// This method begins the transition of the subsystem from the Active to Paused state.
-    unsafe fn pause(data: *const ()) -> Result<(), Errno> {
-        let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
-
-        if let Operation::Pause { ns } = this.op {
-            return to_result!(spdk_nvmf_subsystem_pause(this.subsystem.as_ptr(), ns, Some(Self::state_change_complete), data as *mut c_void));
-        }
-
-        unreachable!("parameter mismatch");
-    }
-
-    /// Resumes the subsystem.
-    /// 
-    /// This method begins the transition of the subsystem from the Paused to Active state.
-    unsafe fn resume(data: *const ()) -> Result<(), Errno> {
-        let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
-
-        to_result!(spdk_nvmf_subsystem_resume(this.subsystem.as_ptr(), Some(Self::state_change_complete), data as *mut c_void))
-    }
-
-    unsafe fn add_listener(data: *const ()) -> Result<(), Errno> {
-        let this = ManuallyDrop::new(Rc::from_raw(data as *const TaskInner));
-
-        if let Operation::AddListener { transport_id } = this.op {
-            spdk_nvmf_subsystem_add_listener(
-                this.subsystem.as_ptr(),
-                transport_id.as_ptr() as *mut _,
-                Some(Self::complete),
-                data as *mut c_void);
-
-            return Ok(());
-        }
-
-        unreachable!("parameter mismatch");
-    }
-}
-
-/// Represents an asynchronous NVMe-oF  operation.
-struct Task<'a> {
-    inner: Rc<TaskInner<'a>>,
-}
-
-unsafe impl Send for Task<'_> {}
-
-impl Future for Task<'_> {
-    type Output = Result<(), Errno>;
-
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> std::task::Poll<Self::Output> {
-        let mut state = self.inner.state.borrow_mut();
-
-        match state.result.take() {
-            Some(result) => Poll::Ready(result),
-            None => {
-                state.waker = Some(cx.waker().clone());
-
-                unsafe {
-                    let inner_raw = Rc::as_ptr(&self.inner);
-
-                    Rc::increment_strong_count(inner_raw);
-
-                    if let Err(e) = (self.inner.subsystem_fn)(inner_raw as *const ()) {
-                        Rc::decrement_strong_count(inner_raw);
-
-                        return Poll::Ready(Err(e));
-                    }
-                }
-
-                Poll::Pending
-            }
-        }
-    }
-}
 
 /// The type of a NVMe-oF subsystem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -389,60 +224,74 @@ impl Subsystem {
         AllowedHosts::new(self)
     }
 
+    /// A callback invoked with the result of a NVMe-oF state change operation.
+    unsafe extern "C" fn complete_state_change(
+        _subsys: *mut spdk_nvmf_subsystem,
+        cx : *mut c_void,
+        status: i32
+    ) {
+        complete_with_status(cx, status);
+    }
+
     /// Starts the subsystem.
     /// 
     /// This method transitions of the subsystem from the Inactive to Active state.
     pub async fn start(&self) -> Result<(), Errno> {
-        Task {
-            inner: Rc::new(TaskInner {
-                subsystem: self,
-                op: Operation::Start,
-                subsystem_fn: TaskInner::start,
-                state: RefCell::new(Default::default()),
-            }),
-        }.await
+        Promise::new(|cx| {
+            unsafe {
+                to_result!(spdk_nvmf_subsystem_start(
+                    self.as_ptr(),
+                    Some(Self::complete_state_change),
+                    cx as *mut c_void
+                ))
+            }
+        }).await
     }
 
     /// Stops the subsystem.
     /// 
     /// This method transitions of the subsystem from the Active to Inactive state.
     pub async fn stop(&self) -> Result<(), Errno> {
-        Task {
-            inner: Rc::new(TaskInner {
-                subsystem: self,
-                op: Operation::Stop,
-                subsystem_fn: TaskInner::stop,
-                state: RefCell::new(Default::default()),
-            }),
-        }.await
+        Promise::new(|cx| {
+            unsafe {
+                to_result!(spdk_nvmf_subsystem_stop(
+                    self.as_ptr(),
+                    Some(Self::complete_state_change),
+                    cx as *mut c_void
+                ))
+            }
+        }).await
     }
 
     /// Pauses the subsystem.
     /// 
     /// This method transitions of the subsystem from the Paused to Inactive state.
     pub async fn pause(&self, ns: u32) -> Result<(), Errno> {
-        Task {
-            inner: Rc::new(TaskInner {
-                subsystem: self,
-                op: Operation::Pause { ns },
-                subsystem_fn: TaskInner::pause,
-                state: RefCell::new(Default::default()),
-            }),
-        }.await
+        Promise::new(|cx| {
+            unsafe {
+                to_result!(spdk_nvmf_subsystem_pause(
+                    self.as_ptr(),
+                    ns,
+                    Some(Self::complete_state_change),
+                    cx as *mut c_void
+                ))
+            }
+        }).await
     }
 
     /// Resumes the subsystem.
     /// 
     /// This method transitions of the subsystem from the Inactive to Paused state.
     pub async fn resume(&self) -> Result<(), Errno> {
-        Task {
-            inner: Rc::new(TaskInner {
-                subsystem: self,
-                op: Operation::Resume,
-                subsystem_fn: TaskInner::resume,
-                state: RefCell::new(Default::default()),
-            }),
-        }.await
+        Promise::new(|cx| {
+            unsafe {
+                to_result!(spdk_nvmf_subsystem_resume(
+                    self.as_ptr(),
+                    Some(Self::complete_state_change),
+                    cx as *mut c_void
+                ))
+            }
+        }).await
     }
 
     /// Adds the given block device as a namespace on the subsystem.
@@ -488,14 +337,18 @@ impl Subsystem {
     /// The subsystem must be in the Paused or Inactive states to add a
     /// listener.
     pub async fn add_listener(&self, transport_id: &TransportId) -> Result<(), Errno> {
-        Task {
-            inner: Rc::new(TaskInner {
-                subsystem: self,
-                op: Operation::AddListener { transport_id },
-                subsystem_fn: TaskInner::add_listener,
-                state: RefCell::new(Default::default()),
-            }),
-        }.await
+        Promise::new(|cx| {
+            unsafe {
+                spdk_nvmf_subsystem_add_listener(
+                    self.as_ptr(),
+                    transport_id.as_ptr() as *mut _,
+                    Some(complete_with_status),
+                    cx as *mut c_void
+                );
+            }
+
+            Ok(())
+        }).await
     }
 
     /// Removes a listener on the specified transport from the subsystem.
