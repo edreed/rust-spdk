@@ -69,4 +69,6 @@ async fn main() {
     target.stop_subsystems().await.unwrap();
     subsys.remove_namespace(malloc_ns.id()).unwrap();
     malloc.destroy().await.unwrap();
+    subsys.remove_listener(&transport_id).unwrap();
+    target.remove_subsystem(subsys).await.unwrap();
 }

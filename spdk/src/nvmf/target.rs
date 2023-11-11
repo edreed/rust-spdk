@@ -18,18 +18,23 @@ use spdk_sys::{
     spdk_nvmf_get_next_tgt,
     spdk_nvmf_listen_opts_init,
     spdk_nvmf_subsystem_create,
+    spdk_nvmf_subsystem_destroy,
     spdk_nvmf_tgt_add_transport,
     spdk_nvmf_tgt_get_name,
     spdk_nvmf_tgt_listen_ext,
 };
 
 use crate::{
-    errors::ENOMEM,
+    errors::{
+        EINPROGRESS,
+        ENOMEM,
+    },
     nvme::TransportId,
     nvmf::SPDK_NVMF_DISCOVERY_NQN,
     task::{
         Promise,
 
+        complete_with_ok,
         complete_with_status,
     },
 };
@@ -144,6 +149,30 @@ impl Target {
         }
 
         Ok(Subsystem::from_ptr(subsys))
+    }
+
+    /// Removes a subsystem from the target.
+    pub async fn remove_subsystem(&mut self, subsys: Subsystem) -> Result<(), Errno> {
+        Promise::new(|cx| {
+            unsafe {
+                match to_result!(spdk_nvmf_subsystem_destroy(
+                    subsys.as_ptr(),
+                    Some(complete_with_ok),
+                    cx
+                )) {
+                    // The subsystem was destroyed synchronously, so we must
+                    // invoke the promise completion function ourselves.
+                    Ok(()) => {
+                        complete_with_ok(cx);
+                        Ok(())
+                    },
+                    // The subsystem is being destroyed asynchronously.
+                    Err(e) if e == EINPROGRESS => Ok(()),
+                    // An subsystem is not in a state wher it can be destroyed.
+                    Err(e) => Err(e),
+                }
+            }
+        }).await
     }
 
     /// Returns an iterator over the subsystems on this target.
