@@ -266,6 +266,12 @@ impl Subsystem {
     /// Pauses the subsystem.
     /// 
     /// This method transitions of the subsystem from the Paused to Inactive state.
+    /// 
+    /// In a paused state, all admin queues are frozen across the whole
+    /// subsystem. If a namespace identifier is provided, all commands to that
+    /// namespace are quiesced and incoming commands are queued until the
+    /// subsystem is resumed. A namespace identifier of 0 indicates that no
+    /// namespace is paused while `SPDK_NVME_GLOBAL_NS_TAG` pauses all namespaces.
     pub async fn pause(&self, ns: u32) -> Result<(), Errno> {
         Promise::new(|cx| {
             unsafe {
