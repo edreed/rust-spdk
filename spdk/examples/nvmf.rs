@@ -45,7 +45,7 @@ async fn main() {
 
     target.listen(&transport_id).unwrap();
 
-    let malloc_subsys = target.add_subsystem(NQN, SubsystemType::NVMe, 1).unwrap();
+    let subsys = target.add_subsystem(NQN, SubsystemType::NVMe, 1).unwrap();
 
     let malloc = malloc::Builder::new()
         .with_name(BDEV_NAME)
@@ -54,11 +54,11 @@ async fn main() {
         .build()
         .unwrap();
 
-    let _malloc_ns = malloc_subsys.add_namespace(malloc.name()).unwrap();
+    let malloc_ns = subsys.add_namespace(malloc.name()).unwrap();
 
-    malloc_subsys.allow_any_host(true);
-    malloc_subsys.add_listener(&transport_id).await.unwrap();
-    malloc_subsys.start().await.unwrap();
+    subsys.allow_any_host(true);
+    subsys.add_listener(&transport_id).await.unwrap();
+    subsys.start().await.unwrap();
 
     let mut timer = interval(Duration::from_millis(50));
 
@@ -67,4 +67,6 @@ async fn main() {
     }
 
     target.stop_subsystems().await.unwrap();
+    subsys.remove_namespace(malloc_ns.id()).unwrap();
+    malloc.destroy().await.unwrap();
 }
