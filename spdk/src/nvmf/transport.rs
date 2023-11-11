@@ -4,7 +4,7 @@ use std::{
     mem::{
         MaybeUninit,
 
-        size_of_val,
+        size_of_val, self,
     },
     ptr::NonNull,
     time::Duration,
@@ -37,15 +37,21 @@ use spdk_sys::{
     spdk_nvmf_transport_get_first,
     spdk_nvmf_transport_get_next,
     spdk_nvmf_transport_opts_init,
+    spdk_nvmf_transport_destroy,
 };
 
 use crate::{
-    errors::{EINVAL, ENOMEM},
+    errors::{
+        EINVAL,
+        ENODEV,
+        ENOMEM,
+        EPERM,
+    },
     task::{
         Promise,
 
-        complete_with_object,
-    },
+        complete_with_object, complete_with_ok,
+    }, thread,
 };
 
 use super::Target;
@@ -248,23 +254,98 @@ impl Builder {
     }
 }
 
+/// Represents the ownership state of a [`Transport`].
+enum OwnershipState {
+    Owned(NonNull<spdk_nvmf_transport>),
+    Borrowed(NonNull<spdk_nvmf_transport>),
+    None,
+}
+
+unsafe impl Send for OwnershipState {}
+
 /// Represents a NVMe-oF transport.
-pub struct Transport(NonNull<spdk_nvmf_transport>);
+/// 
+/// `Transport` wraps an `spdk_nvmf_transport` pointer and can be in one of
+/// three ownership states: owned, borrowed, or none.
+/// 
+/// An owned transport owns the underlying `spdk_nvmf_transport` pointer and
+/// will destroy it when dropped. The caller must ensure that the drop occurs in
+/// the same thread that created the transport. It must also occur as part of
+/// thread event handling by explicitly calling [`task::yield_now`] before
+/// dropping the transport. However, it is easiest and safest to explicitly call
+/// [`Transport::destroy`] on the transport rather than let it drop naturally.
+/// 
+/// A borrowed transport borrows the underlying `spdk_nvmf_transport` pointer.
+/// Dropping a borrowed transport has no effect on the underlying
+/// `spdk_nvmf_transport` pointer.
+/// 
+/// A transport with no ownership state can only be safely queried for ownership
+/// state or dropped. Any other operation will panic. A transport will be left
+/// in this state after the [`Transport::take`] method is called.
+/// 
+/// [`Transport::destroy`]: method@Transport::destroy
+/// [`Transport::take`]: method@Transport::take
+/// [`task::yield_now`]: function@crate::task::yield_now
+pub struct Transport(OwnershipState);
 
 unsafe impl Send for Transport {}
 
 impl Transport {
-    /// Returns a transport from a raw `spdk_nvmf_transport` pointer.
+    /// Returns an owned transport from a raw `spdk_nvmf_transport` pointer.
+    pub fn from_ptr_owned(ptr: *const spdk_nvmf_transport) -> Self {
+        match NonNull::new(ptr as *mut spdk_nvmf_transport) {
+            Some(ptr) => Self(OwnershipState::Borrowed(ptr)),
+            None => panic!("transport pointer must not be null"),
+        }
+    }
+
+    /// Returns a borrowed transport from a raw `spdk_nvmf_transport` pointer.
     pub fn from_ptr(ptr: *const spdk_nvmf_transport) -> Self {
         match NonNull::new(ptr as *mut spdk_nvmf_transport) {
-            Some(ptr) => Self(ptr),
+            Some(ptr) => Self(OwnershipState::Borrowed(ptr)),
             None => panic!("transport pointer must not be null"),
         }
     }
 
     /// Returns a pointer to the underlying `spdk_nvmf_transport` structure.
     pub fn as_ptr(&self) -> *mut spdk_nvmf_transport {
-        self.0.as_ptr()
+        match &self.0 {
+            OwnershipState::Owned(ptr) | OwnershipState::Borrowed(ptr) => {
+                ptr.as_ptr()
+            },
+            OwnershipState::None => panic!("no transport"),
+        }
+    }
+
+    /// Borrows the transport.
+    pub fn borrow(&self) -> Self {
+        match self.0 {
+            OwnershipState::Owned(ptr) | OwnershipState::Borrowed(ptr) => {
+                Self(OwnershipState::Borrowed(ptr))
+            },
+            OwnershipState::None => panic!("no transport"),
+        }
+    }
+
+    /// Returns whether the transport is owned.
+    pub fn is_owned(&self) -> bool {
+        matches!(self.0, OwnershipState::Owned(_))
+    }
+
+    /// Returns whether the transport is borrowed.
+    pub fn is_borrowed(&self) -> bool {
+        matches!(self.0, OwnershipState::Borrowed(_))
+    }
+
+    /// Returns whether this transport has no ownership state.
+    pub fn is_none(&self) -> bool {
+        matches!(self.0, OwnershipState::None)
+    }
+
+    /// Takes the value from this transport and replaces with a value having no
+    /// ownership.
+    pub fn take(&mut self) -> Self {
+        mem::replace(self, Self(OwnershipState::None))
     }
 
     /// Returns the name of the transport.
@@ -278,6 +359,45 @@ impl Transport {
     pub fn r#type(&self) -> TransportType {
         unsafe { spdk_nvmf_get_transport_type(self.as_ptr()).into() }
     }
+
+    /// Destroys the transport asynchronously.
+    /// 
+    /// # Returns
+    /// 
+    /// Only an owned transport can be destroyed. This function returns
+    /// `Err(EPERM)` if called on a borrowed transport and `Err(ENODEV)` if
+    /// called on a transport that neither owns nor borrows the underlying
+    /// `spdk_nvmf_transport` pointer.
+    pub async fn destroy(mut self) -> Result<(), Errno> {
+        match self.0 {
+            OwnershipState::Borrowed(_) => Err(EPERM),
+            OwnershipState::None => Err(ENODEV),
+            OwnershipState::Owned(_) => {
+                Promise::new(move |cx| {
+                    unsafe {
+                        to_result!(spdk_nvmf_transport_destroy(
+                            self.as_ptr(),
+                            Some(complete_with_ok),
+                            cx))?;
+
+                        mem::forget(self.take());
+
+                        Ok(())
+                    }
+                }).await
+            },
+        }
+    }
+}
+
+impl Drop for Transport {
+    fn drop(&mut self) {
+        if self.is_owned() {
+            let transport = self.take();
+
+            thread::block_on(async move { transport.destroy().await }).unwrap();
+        }
+    }
 }
 
 impl TryFrom<*mut spdk_nvmf_transport> for Transport {
@@ -285,7 +405,18 @@ impl TryFrom<*mut spdk_nvmf_transport> for Transport {
 
     fn try_from(ptr: *mut spdk_nvmf_transport) -> Result<Self, Self::Error> {
         match NonNull::new(ptr) {
-            Some(ptr) => Ok(Self(ptr)),
+            Some(ptr) => Ok(Self(OwnershipState::Owned(ptr))),
+            None => Err(ENOMEM),
+        }
+    }
+}
+
+impl TryFrom<*const spdk_nvmf_transport> for Transport {
+    type Error = Errno;
+
+    fn try_from(ptr: *const spdk_nvmf_transport) -> Result<Self, Self::Error> {
+        match NonNull::new(ptr as *mut _) {
+            Some(ptr) => Ok(Self(OwnershipState::Borrowed(ptr))),
             None => Err(ENOMEM),
         }
     }
