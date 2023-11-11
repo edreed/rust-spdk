@@ -29,7 +29,11 @@ use crate::{
         EINPROGRESS,
         ENOMEM,
     },
-    nvme::TransportId,
+    nvme::{
+        SPDK_NVME_GLOBAL_NS_TAG,
+
+        TransportId,
+    },
     nvmf::SPDK_NVMF_DISCOVERY_NQN,
     task::{
         Promise,
@@ -168,7 +172,7 @@ impl Target {
                     },
                     // The subsystem is being destroyed asynchronously.
                     Err(e) if e == EINPROGRESS => Ok(()),
-                    // An subsystem is not in a state wher it can be destroyed.
+                    // An subsystem is not in a state where it can be destroyed.
                     Err(e) => Err(e),
                 }
             }
@@ -199,9 +203,9 @@ impl Target {
     }
 
     /// Pauses the subsystems on this target.
-    pub async fn pause_subsystems(&self, ns: u32) -> Result<(), Errno> {
+    pub async fn pause_subsystems(&self) -> Result<(), Errno> {
         for subsys in self.subsystems() {
-            subsys.pause(ns).await?;
+            subsys.pause(SPDK_NVME_GLOBAL_NS_TAG).await?;
         }
 
         Ok(())
