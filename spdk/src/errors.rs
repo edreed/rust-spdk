@@ -25,3 +25,6 @@ pub static EINVAL: Errno = Errno(libc::EINVAL);
 
 /// Operation not supported
 pub static ENOTSUP: Errno = Errno(libc::ENOTSUP);
+
+/// Operation in progress
+pub static EINPROGRESS: Errno = Errno(libc::EINPROGRESS);
