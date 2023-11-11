@@ -20,6 +20,7 @@ pub use subsystem::{
     SubsystemType,
 };
 pub use target::{
+    Builder as TargetBuilder,
     Target,
     Targets,
 
