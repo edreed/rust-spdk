@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     ffi::CStr,
     mem::{
         MaybeUninit,
@@ -7,14 +6,8 @@ use std::{
         size_of_val,
     },
     ptr::NonNull,
-    rc::Rc,
-    task::{
-        Poll,
-        Waker,
-    },
 };
 
-use futures::Future;
 use spdk_sys::{
     Errno,
     spdk_nvmf_tgt,
@@ -34,100 +27,23 @@ use crate::{
     errors::ENOMEM,
     nvme::TransportId,
     nvmf::SPDK_NVMF_DISCOVERY_NQN,
-    thread::Thread,
+    task::{
+        Promise,
+
+        complete_with_status,
+    },
 };
 
-use super::{Transport, Subsystem, subsystem::{Subsystems, SubsystemType}, transport::Transports};
+use super::{
+    Subsystem,
+    Transport,
 
-/// Encapsulates the state of adding a transport to a NVMe-oF target.
-#[derive(Default)]
-struct AddTransportState {
-    result: Option<Result<(), Errno>>,
-    waker: Option<Waker>,
-}
-
-impl AddTransportState {
-    /// Sets the result and returns a [`Waker`] to awaken the waiting future.
-    fn set_result(&mut self, status: i32) -> Option<Waker> {
-        if status < 0 {
-            self.result = Some(Err(Errno(-status)));
-        } else {
-            self.result = Some(Ok(()));
-        }
-
-        self.waker.take()
-    }
-}
-
-/// Orchestrates adding a transport to a NVMe-oF target.
-struct AddTransport<'a> {
-    target: &'a Target,
-    transport: Transport,
-    state: Rc<RefCell<AddTransportState>>,
-}
-
-impl AddTransport<'_> {
-    /// A callback invoked with the result of adding a transport to a NVMe-oF target.
-    unsafe extern "C" fn complete(
-        cx: *mut std::ffi::c_void,
-        status: i32,
-    ) {
-        let state = Rc::from_raw(cx as *mut RefCell<AddTransportState>);
-
-        let waker = match state.try_borrow_mut() {
-            Ok(mut state) => state.set_result(status),
-            Err(_) => {
-                let state = Rc::clone(&state);
-
-                Thread::current().send_msg(move || {
-                    let waker = state.borrow_mut().set_result(status);
-
-                    if let Some(w) = waker {
-                        w.wake();
-                    }
-                }).expect("send result");
-
-                None
-            }
-            
-        };
-
-        if let Some(waker) = waker {
-            waker.wake();
-        }
-    }
-}
-
-impl Future for AddTransport<'_> {
-    type Output = Result<(), Errno>;
-
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        let mut state = self.state.borrow_mut();
-
-        match state.result.take() {
-            Some(Ok(())) => Poll::Ready(Ok(())),
-            Some(Err(e)) => Poll::Ready(Err(e)),
-            None => {
-                state.waker = Some(cx.waker().clone());
-
-                let state_raw = Rc::as_ptr(&self.state);
-
-                unsafe {
-                    Rc::increment_strong_count(state_raw);
-
-                    spdk_nvmf_tgt_add_transport(
-                        self.target.as_ptr(),
-                        self.transport.as_ptr() as *mut _,
-                        Some(Self::complete),
-                        state_raw as *mut std::ffi::c_void,
-                    );
-                }
-
-                Poll::Pending
-            },
-        }
-    }
-}
+    subsystem::{
+        Subsystems,
+        SubsystemType,
+    },
+    transport::Transports,
+};
 
 /// Represents a NVMe-oF target.
 pub struct Target(NonNull<spdk_nvmf_tgt>);
@@ -159,11 +75,18 @@ impl Target {
 
     /// Adds a transport to the target.
     pub async fn add_transport(&mut self, transport: Transport) -> Result<(), Errno> {
-        AddTransport{
-            target: self,
-            transport,
-            state: Rc::new(RefCell::new(AddTransportState::default())),
-        }.await
+        Promise::new(|cx| {
+            unsafe {
+                spdk_nvmf_tgt_add_transport(
+                    self.as_ptr(),
+                    transport.as_ptr(),
+                    Some(complete_with_status),
+                    cx,
+                );
+            }
+
+            Ok(())
+        }).await
     }
 
     /// Returns an iterator over the transports on this target.
