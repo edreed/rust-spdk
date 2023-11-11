@@ -3,7 +3,7 @@ use std::{
     mem::{
         MaybeUninit,
 
-        size_of_val,
+        size_of_val, self,
     },
     ptr::NonNull,
 };
@@ -75,7 +75,7 @@ impl Target {
 
     /// Adds a transport to the target.
     pub async fn add_transport(&mut self, transport: Transport) -> Result<(), Errno> {
-        Promise::new(|cx| {
+        let res = Promise::new(|cx| {
             unsafe {
                 spdk_nvmf_tgt_add_transport(
                     self.as_ptr(),
@@ -86,7 +86,25 @@ impl Target {
             }
 
             Ok(())
-        }).await
+        }).await;
+
+        match res {
+            Ok(()) => {
+                // The transport is now owned by the target, so we forget it to avoid
+                // destroying it.
+                mem::forget(transport);
+
+                Ok(())
+            },
+            Err(e) => {
+                // Since adding the transport failed, explicitly destroy it
+                // rather then let it drop to avoid blocking current reactor from
+                // executing other tasks.
+                transport.destroy().await.expect("transport destroyed");
+
+                Err(e)
+            },
+        }
     }
 
     /// Returns an iterator over the transports on this target.
