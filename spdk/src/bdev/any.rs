@@ -1,11 +1,14 @@
 use std::mem;
 
 use async_trait::async_trait;
-use spdk_sys::Errno;
 
 use crate::{
     block::Device,
-    errors::EPERM,
+    errors::{
+        Errno,
+
+        EPERM,
+    },
 };
 
 use super::BDev;

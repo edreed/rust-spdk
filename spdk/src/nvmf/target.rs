@@ -13,15 +13,13 @@ use std::{
         
         copy_nonoverlapping,
     },
+    task::Poll,
 };
 
 use spdk_sys::{
-    Errno,
     spdk_nvmf_target_opts,
     spdk_nvmf_tgt_discovery_filter,
     spdk_nvmf_tgt,
-
-    to_result,
 
     spdk_nvmf_get_first_tgt,
     spdk_nvmf_get_next_tgt,
@@ -37,8 +35,12 @@ use spdk_sys::{
 
 use crate::{
     errors::{
+        Errno,
+
+        EBADF,
         EINPROGRESS,
-        ENOMEM, EPERM, EBADF,
+        ENOMEM,
+        EPERM,
     },
     nvme::{
         SPDK_NVME_GLOBAL_NS_TAG,
@@ -51,7 +53,10 @@ use crate::{
 
         complete_with_ok,
         complete_with_status,
-    }, thread,
+    },
+    thread,
+    to_poll_pending_on_err,
+    to_result,
 };
 
 use super::{
@@ -249,7 +254,7 @@ impl Target {
 
                     mem::forget(self.take());
 
-                    Ok(())
+                    Poll::Pending
                 }).await
             },
             OwnershipState::Borrowed(_) => Err(EPERM),
@@ -269,7 +274,7 @@ impl Target {
                 );
             }
 
-            Ok(())
+            Poll::Pending
         }).await;
 
         match res {
@@ -334,22 +339,12 @@ impl Target {
     pub async fn remove_subsystem(&mut self, subsys: Subsystem) -> Result<(), Errno> {
         Promise::new(|cx| {
             unsafe {
-                match to_result!(spdk_nvmf_subsystem_destroy(
-                    subsys.as_ptr(),
-                    Some(complete_with_ok),
-                    cx
-                )) {
-                    // The subsystem was destroyed synchronously, so we must
-                    // invoke the promise completion function ourselves.
-                    Ok(()) => {
-                        complete_with_ok(cx);
-                        Ok(())
-                    },
-                    // The subsystem is being destroyed asynchronously.
-                    Err(e) if e == EINPROGRESS => Ok(()),
-                    // An subsystem is not in a state where it can be destroyed.
-                    Err(e) => Err(e),
-                }
+                to_poll_pending_on_err!(
+                    EINPROGRESS,
+                    spdk_nvmf_subsystem_destroy(
+                        subsys.as_ptr(),
+                        Some(complete_with_ok),
+                        cx))
             }
         }).await
     }

@@ -25,10 +25,7 @@ use std::{
 };
 
 use spdk_sys::{
-    Errno,
     spdk_thread,
-
-    to_result,
 
     spdk_cpuset_copy,
     spdk_get_thread,
@@ -47,13 +44,18 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::ENOMEM,
+    errors::{
+        Errno,
+
+        ENOMEM,
+    },
     runtime::CpuSet,
     task::{
         JoinHandle,
         RcTask,
         ThreadTask,
     },
+    to_result,
 };
 
 /// Represents the ownership state of a [`Thread`].

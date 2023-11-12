@@ -7,15 +7,13 @@ use std::{
         addr_of,
         addr_of_mut,
     },
+    task::Poll,
 };
 
 use spdk_sys::{
-    Errno,
     spdk_bdev_io_wait_entry,
     spdk_bdev_io,
     spdk_io_channel,
-
-    to_result,
 
     SPDK_BDEV_ZONE_RESET,
 
@@ -35,6 +33,8 @@ use ternary_rs::if_else;
 
 use crate::{
     errors::{
+        Errno,
+
         EIO,
         ENOMEM,
     },
@@ -44,6 +44,7 @@ use crate::{
         complete_with_ok,
         complete_with_status,
     },
+    to_poll_pending_on_ok,
 };
 
 use super::Descriptor;
@@ -95,7 +96,7 @@ impl <'a> IoChannel<'a> {
     /// are no `spdk_bdev_io` structures available.
     async fn execute_io<F>(&self, mut start_fn: F) -> Result<(), Errno>
     where
-        F: FnMut(*mut c_void) -> Result<(), Errno>,
+        F: FnMut(*mut c_void) -> Poll<Result<(), Errno>>,
     {
         loop {
             match Promise::new(|cx| (&mut start_fn)(cx)).await {
@@ -110,7 +111,7 @@ impl <'a> IoChannel<'a> {
                             wait.cb_fn = Some(complete_with_ok);
                             wait.cb_arg = cx;
 
-                            to_result!(spdk_bdev_queue_io_wait(
+                            to_poll_pending_on_ok!(spdk_bdev_queue_io_wait(
                                 wait.bdev,
                                 self.channel.as_ptr(),
                                 &wait as *const _ as *mut _))
@@ -125,7 +126,7 @@ impl <'a> IoChannel<'a> {
     pub async fn reset_zone(&mut self, zone_id: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
-                to_result!(spdk_bdev_zone_management(
+                to_poll_pending_on_ok!(spdk_bdev_zone_management(
                     self.descriptor().as_ptr(),
                     self.as_ptr(),
                     zone_id,
@@ -143,7 +144,7 @@ impl <'a> IoChannel<'a> {
             let buf = buf.as_ref();
 
             unsafe {
-                to_result!(spdk_bdev_write(
+                to_poll_pending_on_ok!(spdk_bdev_write(
                     self.descriptor().as_ptr(),
                     self.as_ptr(),
                     addr_of!(*buf) as *mut c_void,
@@ -159,7 +160,7 @@ impl <'a> IoChannel<'a> {
     pub async fn write_zeroes_at(&mut self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
-                to_result!(spdk_bdev_write_zeroes(
+                to_poll_pending_on_ok!(spdk_bdev_write_zeroes(
                     self.descriptor().as_ptr(),
                     self.as_ptr(),
                     offset,
@@ -176,7 +177,7 @@ impl <'a> IoChannel<'a> {
 
         self.execute_io(|cx| {
             unsafe {
-                to_result!(spdk_bdev_read(
+                to_poll_pending_on_ok!(spdk_bdev_read(
                     self.descriptor().as_ptr(),
                     self.as_ptr(),
                     addr_of_mut!(*buf.as_mut()) as *mut c_void,
@@ -193,7 +194,7 @@ impl <'a> IoChannel<'a> {
     pub async fn unmap(&mut self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
-                to_result!(spdk_bdev_unmap(
+                to_poll_pending_on_ok!(spdk_bdev_unmap(
                     self.descriptor().as_ptr(),
                     self.as_ptr(),
                     offset,
@@ -212,7 +213,7 @@ impl <'a> IoChannel<'a> {
     pub async fn flush(&mut self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
-                to_result!(spdk_bdev_flush(
+                to_poll_pending_on_ok!(spdk_bdev_flush(
                     self.descriptor().as_ptr(),
                     self.as_ptr(),
                     offset,
@@ -227,7 +228,7 @@ impl <'a> IoChannel<'a> {
     pub async fn reset(&mut self) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
-                to_result!(spdk_bdev_reset(
+                to_poll_pending_on_ok!(spdk_bdev_reset(
                     self.descriptor().as_ptr(),
                     self.as_ptr(),
                     Some(Self::complete_io),

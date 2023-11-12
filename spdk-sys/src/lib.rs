@@ -2,8 +2,6 @@
 //! programming language.
 //! 
 //! [SPDK]: https://www.spdk.io
-pub mod macros;
-
 mod ffi {
     #![allow(non_upper_case_globals)]
     #![allow(non_camel_case_types)]
@@ -13,4 +11,3 @@ mod ffi {
 }
 
 pub use ffi::*;
-pub use errno::Errno;

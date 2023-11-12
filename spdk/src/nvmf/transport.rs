@@ -11,7 +11,6 @@ use std::{
 };
 
 use spdk_sys::{
-    Errno,
     spdk_nvmf_transport,
     spdk_nvmf_transport_opts,
     spdk_nvme_transport_type,
@@ -29,8 +28,6 @@ use spdk_sys::{
     SPDK_NVME_TRANSPORT_TCP,
     SPDK_NVME_TRANSPORT_VFIOUSER,
 
-    to_result,
-
     spdk_nvmf_get_transport_name,
     spdk_nvmf_get_transport_type,
     spdk_nvmf_transport_create_async,
@@ -42,6 +39,8 @@ use spdk_sys::{
 
 use crate::{
     errors::{
+        Errno,
+
         EINVAL,
         ENODEV,
         ENOMEM,
@@ -51,7 +50,9 @@ use crate::{
         Promise,
 
         complete_with_object, complete_with_ok,
-    }, thread,
+    },
+    thread,
+    to_poll_pending_on_ok,
 };
 
 use super::Target;
@@ -154,7 +155,7 @@ impl Builder {
     pub async fn build(self) -> Result<Transport, Errno> {
         Promise::new(move |cx| {
             unsafe {
-                to_result!(spdk_nvmf_transport_create_async(
+                to_poll_pending_on_ok!(spdk_nvmf_transport_create_async(
                     self.transport_name.as_ptr(),
                     self.opts.as_ref() as *const _ as *mut _,
                     Some(complete_with_object::<Transport, spdk_nvmf_transport>),
@@ -375,14 +376,15 @@ impl Transport {
             OwnershipState::Owned(_) => {
                 Promise::new(move |cx| {
                     unsafe {
-                        to_result!(spdk_nvmf_transport_destroy(
-                            self.as_ptr(),
-                            Some(complete_with_ok),
-                            cx))?;
+                        let res = to_poll_pending_on_ok!(
+                            spdk_nvmf_transport_destroy(
+                                self.as_ptr(),
+                                Some(complete_with_ok),
+                                cx));
 
                         mem::forget(self.take());
 
-                        Ok(())
+                        res
                     }
                 }).await
             },

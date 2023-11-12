@@ -8,9 +8,6 @@ use std::{
 };
 
 use spdk_sys::{
-    to_result, 
-
-    Errno,
     spdk_bdev,
     spdk_bdev_desc,
 
@@ -19,7 +16,11 @@ use spdk_sys::{
     spdk_bdev_open_ext,
 };
 
-use crate::bdev::Any;
+use crate::{
+    bdev::Any,
+    errors::Errno,
+    to_result,
+};
 
 use super::{
     Device,

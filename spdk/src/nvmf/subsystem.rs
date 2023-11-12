@@ -8,17 +8,15 @@ use std::{
 
         null_mut,
     },
+    task::Poll,
 };
 
 use spdk_sys::{
-    Errno,
     spdk_nvmf_subsystem,
     spdk_nvmf_subtype,
     
     SPDK_NVMF_SUBTYPE_DISCOVERY,
     SPDK_NVMF_SUBTYPE_NVME,
-
-    to_result,
 
     spdk_nvmf_subsystem_add_host,
     spdk_nvmf_subsystem_add_listener,
@@ -46,6 +44,8 @@ use spdk_sys::{
 
 use crate::{
     errors::{
+        Errno,
+
         EINVAL,
         ENOENT,
     },
@@ -55,6 +55,8 @@ use crate::{
 
         complete_with_status,
     },
+    to_poll_pending_on_ok,
+    to_result,
 };
 
 use super::{
@@ -239,7 +241,7 @@ impl Subsystem {
     pub async fn start(&self) -> Result<(), Errno> {
         Promise::new(|cx| {
             unsafe {
-                to_result!(spdk_nvmf_subsystem_start(
+                to_poll_pending_on_ok!(spdk_nvmf_subsystem_start(
                     self.as_ptr(),
                     Some(Self::complete_state_change),
                     cx as *mut c_void
@@ -254,7 +256,7 @@ impl Subsystem {
     pub async fn stop(&self) -> Result<(), Errno> {
         Promise::new(|cx| {
             unsafe {
-                to_result!(spdk_nvmf_subsystem_stop(
+                to_poll_pending_on_ok!(spdk_nvmf_subsystem_stop(
                     self.as_ptr(),
                     Some(Self::complete_state_change),
                     cx as *mut c_void
@@ -275,7 +277,7 @@ impl Subsystem {
     pub async fn pause(&self, ns: u32) -> Result<(), Errno> {
         Promise::new(|cx| {
             unsafe {
-                to_result!(spdk_nvmf_subsystem_pause(
+                to_poll_pending_on_ok!(spdk_nvmf_subsystem_pause(
                     self.as_ptr(),
                     ns,
                     Some(Self::complete_state_change),
@@ -291,7 +293,7 @@ impl Subsystem {
     pub async fn resume(&self) -> Result<(), Errno> {
         Promise::new(|cx| {
             unsafe {
-                to_result!(spdk_nvmf_subsystem_resume(
+                to_poll_pending_on_ok!(spdk_nvmf_subsystem_resume(
                     self.as_ptr(),
                     Some(Self::complete_state_change),
                     cx as *mut c_void
@@ -353,7 +355,7 @@ impl Subsystem {
                 );
             }
 
-            Ok(())
+            Poll::Pending
         }).await
     }
 
