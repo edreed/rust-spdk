@@ -6,9 +6,9 @@
 #[macro_export]
 macro_rules! to_result {
     ($r:expr) => {
-        match Errno($r) {
-            Errno(0) => Ok(()),
-            Errno(e) if e < 0 => Err(Errno(-e)),
+        match crate::errors::Errno($r) {
+            crate::errors::Errno(0) => Ok(()),
+            crate::errors::Errno(e) if e < 0 => Err(crate::errors::Errno(-e)),
             _ => unreachable!()
         }
     };
@@ -23,9 +23,9 @@ macro_rules! to_result {
 #[macro_export]
 macro_rules! to_result_size {
     ($r:expr) => {
-        match Errno($r) {
-            Errno(e) if e < 0 => Err(Errno(-e)),
-            Errno(s) => Ok(s as usize)
+        match crate::errors::Errno($r) {
+            crate::errors::Errno(e) if e < 0 => Err(crate::errors::Errno(-e)),
+            crate::errors::Errno(s) => Ok(s as usize)
         }
     };
 }

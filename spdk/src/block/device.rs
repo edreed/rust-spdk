@@ -10,7 +10,6 @@ use std::{
 };
 
 use spdk_sys::{
-    Errno,
     spdk_bdev,
 
     spdk_bdev_first,
@@ -34,6 +33,8 @@ use crate::{
         BDev,
     },
     errors::{
+        Errno,
+
         EPERM,
         ENODEV,
     },

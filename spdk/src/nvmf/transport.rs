@@ -11,7 +11,6 @@ use std::{
 };
 
 use spdk_sys::{
-    Errno,
     spdk_nvmf_transport,
     spdk_nvmf_transport_opts,
     spdk_nvme_transport_type,
@@ -29,8 +28,6 @@ use spdk_sys::{
     SPDK_NVME_TRANSPORT_TCP,
     SPDK_NVME_TRANSPORT_VFIOUSER,
 
-    to_result,
-
     spdk_nvmf_get_transport_name,
     spdk_nvmf_get_transport_type,
     spdk_nvmf_transport_create_async,
@@ -42,6 +39,8 @@ use spdk_sys::{
 
 use crate::{
     errors::{
+        Errno,
+
         EINVAL,
         ENODEV,
         ENOMEM,
@@ -52,6 +51,7 @@ use crate::{
 
         complete_with_object, complete_with_ok,
     }, thread,
+    to_result,
 };
 
 use super::Target;

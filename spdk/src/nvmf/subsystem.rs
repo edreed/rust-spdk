@@ -11,14 +11,11 @@ use std::{
 };
 
 use spdk_sys::{
-    Errno,
     spdk_nvmf_subsystem,
     spdk_nvmf_subtype,
     
     SPDK_NVMF_SUBTYPE_DISCOVERY,
     SPDK_NVMF_SUBTYPE_NVME,
-
-    to_result,
 
     spdk_nvmf_subsystem_add_host,
     spdk_nvmf_subsystem_add_listener,
@@ -46,6 +43,8 @@ use spdk_sys::{
 
 use crate::{
     errors::{
+        Errno,
+
         EINVAL,
         ENOENT,
     },
@@ -55,6 +54,7 @@ use crate::{
 
         complete_with_status,
     },
+    to_result,
 };
 
 use super::{

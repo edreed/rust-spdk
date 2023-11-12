@@ -24,15 +24,17 @@ use std::{
 };
 
 use spdk_sys::{
-    Errno,
-
     spdk_dma_free,
     spdk_dma_malloc,
     spdk_dma_realloc,
     spdk_dma_zmalloc,
 };
 
-use crate::errors::EINVAL;
+use crate::errors::{
+    Errno,
+ 
+    EINVAL,
+};
 
 /// Allocates memory using the SPDK memory allocator.
 pub fn alloc(layout: Layout) -> *mut u8 {

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use spdk_sys::Errno;
+
+use crate::errors::Errno;
 
 /// A trait for block devices.
 #[async_trait]

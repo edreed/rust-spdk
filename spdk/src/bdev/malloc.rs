@@ -18,11 +18,8 @@ use std::{
 
 use async_trait::async_trait;
 use spdk_sys::{
-    Errno,
     malloc_bdev_opts,
     spdk_bdev,
-
-    to_result,
 
     create_malloc_disk,
     delete_malloc_disk, 
@@ -31,10 +28,13 @@ use spdk_sys::{
 
 use crate::{
     block::Device,
+    errors::Errno,
     task::{
         Promise,
+
         complete_with_status,
     },
+    to_result,
 };
 
 use super::BDev;

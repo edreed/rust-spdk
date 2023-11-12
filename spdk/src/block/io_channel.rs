@@ -10,12 +10,9 @@ use std::{
 };
 
 use spdk_sys::{
-    Errno,
     spdk_bdev_io_wait_entry,
     spdk_bdev_io,
     spdk_io_channel,
-
-    to_result,
 
     SPDK_BDEV_ZONE_RESET,
 
@@ -35,6 +32,8 @@ use ternary_rs::if_else;
 
 use crate::{
     errors::{
+        Errno,
+
         EIO,
         ENOMEM,
     },
@@ -44,6 +43,7 @@ use crate::{
         complete_with_ok,
         complete_with_status,
     },
+    to_result,
 };
 
 use super::Descriptor;

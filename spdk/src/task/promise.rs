@@ -12,10 +12,12 @@ use std::{
 
 use futures::Future;
 use libc::c_void;
-use spdk_sys::Errno;
 use ternary_rs::if_else;
 
-use crate::thread::Thread;
+use crate::{
+    errors::Errno,
+    thread::Thread,
+};
 
 /// Encapsulates the state of a [`Promise`].
 struct PromiseState<T: 'static> {

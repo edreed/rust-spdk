@@ -1,13 +1,20 @@
-use std::{str::FromStr, mem::MaybeUninit, ffi::CString, cmp::Ordering};
+use std::{
+    cmp::Ordering,
+    ffi::CString,
+    mem::MaybeUninit,
+    str::FromStr,
+};
 
 use spdk_sys::{
-    Errno,
     spdk_nvme_transport_id,
-
-    to_result,
 
     spdk_nvme_transport_id_compare,
     spdk_nvme_transport_id_parse,
+};
+
+use crate::{
+    errors::Errno,
+    to_result,
 };
 
 #[derive(Clone)]

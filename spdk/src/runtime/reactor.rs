@@ -15,7 +15,6 @@ use futures::{
 };
 
 use spdk_sys::{
-    Errno,
     spdk_cpuset,
 
     spdk_event_allocate,
@@ -27,11 +26,15 @@ use spdk_sys::{
 };
 
 use crate::{
+    errors::{
+        Errno,
+
+        ENOMEM,
+    },
     task::{
         JoinHandle,
         RcTask, ReactorTask,
     },
-    errors::ENOMEM,
 };
 
 use super::{
