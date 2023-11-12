@@ -50,8 +50,9 @@ use crate::{
         Promise,
 
         complete_with_object, complete_with_ok,
-    }, thread,
-    to_result,
+    },
+    thread,
+    to_poll_pending_on_ok,
 };
 
 use super::Target;
@@ -154,7 +155,7 @@ impl Builder {
     pub async fn build(self) -> Result<Transport, Errno> {
         Promise::new(move |cx| {
             unsafe {
-                to_result!(spdk_nvmf_transport_create_async(
+                to_poll_pending_on_ok!(spdk_nvmf_transport_create_async(
                     self.transport_name.as_ptr(),
                     self.opts.as_ref() as *const _ as *mut _,
                     Some(complete_with_object::<Transport, spdk_nvmf_transport>),
@@ -375,14 +376,15 @@ impl Transport {
             OwnershipState::Owned(_) => {
                 Promise::new(move |cx| {
                     unsafe {
-                        to_result!(spdk_nvmf_transport_destroy(
-                            self.as_ptr(),
-                            Some(complete_with_ok),
-                            cx))?;
+                        let res = to_poll_pending_on_ok!(
+                            spdk_nvmf_transport_destroy(
+                                self.as_ptr(),
+                                Some(complete_with_ok),
+                                cx));
 
                         mem::forget(self.take());
 
-                        Ok(())
+                        res
                     }
                 }).await
             },

@@ -14,6 +14,7 @@ use std::{
 
         null_mut,
     },
+    task::Poll,
 };
 
 use async_trait::async_trait;
@@ -124,7 +125,7 @@ impl BDev for Malloc {
                     cx);
             }
 
-            Ok(())
+            Poll::Pending
         }).await
     }
 }

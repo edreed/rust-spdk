@@ -29,3 +29,46 @@ macro_rules! to_result_size {
         }
     };
 }
+
+/// Convert an SPDK integer return value to a [`Poll`] value indicating whether
+/// an asynchronous operation is pending or a result is available.
+/// 
+/// A return value of `0` indicates that the asynchronous operation successfully
+/// started and this macro will return `Poll::Pending`. A return value of `< 0`
+/// indicates an error and this macro will return `Poll::Ready(Err(Errno))`
+/// 
+/// [`Poll`]: enum@std::task::Poll
+#[macro_export]
+macro_rules! to_poll_pending_on_ok {
+    ($r:expr) => {
+        match crate::to_result!($r) {
+            Ok(()) => std::task::Poll::Pending,
+            Err(e) => std::task::Poll::Ready(Err(e))
+        }
+    };
+}
+
+/// Convert an SPDK integer return value to a [`Poll`] value indicating whether
+/// an asynchronous operation is pending or a result is available.
+/// 
+/// Some SPDK functions indicate synchronous completion by returning a value of
+/// `0` and asynchronous operation pending indicated by a specific error code.
+/// This macro takes the error code that indicates pending operation as its
+/// first argument and the return value of the SPDK function as its second.
+/// 
+/// A return value of `0` indicates the operation was completed synchronously
+/// and this macro will return `Poll::Ready(Ok(()))`. A return value indicating
+/// that the asynchronous operation is pending will return `Poll::Pending`.
+/// Other return values `< 0` are converted to `Poll::Ready(Err(Errno))`.
+/// 
+/// [`Poll`]: enum@std::task::Poll
+#[macro_export]
+macro_rules! to_poll_pending_on_err {
+    ($e:expr, $r:expr) => {
+        match crate::to_result!($r) {
+            Ok(()) => std::task::Poll::Ready(Ok(())),
+            Err(e) if e == $e => std::task::Poll::Pending,
+            Err(e) => std::task::Poll::Ready(Err(e))
+        }
+    };
+}

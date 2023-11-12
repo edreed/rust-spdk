@@ -3,9 +3,9 @@ use std::{
     cell::RefCell,
     rc::Rc,
     task::{
-        Waker,
-        Poll,
         Context,
+        Poll,
+        Waker,
     },
     pin::Pin,
 };
@@ -114,7 +114,7 @@ pub(crate) unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
 /// to its result.
 pub(crate) struct Promise<F, T>
 where
-    F: FnMut(*mut c_void) -> Result<(), Errno>,
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
     T: 'static
 {
     start_fn: F,
@@ -123,13 +123,13 @@ where
 
 unsafe impl<F, T> Send for Promise<F, T>
 where
-    F: FnMut(*mut c_void) -> Result<(), Errno>,
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
     T: 'static
 {}
 
 impl<F, T> Promise<F, T>
 where
-    F: FnMut(*mut c_void) -> Result<(), Errno>,
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
     T: 'static
 {
     /// Returns a new `Promise` instance.
@@ -161,7 +161,7 @@ where
 
 impl<F, T> Future for Promise<F, T>
 where
-    F: FnMut(*mut c_void) -> Result<(), Errno> + Unpin,
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>> + Unpin,
     T: 'static
 {
     type Output = Result<T, Errno>;
@@ -176,15 +176,14 @@ where
                 let promise_cx = Rc::into_raw(self.state.clone());
 
                 match (self.as_mut().start_fn)(promise_cx as *mut c_void) {
-                    Ok(()) => {},
-                    Err(e) => {
-                        let state = unsafe { Rc::from_raw(promise_cx) };
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(res) => {
+                        unsafe { Rc::from_raw(promise_cx) };
 
-                        PromiseState::set_result(&state, Err(e));
+                        Poll::Ready(res)
                     },
                 }
 
-                Poll::Pending
             },
         }
     }
