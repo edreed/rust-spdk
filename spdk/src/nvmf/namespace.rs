@@ -44,7 +44,7 @@ impl Namespace {
 
         assert!(!bdev.is_null());
 
-        block::Device::from_ptr(bdev)
+        block::Device::<Any>::from_ptr(bdev)
     }
 }
 

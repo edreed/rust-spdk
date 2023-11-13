@@ -4,7 +4,6 @@ use std::{
         LayoutError,
     },
     ffi::CStr,
-    marker::PhantomData,
     mem::{self},
     ptr::NonNull,
 };
@@ -31,6 +30,7 @@ use crate::{
     bdev::{
         Any,
         BDev,
+        Owned,
     },
     errors::{
         Errno,
@@ -44,13 +44,13 @@ use crate::{
 use super::Descriptor;
 
 /// Represents the ownership state of a [`Device`].
-enum OwnershipState {
-    Owned(NonNull<spdk_bdev>),
+enum OwnershipState<T: BDev + Send + 'static> {
+    Owned(T),
     Borrowed(NonNull<spdk_bdev>),
     None,
 }
 
-unsafe impl Send for OwnershipState {}
+unsafe impl<T: BDev + Send + 'static> Send for OwnershipState<T> {}
 
 /// Represents a block device.
 /// 
@@ -74,44 +74,39 @@ unsafe impl Send for OwnershipState {}
 /// [`Device<T>::destroy`]: method@Device<T>::destroy
 /// [`Device<T>::take`]: method@Device<T>::take
 /// [`task::yield_now`]: function@crate::task::yield_now
-pub struct Device<T: BDev + Send + From<Device<T>> + 'static>(OwnershipState, PhantomData<T>);
+pub struct Device<T: BDev + Send + From<Owned> + 'static>(OwnershipState<T>);
 
-unsafe impl <T: BDev + Send + From<Device<T>> + 'static> Send for Device<T> {}
-unsafe impl <T: BDev + Send + From<Device<T>> + 'static> Sync for Device<T> {}
+unsafe impl <T: BDev + Send + From<Owned> + 'static> Send for Device<T> {}
+unsafe impl <T: BDev + Send + From<Owned> + 'static> Sync for Device<T> {}
 
-impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
+impl <T: BDev + Send + From<Owned> + 'static> Device<T> {
+    /// Get an owned [`Device`] for a block device.
+    pub fn new(dev: T) -> Self {
+        Self(OwnershipState::Owned(dev))
+    }
+
     /// Get a borrowed [`Device`] by its name.
     /// 
     /// # Returns
     /// 
     /// This function returns [`None`] if no block device with the given name
     /// exists.
-    pub fn from_name(name: &CStr) -> Option<Self> {
+    pub fn from_name(name: &CStr) -> Option<Device<Any>> {
         let bdev = unsafe { spdk_bdev_get_by_name(name.as_ptr()) };
 
         match NonNull::new(bdev) {
             Some(b) => {
-                Some(Self(OwnershipState::Borrowed(b), Default::default()))
+                Some(Device::<Any>(OwnershipState::Borrowed(b)))
             },
             None => None,
         }
     }
 
-    /// Get an owned [`Device`] for a raw `spdk_bdev` pointer.
-    pub fn from_ptr_owned(bdev: *mut spdk_bdev) -> Self {
-        match NonNull::new(bdev) {
-            Some(b) => {
-                Self(OwnershipState::Owned(b), Default::default())
-            },
-            None => panic!("device pointer must not be null"),
-        }
-    }
-
     /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
-    pub fn from_ptr(bdev: *mut spdk_bdev) -> Self {
+    pub fn from_ptr(bdev: *mut spdk_bdev) -> Device<Any> {
         match NonNull::new(bdev) {
             Some(b) => {
-                Self(OwnershipState::Borrowed(b), Default::default())
+                Device::<Any>(OwnershipState::Borrowed(b))
             },
             None => panic!("device pointer must not be null"),
         }
@@ -122,18 +117,40 @@ impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
     /// # Panics
     /// 
     /// This method panics if this device has no ownership state.
-    pub(crate) fn as_ptr(&self) -> *mut spdk_bdev {
-        match self.0 {
-            OwnershipState::Owned(bdev) | OwnershipState::Borrowed(bdev) => bdev.as_ptr(),
+    pub fn as_ptr(&self) -> *mut spdk_bdev {
+        match &self.0 {
+            OwnershipState::Owned(dev) => dev.as_ptr(),
+            OwnershipState::Borrowed(bdev) => bdev.as_ptr(),
             _ => panic!("no device"),
         }
     }
 
-    /// Borrow this device.
-    pub fn borrow(&self) -> Self {
+    /// Consumes this device and returns a [`Device<Owned>`] assuming ownership
+    /// of the underlying `spdk_bdev` pointer.
+    pub fn into_owned(&mut self) -> Option<Device<Owned>> {
         match self.0 {
-            OwnershipState::Owned(bdev)  | OwnershipState::Borrowed(bdev) => {
-                Self(OwnershipState::Borrowed(bdev), Default::default())
+            OwnershipState::Owned(_) => {
+                match mem::replace(&mut self.0, OwnershipState::None) {
+                    OwnershipState::Owned(dev) => {
+                        Some(Owned::new(dev))
+                    },
+                    _ => unreachable!(),
+                }
+            },
+            _ => None,
+        }
+    }
+
+    /// Borrow this device.
+    pub fn borrow(&self) -> Device<Any> {
+        match &self.0 {
+            OwnershipState::Owned(dev) => {
+                Device::<Any>(OwnershipState::Borrowed(
+                    unsafe { NonNull::new_unchecked(dev.as_ptr()) }
+                ))
+            },
+            OwnershipState::Borrowed(bdev) => {
+                Device::<Any>(OwnershipState::Borrowed(bdev.clone()))
             },
             OwnershipState::None => panic!("no device"),
         }
@@ -157,7 +174,7 @@ impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
     /// Takes the value from this device and replaces with a value having no
     /// ownership.
     pub fn take(&mut self) -> Self {
-        mem::replace(self, Self(OwnershipState::None, Default::default()))
+        mem::replace(self, Self(OwnershipState::None))
     }
 
     /// Destroy the block device asynchronously.
@@ -172,7 +189,12 @@ impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
             OwnershipState::Borrowed(_) => Err(EPERM),
             OwnershipState::None => Err(ENODEV),
             OwnershipState::Owned(_) => {
-                T::destroy(self.take().into()).await
+                match mem::replace(&mut self.0, OwnershipState::None) {
+                    OwnershipState::Owned(dev) => {
+                        dev.destroy().await
+                    },
+                    _ => unreachable!(),
+                }
             },
         }
     }
@@ -251,7 +273,7 @@ impl <T: BDev + Send + From<Device<T>> + 'static> Device<T> {
     }
 }
 
-impl <T: BDev + Send + From<Device<T>> + 'static> Drop for Device<T> {
+impl <T: BDev + Send + From<Owned> + 'static> Drop for Device<T> {
     fn drop(&mut self) {
         if self.is_owned() {
             let dev = self.take();
@@ -277,7 +299,7 @@ impl Iterator for Devices {
 
             self.0 = unsafe { spdk_bdev_next(self.0) };
 
-            Some(Device::from_ptr(current))
+            Some(Device::<Any>::from_ptr(current))
         }
     }
 }

@@ -3,11 +3,7 @@
 use std::{
     default::Default,
     ffi::CStr,
-    mem::{
-        self,
-
-        ManuallyDrop,
-    },
+    mem::{self},
     os::raw:: c_char,
     ptr::{
         NonNull,
@@ -38,7 +34,10 @@ use crate::{
     to_result,
 };
 
-use super::BDev;
+use super::{
+    BDev,
+    Owned,
+};
 
 /// Builds a [`Malloc`] instance using the Malloc Block Device module of the
 /// SPDK.
@@ -92,7 +91,8 @@ impl Builder {
         
         unsafe { to_result!(create_malloc_disk(&mut malloc, &self.0))? };
 
-        Ok(Device::from_ptr_owned(malloc))
+        Ok(Device::new(Malloc(
+            unsafe { NonNull::new_unchecked(malloc) })))
     }
 }
 
@@ -107,15 +107,12 @@ pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}
 
-impl Malloc {
-    /// Returns a pointer to the underlying `spdk_bdev` structure.
+#[async_trait]
+impl BDev for Malloc {
     fn as_ptr(&self) -> *mut spdk_bdev {
         self.0.as_ptr()
     }
-}
 
-#[async_trait]
-impl BDev for Malloc {
     async fn destroy(self) -> Result<(), Errno> {
         Promise::new(move |cx| {
             unsafe {
@@ -130,8 +127,8 @@ impl BDev for Malloc {
     }
 }
 
-impl From<Device<Malloc>> for Malloc {
-    fn from(device: Device<Malloc>) -> Self {
-        Self(NonNull::new(ManuallyDrop::new(device).as_ptr()).unwrap())
+impl From<Owned> for Malloc {
+    fn from(owned: Owned) -> Self {
+        Self(unsafe { NonNull::new_unchecked(owned.into_ptr()) })
     }
 }

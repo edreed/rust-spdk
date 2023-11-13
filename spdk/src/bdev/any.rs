@@ -1,35 +1,35 @@
-use std::mem;
-
 use async_trait::async_trait;
+use spdk_sys::spdk_bdev;
 
-use crate::{
-    block::Device,
-    errors::{
-        Errno,
+use crate::errors::{
+    Errno,
 
-        EPERM,
-    },
+    EPERM,
 };
 
-use super::BDev;
+use super::{
+    BDev,
+    Owned,
+};
 
 /// A placeholder type that represents any block device.
 pub struct Any;
 
+unsafe impl Send for Any {}
+
 #[async_trait]
 impl BDev for Any {
+    fn as_ptr(&self) -> *mut spdk_bdev {
+        unreachable!("Any::as_ptr() should never be called")
+    }
+    
     async fn destroy(self) -> Result<(), Errno> {
         Err(EPERM)
     }
 }
 
-impl From<Device<Any>> for Any {
-    fn from(dev: Device<Any>) -> Self {
-        // We should never be able to get an owned device here. If we do, we
-        // would leak the block device.
-        assert!(!dev.is_owned());
-
-        mem::forget(dev);
-        Self
+impl From<Owned> for Any {
+    fn from(_owned: Owned) -> Self {
+        unreachable!("Any::from_owned() should never be called")
     }
 }

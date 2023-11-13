@@ -27,6 +27,8 @@ async fn main() {
         .with_num_blocks(NUM_BLOCKS)
         .with_block_size(BLOCK_SIZE)
         .build()
+        .unwrap()
+        .into_owned()
         .unwrap();
     let devname = malloc.name().to_string_lossy().to_string();
 

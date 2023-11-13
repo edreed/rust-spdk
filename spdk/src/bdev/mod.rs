@@ -8,6 +8,8 @@ mod bdev;
 
 #[cfg(feature = "bdev-malloc")]
 pub mod malloc;
+pub mod owned;
 
 pub use any::Any;
 pub use bdev::BDev;
+pub use owned::Owned;
