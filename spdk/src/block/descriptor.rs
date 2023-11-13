@@ -59,7 +59,7 @@ impl Descriptor {
 
     /// Returns the [`Device`] associated with this [`Descriptor`].
     pub fn device(&self) -> Device<Any> {
-        Device::from_ptr(unsafe { spdk_bdev_desc_get_bdev(self.0.as_ptr()) })
+        Device::<Any>::from_ptr(unsafe { spdk_bdev_desc_get_bdev(self.0.as_ptr()) })
     }
 
     /// Returns an [`IoChannel`] for this [`Descriptor`].
