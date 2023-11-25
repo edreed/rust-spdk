@@ -28,7 +28,6 @@ use spdk_sys::{
     SPDK_APP_PARSE_ARGS_SUCCESS,
 
     spdk_app_opts,
-    spdk_app_parse_args_rvals,
     spdk_app_shutdown_cb,
 
     spdk_app_opts_init,
@@ -39,14 +38,15 @@ use spdk_sys::{
 use static_init::dynamic;
 
 use crate::{
-    task::{
-        ThreadTask,
-        RcTask,
-    },
+    errors::{Errno, EINVAL},
     runtime::{
         Reactor,
 
         reactors,
+    },
+    task::{
+        ThreadTask,
+        RcTask,
     },
 };
 
@@ -79,15 +79,35 @@ static APP_NAME: CString = CString::new(
 impl Builder {
     /// Returns a new builder with default values.
     pub fn new() -> Self {
-        default()
+        Self::default()
+    }
+
+    /// Returns a new builder with values initialized from the given
+    /// [`spdk_app_opts`] struct.
+    /// 
+    /// [`spdk_app_opts`]: ../../spdk_sys/struct.spdk_app_opts.html
+    pub fn from_options(opts: spdk_app_opts) -> Self {
+        let mut builder = Self(opts);
+
+        if builder.0.name.is_null() {
+            builder.with_name(&APP_NAME);
+        }
+
+        let shutdown_cb = builder.0.shutdown_cb;
+
+        if shutdown_cb.is_none() {
+            builder.with_shutdown_callback(Some(Self::shutdown));
+        }
+
+        builder
     }
 
     /// Returns a new builder with values initialized from the command line.
-    pub fn from_cmdline() -> Result<Self, spdk_app_parse_args_rvals> {
+    pub fn from_cmdline() -> Result<Self, Errno> {
         let argv: Vec<*const c_char> = ARGV_CSTRING.iter()
             .map(|a| a.as_ptr())
             .collect();
-        let mut builder = default();
+        let mut builder = Self::new();
 
         unsafe {
             let rc = spdk_app_parse_args(
@@ -100,9 +120,11 @@ impl Builder {
                 None);
 
             if rc != SPDK_APP_PARSE_ARGS_SUCCESS {
-                return Err(rc.into())
+                return Err(EINVAL)
             }
         }
+
+        builder.with_shutdown_callback(Some(Self::shutdown));
 
         Ok(builder)
     }
@@ -163,19 +185,24 @@ impl Builder {
     ///     });
     /// }
     /// ```
-    pub fn build(&mut self) -> Runtime {
+    pub fn build(&self) -> Runtime {
         Runtime(Cell::new(self.0))
     }
 
+    /// A callback invoked when the process receives a signal to shut down.
+    unsafe extern "C" fn shutdown() {
+        SHUTDOWN_STARTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
-/// Returns a new builder with default values.
-pub fn default() -> Builder {
-    let mut opts: MaybeUninit<Builder> = MaybeUninit::<Builder>::uninit();
+impl Default for Builder {
+    fn default() -> Builder {
+        let mut opts: MaybeUninit<Builder> = MaybeUninit::<Builder>::uninit();
 
-    unsafe {
-        spdk_app_opts_init(addr_of_mut!((*opts.as_mut_ptr()).0), size_of::<spdk_app_opts>());
-        opts.assume_init()
+        unsafe {
+            spdk_app_opts_init(addr_of_mut!((*opts.as_mut_ptr()).0), size_of::<spdk_app_opts>());
+            opts.assume_init()
+        }
     }
 }
 
@@ -192,20 +219,14 @@ impl Runtime {
     pub fn new() -> Self {
         Builder::new()
             .with_name(APP_NAME.as_c_str())
-            .with_shutdown_callback(Some(Self::shutdown))
             .build()
     }
 
     /// Returns a new runtime initialized from the command line.
-    pub fn from_cmdline()  -> Result<Self, spdk_app_parse_args_rvals> {
+    pub fn from_cmdline()  -> Result<Self, Errno> {
         Ok(Builder::from_cmdline()?
             .with_name(APP_NAME.as_c_str())
-            .with_shutdown_callback(Some(Self::shutdown))
             .build())
-    }
-
-    unsafe extern "C" fn shutdown() {
-        SHUTDOWN_STARTED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn is_shutting_down() -> bool {

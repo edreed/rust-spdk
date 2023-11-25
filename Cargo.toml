@@ -1,2 +1,3 @@
 [workspace]
 members = ["spdk", "spdk-macros", "spdk-sys"]
+resolver = "2"
