@@ -5,6 +5,7 @@
 
 pub mod bdev;
 pub mod block;
+pub mod cli;
 pub mod dma;
 pub mod errors;
 pub mod macros;

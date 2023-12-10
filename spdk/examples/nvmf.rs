@@ -1,13 +1,13 @@
-
 use std::{
-    env,
     ffi::CStr,
+    net::IpAddr,
     time::Duration,
 };
 
 use byte_strings::c_str;
 use spdk::{
     bdev::malloc,
+    cli::Parser,
     nvme::TransportId,
     nvmf::{
         self,
@@ -16,8 +16,9 @@ use spdk::{
         TransportType,
     },
     runtime::Runtime,
-    time::interval
+    time::interval,
 };
+use ternary_rs::if_else;
 
 const BDEV_NAME: &CStr = c_str!("Malloc0");
 const NUM_BLOCKS: u64 = 32768;
@@ -25,7 +26,18 @@ const BLOCK_SIZE: u32 = 512;
 
 const NQN: &CStr = c_str!("nqn.2016-06.io.spdk:cnode1");
 
-#[spdk::main]
+#[derive(Parser)]
+struct Args {
+    /// The IP address to listen on.
+    #[spdk_arg(short = 'l', value_name = "IPADDR", default = "127.0.0.1".parse().unwrap())]
+    listen_addr: IpAddr,
+
+    /// The port to listen on.
+    #[spdk_arg(short = 'P', value_name = "PORT", default = 4420)]
+    listen_port: u16,
+}
+
+#[spdk::main(cli_args = Args::parse())]
 async fn main() {
     let mut target = nvmf::targets().nth(0).unwrap();
 
@@ -37,9 +49,14 @@ async fn main() {
 
     target.add_transport(transport).await.unwrap();
 
-    let listen_addr = env::var("LISTEN_ADDR").expect("LISTEN_ADDR environment variable must be set");
+    let args = Args::get();
 
-    let transport_id = format!("trtype=TCP adrfam=IPv4 traddr={} trsvcid=4420 subnqn={}", listen_addr, NQN.to_string_lossy().to_string())
+    let transport_id = format!(
+            "trtype=TCP adrfam={} traddr={} trsvcid={} subnqn={}",
+            if_else!(args.listen_addr.is_ipv4(), "IPv4", "IPv6"),
+            args.listen_addr,
+            args.listen_port,
+            NQN.to_string_lossy().to_string())
         .parse::<TransportId>()
         .unwrap();
 

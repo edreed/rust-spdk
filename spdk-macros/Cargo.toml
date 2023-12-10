@@ -9,5 +9,8 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
-quote = "1.0.30"
-syn = "2.0.26"
+byte-strings = "0.3.1"
+proc-macro2 = "1.0.70"
+quote = "1.0.33"
+syn = { version = "2.0.39", features = ["full", "visit"] }
+ternary-rs = "1.0.0"

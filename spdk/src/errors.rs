@@ -27,5 +27,8 @@ pub const EINVAL: Errno = Errno(libc::EINVAL);
 /// Operation not supported
 pub const ENOTSUP: Errno = Errno(libc::ENOTSUP);
 
+/// Operation already in progress
+pub const EALREADY: Errno = Errno(libc::EALREADY);
+
 /// Operation in progress
 pub const EINPROGRESS: Errno = Errno(libc::EINPROGRESS);
