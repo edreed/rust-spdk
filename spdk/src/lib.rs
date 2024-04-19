@@ -2,7 +2,6 @@
 //! Development Kit ([SPDK]).
 //! 
 //! [SPDK]: https://www.spdk.io
-
 pub mod bdev;
 pub mod block;
 pub mod cli;
@@ -17,3 +16,4 @@ pub mod thread;
 pub mod time;
 
 pub use spdk_macros::main;
+pub use spdk_macros::module;

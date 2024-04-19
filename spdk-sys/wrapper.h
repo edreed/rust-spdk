@@ -5,6 +5,10 @@
 #include "spdk/event.h"
 #include "spdk/thread.h"
 
+#if defined(CARGO_FEATURE_BDEV_MODULE)
+#include "spdk/bdev_module.h"
+#endif
+
 #if defined(CARGO_FEATURE_BDEV_MALLOC)
 #include "bdev/malloc/bdev_malloc.h"
 #endif

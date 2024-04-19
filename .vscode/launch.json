@@ -50,6 +50,30 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'module_echo'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=module_echo",
+                    "--package=spdk",
+                    "--features=bdev-module"
+                ],
+                "filter": {
+                    "name": "module_echo",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--lcores=(0-1)",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'reactor'",
             "cargo": {
                 "args": [
