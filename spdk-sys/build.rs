@@ -179,6 +179,11 @@ fn main() {
         .prepend_enum_name(false)
         .layout_tests(false);
 
+    if include_bdev_module {
+        builder = builder
+            .clang_arg("-D CARGO_FEATURE_BDEV_MODULE=1")
+    }
+
     if include_bdev_malloc {
         builder = builder
             .allowlist_function(".*_malloc_disk")

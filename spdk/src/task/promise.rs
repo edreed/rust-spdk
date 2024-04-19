@@ -105,7 +105,7 @@ impl <T: Debug + Send + 'static> PromiseState<T> {
 /// This callback receives a raw pointer to an SPDK object of type `R` and
 /// converts it to the appropriate Rust type `T`. If the received pointer is
 /// null, the result is a suitable `Err(Errno)` value.
-pub(crate) unsafe extern "C" fn complete_with_object<T, R>(cx: *mut c_void, obj: *mut R)
+pub unsafe extern "C" fn complete_with_object<T, R>(cx: *mut c_void, obj: *mut R)
 where
     T: Debug + Send + TryFrom<*mut R, Error = Errno> + 'static,
 {
@@ -119,7 +119,7 @@ where
 /// This callback receives a status code. If the status code is 0, the result is
 /// `Ok(())`. Otherwise, the status is converted to a suitable `Err(Errno)`
 /// value.
-pub(crate) unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i32) {
+pub unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i32) {
     let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<()>>>());
     let res = if_else!(status == 0, Ok(()), Err(Errno(-status)));
 
@@ -129,7 +129,7 @@ pub(crate) unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i3
 /// A callback invoked to set the result of a [`Promise`].
 /// 
 /// This callback always sets the result to `Ok(())`.
-pub(crate) unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
+pub unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
     let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<()>>>());
 
     PromiseState::set_result(arc_self, Ok(()));
@@ -137,7 +137,7 @@ pub(crate) unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
 
 /// Orchestrates the execution of an asynchronous operation and provides access
 /// to its result.
-pub(crate) struct Promise<F, T>
+pub struct Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
     T: Debug + Send + 'static
@@ -162,7 +162,7 @@ where
     /// The caller provides a function that starts the asynchronous operation
     /// passing one of the `complete_with_*` callbacks and the provided context
     /// pointer to the SPDK API.
-    pub(crate) fn new(start_fn: F) -> Self {
+    pub fn new(start_fn: F) -> Self {
         Self {
             start_fn,
             state: PromiseState::new(),

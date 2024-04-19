@@ -11,8 +11,8 @@ use std::{
 };
 
 use spdk_sys::{
-    spdk_bdev_io_wait_entry,
     spdk_bdev_io,
+    spdk_bdev_io_wait_entry,
     spdk_io_channel,
 
     SPDK_BDEV_ZONE_RESET,
@@ -22,10 +22,14 @@ use spdk_sys::{
     spdk_bdev_get_io_channel,
     spdk_bdev_queue_io_wait,
     spdk_bdev_read,
+    spdk_bdev_read_blocks,
     spdk_bdev_reset,
     spdk_bdev_unmap,
-    spdk_bdev_write_zeroes,
+    spdk_bdev_unmap_blocks,
     spdk_bdev_write,
+    spdk_bdev_write_blocks,
+    spdk_bdev_write_zeroes,
+    spdk_bdev_write_zeroes_blocks,
     spdk_bdev_zone_management,
     spdk_put_io_channel,
 };
@@ -35,6 +39,7 @@ use crate::{
     errors::{
         Errno,
 
+        EINVAL,
         EIO,
         ENOMEM,
     },
@@ -138,7 +143,7 @@ impl <'a> IoChannel<'a> {
     }
 
     /// Writes the data in the buffer to the block device at the specified
-    /// offset.
+    /// byte offset.
     pub async fn write_at<B: AsRef<[u8]>>(&mut self, buf: &B, offset: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             let buf = buf.as_ref();
@@ -156,7 +161,33 @@ impl <'a> IoChannel<'a> {
         }).await
     }
 
-    /// Writes zeroes to the block device at the specified offset.
+    /// Writes the data in the buffer to the block device at the specified
+    /// block offset.
+    ///
+    /// The buffer must be a multiple of the block size of the device.
+    pub async fn write_blocks_at<B: AsRef<[u8]>>(&mut self, buf: &B, offset_blocks: u64) -> Result<(), Errno> {
+        self.execute_io(|cx| {
+            let buf = buf.as_ref();
+            let logical_block_size = self.descriptor().device().logical_block_size() as usize;
+
+            if (buf.len() % logical_block_size) != 0 {
+                return Poll::Ready(Err(EINVAL));
+            }
+
+            unsafe {
+                to_poll_pending_on_ok!(spdk_bdev_write_blocks(
+                    self.descriptor().as_ptr(),
+                    self.as_ptr(),
+                    addr_of!(*buf) as *mut c_void,
+                    offset_blocks,
+                    (buf.len() / logical_block_size) as u64,
+                    Some(Self::complete_io),
+                    cx))
+            }
+        }).await
+    }
+
+    /// Writes zeroes to the block device at the specified byte offset.
     pub async fn write_zeroes_at(&mut self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
@@ -171,10 +202,24 @@ impl <'a> IoChannel<'a> {
         }).await
     }
 
-    /// Reads data from the block device at the specified offset into the
+    /// Writes zeroes to the block device at the specified block offset.
+    pub async fn write_zeroes_blocks_at(&mut self, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
+        self.execute_io(|cx| {
+            unsafe {
+                to_poll_pending_on_ok!(spdk_bdev_write_zeroes_blocks(
+                    self.descriptor().as_ptr(),
+                    self.as_ptr(),
+                    offset_blocks,
+                    num_blocks,
+                    Some(Self::complete_io),
+                    cx))
+            }
+        }).await
+    }
+
+    /// Reads data from the block device at the specified byte offset into the
     /// buffer.
     pub async fn read_at<B: AsMut<[u8]>>(&mut self, buf: &mut B, offset: u64) -> Result<(), Errno> {
-
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_read(
@@ -184,6 +229,32 @@ impl <'a> IoChannel<'a> {
                     offset,
                     buf.as_mut().len() as u64,
                         Some(Self::complete_io),
+                    cx))
+            }
+        }).await
+    }
+
+    /// Reads data from the block device at the specified byte offset into the
+    /// buffer.
+    ///
+    /// The buffer must be a multiple of the block size of the device.
+    pub async fn read_blocks_at<B: AsMut<[u8]>>(&mut self, buf: &mut B, offset_blocks: u64) -> Result<(), Errno> {
+        self.execute_io(|cx| {
+            let buf = buf.as_mut();
+            let logical_block_size = self.descriptor().device().logical_block_size() as usize;
+
+            if (buf.len() % logical_block_size) != 0 {
+                return Poll::Ready(Err(EINVAL));
+            }
+
+            unsafe {
+                to_poll_pending_on_ok!(spdk_bdev_read_blocks(
+                    self.descriptor().as_ptr(),
+                    self.as_ptr(),
+                    addr_of_mut!(*buf) as *mut c_void,
+                    offset_blocks,
+                    (buf.len() / logical_block_size) as u64,
+                    Some(Self::complete_io),
                     cx))
             }
         }).await
@@ -199,6 +270,22 @@ impl <'a> IoChannel<'a> {
                     self.as_ptr(),
                     offset,
                     len,
+                    Some(Self::complete_io),
+                    cx))
+            }
+        }).await
+    }
+
+    /// Notifies the block device that the specified range of blocks is no longer
+    /// valid.
+    pub async fn unmap_blocks(&mut self, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
+        self.execute_io(|cx| {
+            unsafe {
+                to_poll_pending_on_ok!(spdk_bdev_unmap_blocks(
+                    self.descriptor().as_ptr(),
+                    self.as_ptr(),
+                    offset_blocks,
+                    num_blocks,
                     Some(Self::complete_io),
                     cx))
             }

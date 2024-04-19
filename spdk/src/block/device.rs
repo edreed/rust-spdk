@@ -283,6 +283,12 @@ impl <T: OwnedOps + Send + From<Owned> + 'static> Drop for Device<T> {
     }
 }
 
+impl From<*mut spdk_bdev> for Device<Any> {
+    fn from(bdev: *mut spdk_bdev) -> Self {
+        Device::<Any>::from_ptr(bdev)
+    }
+}
+
 /// An iterator over all block devices.
 pub struct Devices(*mut spdk_bdev);
 
