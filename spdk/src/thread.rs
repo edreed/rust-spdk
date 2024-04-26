@@ -345,6 +345,11 @@ impl Drop for Thread {
     }
 }
 
+impl From<*mut spdk_thread> for Thread {
+    fn from(value: *mut spdk_thread) -> Self {
+        Thread::from_ptr(value)
+    }
+}
 
 /// Spawns a new asynchronous task to be executed on the current SPDK thread and
 /// returns a [`JoinHandle`] to await results.
