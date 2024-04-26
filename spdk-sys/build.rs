@@ -50,6 +50,7 @@ fn main() {
     let spdk_module_dir = spdk_src_dir.join("module");
     let isal_lib_dir = spdk_dir.join("isa-l/.libs");
     let isal_crypto_lib_dir = spdk_dir.join("isa-l-crypto/.libs");
+    let spdk_wrappers = spdk_dir.join("build/wrappers.c");
 
     if !spdk_dir.exists() {
         let copy_options = dir::CopyOptions::new()
@@ -172,6 +173,8 @@ fn main() {
         .allowlist_var("SPDK_.*")
         .opaque_type("spdk_nvme_(ctrlr|health|sgl|tcp)_.*")
         .opaque_type("spdk_nvmf_fabric_.*")
+        .wrap_static_fns(true)
+        .wrap_static_fns_path(&spdk_wrappers)
         .wrap_unsafe_ops(true)
         .prepend_enum_name(false)
         .layout_tests(false);
@@ -191,4 +194,18 @@ fn main() {
         .generate()
         .expect("spdk bindings generated")
         .write_to_file(out_dir.join("bindings.rs").as_path());
+
+    if spdk_wrappers.exists() {
+        let mut wrappers = cc::Build::new();
+
+        wrappers
+            .file(spdk_wrappers)
+            .include(".")
+            .includes(include_paths);
+
+        defines.iter().for_each(|d| _ = wrappers.define(d, None));
+
+        wrappers
+            .compile("spdk_wrappers");
+    }
 }
