@@ -52,7 +52,8 @@ use crate::{
     task::{
         Promise,
 
-        complete_with_object, complete_with_ok,
+        complete_with_object,
+        complete_with_ok,
     },
     thread,
     to_poll_pending_on_ok,

@@ -42,7 +42,7 @@
             },
             "args": [
                 "--iova-mode=va",
-                "--huge-dir=/mnt/spdk_hugetlbfs",
+                "--huge-dir=/mnt/hugepages",
                 "--logflag=all"
             ],
             "cwd": "${workspaceFolder}"
