@@ -1,13 +1,17 @@
 #![allow(dead_code)]
 use std::{
-    cell::RefCell,
-    rc::Rc,
+    fmt::Debug,
+    mem,
+    pin::Pin,
+    sync::{
+        Arc,
+        Mutex,
+    },
     task::{
         Context,
         Poll,
         Waker,
-    },
-    pin::Pin,
+    }
 };
 
 use futures::Future;
@@ -19,58 +23,79 @@ use crate::{
     thread::Thread,
 };
 
+#[cfg_attr(doc, aquamarine::aquamarine)]
 /// Encapsulates the state of a [`Promise`].
-struct PromiseState<T: 'static> {
-    result: Option<Result<T, Errno>>,
-    waker: Option<Waker>,
+/// 
+/// The following state diagram shows the state transitions of a [`Promise`].
+/// 
+/// ```mermaid
+/// stateDiagram-v2
+/// Empty --> Waiting : poll(cx)
+/// Waiting --> Waiting : poll(cx)
+/// Waiting --> Kept : set_result(res)
+/// Kept --> Fulfilled : poll(cx)
+/// ```
+#[derive(Debug, Default)]
+enum PromiseState<T: Debug + Send + 'static> {
+    /// The initial state of a promise.
+    #[default]
+    Empty,
+
+    /// The promisee is waiting for the promise to be kept.
+    Waiting(Waker),
+
+    /// The promisor has kept the promise and delivered a result.
+    Kept(Result<T, Errno>),
+
+    /// The promisee has received the promised result.
+    Fulfilled,
 }
 
-unsafe impl<T: 'static> Send for PromiseState<T> {}
+unsafe impl<T: Debug + Send + 'static> Send for PromiseState<T> {}
 
-impl <T: 'static> PromiseState<T> {
-    /// Returns a new `PromiseState` instance.
-    fn new() -> Rc<RefCell<Self>> {
+impl <T: Debug + Send + 'static> PromiseState<T> {
+    /// Returns a new `PromiseState` instance in the [`Empty`] state.
+    /// 
+    /// [`Empty`]: type@PromiseState::Empty
+    fn new() -> Arc<Mutex<Self>> {
         Default::default()
     }
 
+    /// Replaces the current state with the specified value and returns the old state.
+    fn replace(&mut self, value: Self) -> Self {
+        mem::replace(&mut *self, value)
+    }
+
     /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
-    fn set_result(rc_self: &Rc<RefCell<Self>>, res: Result<T, Errno>) {
-        let waker = match rc_self.try_borrow_mut() {
+    fn set_result(arc_self: Arc<Mutex<Self>>, res: Result<T, Errno>) {
+        let prev_state = match arc_self.try_lock() {
             Ok(mut state) => {
-                state.result = Some(res);
-                state.waker.take()
+                Ok(state.replace(Self::Kept(res)))
             },
-            Err(_) => {
-                let state = rc_self.clone();
-
-                Thread::current().send_msg(move || {
-                    let waker = {
-                        let mut state = state.borrow_mut();
-
-                        state.result = Some(res);
-                        state.waker.take()
-                    };
-
-                    if let Some(waker) = waker {
-                        waker.wake();
-                    }
-                }).expect("send result");
-
-                None
-            },
+            Err(_) => Err(res),
         };
 
-        if let Some(waker) = waker {
-            waker.wake();
+        match prev_state {
+            Ok(prev_state) => match prev_state {
+                Self::Empty => (),
+                Self::Waiting(waker) => waker.wake(),
+                _ => panic!("promise kept in unexpected state: {:?}", prev_state),
+            }
+            Err(res) => {
+                Thread::current().send_msg(move || {
+                    Self::set_result(arc_self, res);
+                }).expect("send result");
+            },
         }
     }
-}
 
-impl <T: 'static> Default for PromiseState<T> {
-    fn default() -> Self {
-        Self {
-            result: None,
-            waker: None,
+    /// Polls the state of the operation, advancing to the next state if possible.
+    fn poll(&mut self, cx: &Context<'_>) -> Self {
+        match self {
+            Self::Empty => self.replace(Self::Waiting(cx.waker().clone())),
+            Self::Waiting(waker) => Self::Waiting(waker.clone()),
+            Self::Kept(_) => self.replace(Self::Fulfilled),
+            _ => panic!("promise polled in unexpected state: {:?}", self),
         }
     }
 }
@@ -82,11 +107,11 @@ impl <T: 'static> Default for PromiseState<T> {
 /// null, the result is a suitable `Err(Errno)` value.
 pub(crate) unsafe extern "C" fn complete_with_object<T, R>(cx: *mut c_void, obj: *mut R)
 where
-    T: TryFrom<*mut R, Error = Errno> + 'static,
+    T: Debug + Send + TryFrom<*mut R, Error = Errno> + 'static,
 {
-    let rc_self = Rc::from_raw(cx.cast::<RefCell<PromiseState<T>>>());
+    let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<T>>>());
 
-    PromiseState::<T>::set_result(&rc_self, obj.try_into());
+    PromiseState::<T>::set_result(arc_self, obj.try_into());
 }
 
 /// A callback invoked to set the result of a [`Promise`].
@@ -95,19 +120,19 @@ where
 /// `Ok(())`. Otherwise, the status is converted to a suitable `Err(Errno)`
 /// value.
 pub(crate) unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i32) {
-    let rc_self = Rc::from_raw(cx.cast::<RefCell<PromiseState<()>>>());
+    let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<()>>>());
     let res = if_else!(status == 0, Ok(()), Err(Errno(-status)));
 
-    PromiseState::set_result(&rc_self, res);
+    PromiseState::set_result(arc_self, res);
 }
 
 /// A callback invoked to set the result of a [`Promise`].
 /// 
 /// This callback always sets the result to `Ok(())`.
 pub(crate) unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
-    let rc_self = Rc::from_raw(cx.cast::<RefCell<PromiseState<()>>>());
+    let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<()>>>());
 
-    PromiseState::set_result(&rc_self, Ok(()));
+    PromiseState::set_result(arc_self, Ok(()));
 }
 
 /// Orchestrates the execution of an asynchronous operation and provides access
@@ -115,22 +140,22 @@ pub(crate) unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
 pub(crate) struct Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: 'static
+    T: Debug + Send + 'static
 {
     start_fn: F,
-    state: Rc<RefCell<PromiseState<T>>>,
+    state: Arc<Mutex<PromiseState<T>>>,
 }
 
 unsafe impl<F, T> Send for Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: 'static
+    T: Debug + Send + 'static
 {}
 
 impl<F, T> Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: 'static
+    T: Debug + Send + 'static
 {
     /// Returns a new `Promise` instance.
     /// 
@@ -143,26 +168,12 @@ where
             state: PromiseState::new(),
         }
     }
-
-    /// Polls for the result of the operation setting the waker if the result is
-    /// not available yet.
-    fn poll_result(&mut self, cx: &Context<'_>) -> Poll<Result<T, Errno>> {
-        let mut state = self.state.borrow_mut();
-
-        match state.result.take() {
-            Some(result) => Poll::Ready(result),
-            None => {
-                state.waker = Some(cx.waker().clone());
-                Poll::Pending
-            },
-        }
-    }
 }
 
 impl<F, T> Future for Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>> + Unpin,
-    T: 'static
+    T: Debug + Send + 'static
 {
     type Output = Result<T, Errno>;
 
@@ -170,21 +181,24 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>
     ) -> Poll<Self::Output> {
-        match self.poll_result(cx) {
-            Poll::Ready(result) => Poll::Ready(result),
-            Poll::Pending => {
-                let promise_cx = Rc::into_raw(self.state.clone());
+        let state = self.state.lock().unwrap().poll(cx);
+
+        match state {
+            PromiseState::Empty =>  {
+                let promise_cx = Arc::into_raw(self.state.clone());
 
                 match (self.as_mut().start_fn)(promise_cx as *mut c_void) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(res) => {
-                        unsafe { Rc::from_raw(promise_cx) };
+                        unsafe { Arc::from_raw(promise_cx) };
 
                         Poll::Ready(res)
-                    },
+                    }
                 }
-
             },
+            PromiseState::Waiting(_) => Poll::Pending,
+            PromiseState::Kept(res) => Poll::Ready(res),
+            _ => unreachable!("promise already fulfilled"),
         }
     }
 }

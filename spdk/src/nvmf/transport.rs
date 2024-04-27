@@ -1,6 +1,9 @@
 use std::{
     ffi::CStr,
-    fmt::Display,
+    fmt::{
+        Debug,
+        Display
+    },
     mem::{
         MaybeUninit,
 
@@ -256,6 +259,7 @@ impl Builder {
 }
 
 /// Represents the ownership state of a [`Transport`].
+#[derive(Debug)]
 enum OwnershipState {
     Owned(NonNull<spdk_nvmf_transport>),
     Borrowed(NonNull<spdk_nvmf_transport>),
@@ -287,6 +291,7 @@ unsafe impl Send for OwnershipState {}
 /// [`Transport::destroy`]: method@Transport::destroy
 /// [`Transport::take`]: method@Transport::take
 /// [`task::yield_now`]: function@crate::task::yield_now
+#[derive(Debug)]
 pub struct Transport(OwnershipState);
 
 unsafe impl Send for Transport {}
