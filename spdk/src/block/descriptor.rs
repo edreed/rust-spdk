@@ -21,7 +21,7 @@ use spdk_sys::{
 };
 
 use crate::{
-    bdev::Any,
+    block::Any,
     errors::{Errno, ENOMEM},
     task::{
         Promise,

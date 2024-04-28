@@ -24,7 +24,11 @@ use spdk_sys::{
 };
 
 use crate::{
-    block::Device,
+    block::{
+        Device,
+        Owned,
+        OwnedOps,
+    },
     errors::Errno,
     task::{
         Promise,
@@ -32,11 +36,6 @@ use crate::{
         complete_with_status,
     },
     to_result,
-};
-
-use super::{
-    BDev,
-    Owned,
 };
 
 /// Builds a [`Malloc`] instance using the Malloc Block Device module of the
@@ -108,7 +107,7 @@ pub struct Malloc(NonNull<spdk_bdev>);
 unsafe impl Send for Malloc {}
 
 #[async_trait]
-impl BDev for Malloc {
+impl OwnedOps for Malloc {
     fn as_ptr(&self) -> *mut spdk_bdev {
         self.0.as_ptr()
     }

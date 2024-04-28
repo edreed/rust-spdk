@@ -9,9 +9,9 @@ use spdk_sys::{
     spdk_nvmf_subsystem_get_next_ns,
 };
 
-use crate::{
-    bdev::Any,
-    block::{self},
+use crate::block::{
+    self,
+    Any,
 };
 
 use super::Subsystem;

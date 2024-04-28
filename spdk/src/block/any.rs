@@ -8,7 +8,7 @@ use crate::errors::{
 };
 
 use super::{
-    BDev,
+    OwnedOps,
     Owned,
 };
 
@@ -18,7 +18,7 @@ pub struct Any;
 unsafe impl Send for Any {}
 
 #[async_trait]
-impl BDev for Any {
+impl OwnedOps for Any {
     fn as_ptr(&self) -> *mut spdk_bdev {
         unreachable!("Any::as_ptr() should never be called")
     }
