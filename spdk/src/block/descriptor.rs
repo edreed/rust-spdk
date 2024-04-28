@@ -1,5 +1,9 @@
 use std::{
     ffi::CStr,
+    os::raw::{
+        c_int,
+        c_void,
+    },
     ptr::{
         NonNull,
 
@@ -13,13 +17,20 @@ use spdk_sys::{
 
     spdk_bdev_close,
     spdk_bdev_desc_get_bdev,
-    spdk_bdev_open_ext,
+    spdk_bdev_open_async,
 };
 
 use crate::{
     bdev::Any,
-    errors::Errno,
-    to_result,
+    errors::{Errno, ENOMEM},
+    task::{
+        Promise,
+
+        complete_with_object,
+        complete_with_status,
+    },
+
+    to_poll_pending_on_ok,
 };
 
 use super::{
@@ -28,6 +39,7 @@ use super::{
 };
 
 /// A handle to an open block device.
+#[derive(Debug)]
 pub struct Descriptor(NonNull<spdk_bdev_desc>);
 
 unsafe impl Send for Descriptor {}
@@ -38,18 +50,26 @@ impl Descriptor {
         unsafe extern "C" fn handle_event(_type: u32, _bdev: *mut spdk_bdev, _ctx: *mut std::ffi::c_void) {
         }
 
-        let mut desc = null_mut();
-
-        unsafe {
-            to_result!(spdk_bdev_open_ext(
-                name.as_ptr(),
-                write,
-                Some(handle_event),
-                null_mut(),
-                &mut desc))?;
+        unsafe extern "C" fn complete(desc: *mut spdk_bdev_desc, status: c_int, ctx: *mut c_void) {
+            if status == 0 {
+                complete_with_object::<Descriptor, spdk_bdev_desc>(ctx, desc);
+            } else {
+                complete_with_status(ctx, status);
+            }
         }
 
-        Ok(Descriptor(NonNull::new(desc).unwrap()))
+        Promise::new(|cx| {
+            unsafe {
+                to_poll_pending_on_ok!(spdk_bdev_open_async(
+                    name.as_ptr(),
+                    write,
+                    Some(handle_event),
+                    null_mut(),
+                    null_mut(),
+                    Some(complete),
+                    cx))
+            }
+        }).await
     }
 
     /// Returns a pointer to the underlying `spdk_bdev_desc` struct.
@@ -74,5 +94,16 @@ impl Descriptor {
 impl Drop for Descriptor {
     fn drop(&mut self) {
         unsafe { spdk_bdev_close(self.0.as_ptr()) }
+    }
+}
+
+impl TryFrom<*mut spdk_bdev_desc> for Descriptor {
+    type Error = Errno;
+
+    fn try_from(desc: *mut spdk_bdev_desc) -> Result<Self, Self::Error> {
+        match NonNull::new(desc as *mut _) {
+            Some(ptr) => Ok(Self(ptr)),
+            None => Err(ENOMEM),
+        }
     }
 }

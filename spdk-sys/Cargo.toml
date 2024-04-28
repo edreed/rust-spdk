@@ -8,13 +8,16 @@ links = "spdk"
 
 [build-dependencies]
 autotools = "0.2.6"
-bindgen = "0.66.0"
+bindgen = "0.69.4"
 doxygen-rs = "0.4.2"
 fs_extra = "1.3.0"
-itertools = "0.11.0"
+itertools = "0.12.1"
 pkg-config = "0.3.27"
+regex = "1.10.4"
 
 [features]
 default = []
-bdev-malloc = []
-nvmf = []
+bdev = []
+bdev-malloc = ["bdev"]
+bdev-module = ["bdev"]
+nvmf = ["bdev"]
