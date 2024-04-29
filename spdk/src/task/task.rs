@@ -109,7 +109,7 @@ fn waker_vtable<W: Task>() -> &'static RawWakerVTable {
     )
 }
 
-/// Creates a reference to the [`Waker`] from a reference to an [`RcTask<T>`].
+/// Creates a reference to the [`Waker`] from a reference to a [`Task<T>`].
 fn waker_ref<W: Task>(arc_self: &Arc<W>) -> WakerRef<'_> {
     let data = Arc::as_ptr(arc_self).cast();
 
