@@ -33,7 +33,7 @@ use crate::{
     },
     task::{
         JoinHandle,
-        RcTask, ReactorTask,
+        Task, ReactorTask,
     },
 };
 
@@ -186,7 +186,7 @@ impl Reactor {
     {
         let (task, join_handle) = ReactorTask::with_future(self.clone(), fut);
 
-        RcTask::schedule(task);
+        Task::schedule(task);
 
         join_handle
     }
