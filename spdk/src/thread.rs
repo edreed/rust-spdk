@@ -52,7 +52,7 @@ use crate::{
     runtime::CpuSet,
     task::{
         JoinHandle,
-        RcTask,
+        Task,
         ThreadTask,
     },
     to_result,
@@ -331,7 +331,7 @@ impl Thread {
     {
         let (task, join_handle) = ThreadTask::with_future(Some(self.borrow()), fut);
 
-        RcTask::schedule(task);
+        Task::schedule(task);
 
         join_handle
     }
@@ -379,7 +379,7 @@ where
     let (task, mut join_handle) = 
         ThreadTask::with_future(Some(current_thread.borrow()), fut);
 
-    RcTask::schedule_by_ref(&task);
+    Task::schedule_by_ref(&task);
 
     loop {
         match Pin::new(&mut join_handle).rx_pin_mut().try_recv() {

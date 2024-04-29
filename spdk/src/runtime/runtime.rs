@@ -19,8 +19,10 @@ use std::{
         addr_of_mut,
         null,
     },
-    rc::Rc,
-    sync::atomic::AtomicBool,
+    sync::{
+        Arc,
+        atomic::AtomicBool,
+    },
 };
 
 use futures::future::join_all;
@@ -46,7 +48,7 @@ use crate::{
     },
     task::{
         ThreadTask,
-        RcTask,
+        Task,
     },
 };
 
@@ -270,9 +272,9 @@ impl Runtime {
         }
         
         unsafe extern "C" fn start(ctx: *mut c_void) {
-            let task = Rc::from_raw(ctx.cast::<ThreadTask<()>>());
+            let task = Arc::from_raw(ctx.cast::<ThreadTask<()>>());
 
-            RcTask::run(&task);
+            Task::run(&task);
         }
 
         let wrapped_fut = async move {
@@ -289,7 +291,7 @@ impl Runtime {
         };
 
         let (task, _) = ThreadTask::with_future(None, wrapped_fut);
-        let ctx = Rc::into_raw(task).cast_mut();
+        let ctx = Arc::into_raw(task).cast_mut();
 
         unsafe {
             if spdk_app_start(self.0.as_ptr(), Some(start), ctx.cast()) != 0 {
