@@ -291,4 +291,6 @@ async fn main() {
     });
 
     join(write_task, read_task).await;
+
+    echo.destroy().await.unwrap();
 }
