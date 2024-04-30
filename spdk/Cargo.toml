@@ -24,7 +24,7 @@ byte-strings= "0.3.1"
 [features]
 default = []
 bdev-malloc = ["spdk-sys/bdev-malloc"]
-bdev-module = ["spdk-sys/bdev-module"]
+bdev-module = ["spdk-macros/bdev-module", "spdk-sys/bdev-module"]
 nvmf = ["spdk-sys/nvmf"]
 
 [[example]]
@@ -37,4 +37,8 @@ required-features = ["bdev-malloc", "nvmf"]
 
 [[example]]
 name = "module_echo"
+required-features = ["bdev-module"]
+
+[[example]]
+name = "module_null"
 required-features = ["bdev-module"]

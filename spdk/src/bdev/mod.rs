@@ -7,12 +7,15 @@
 //! 
 //! [Block Device User Guide]: https://spdk.io/doc/bdev.html
 //! [Writing a Custom Block Device Module]: https://spdk.io/doc/bdev_module.html
-mod bdev;
-mod module;
-
 #[cfg(feature = "bdev-malloc")]
 pub mod malloc;
 
+#[cfg(feature = "bdev-module")]
+mod bdev;
+#[cfg(feature = "bdev-module")]
+mod module;
+
+#[cfg(feature = "bdev-module")]
 pub use bdev::{
     BDevImpl,
     BDevIo,
@@ -22,6 +25,8 @@ pub use bdev::{
     IoStatus,
     IoType,
 };
+
+#[cfg(feature = "bdev-module")]
 pub use module::{
     Module,
     ModuleInstance,

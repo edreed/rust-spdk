@@ -16,4 +16,6 @@ pub mod thread;
 pub mod time;
 
 pub use spdk_macros::main;
+
+#[cfg(feature = "bdev-module")]
 pub use spdk_macros::module;

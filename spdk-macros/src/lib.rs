@@ -1,6 +1,8 @@
 //! Procedural macros for the spdk crate.
 mod cli;
 mod main_attr;
+
+#[cfg(feature = "bdev-module")]
 mod module;
 
 use proc_macro::TokenStream;
@@ -349,6 +351,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// [`new_bdev()`]: ../spdk/bdev/trait.ModuleInstance.html#tymethod.new_bdev
 /// [`Module<T>`]: ../spdk/bdev/struct.Module.html
 /// [`ModuleInstance`]: ../spdk/bdev/trait.ModuleInstance.html
+#[cfg(feature = "bdev-module")]
 #[proc_macro_attribute]
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     module::GenerateModule::new().generate(attr, item)
