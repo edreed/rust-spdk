@@ -44,13 +44,13 @@ use crate::{
 use super::Descriptor;
 
 /// Represents the ownership state of a [`Device`].
-enum OwnershipState<T: OwnedOps + Send + 'static> {
+enum OwnershipState<T: OwnedOps> {
     Owned(T),
     Borrowed(NonNull<spdk_bdev>),
     None,
 }
 
-unsafe impl<T: OwnedOps + Send + 'static> Send for OwnershipState<T> {}
+unsafe impl<T: OwnedOps> Send for OwnershipState<T> {}
 
 /// Represents a block device.
 /// 
@@ -74,12 +74,12 @@ unsafe impl<T: OwnedOps + Send + 'static> Send for OwnershipState<T> {}
 /// [`Device<T>::destroy`]: method@Device<T>::destroy
 /// [`Device<T>::take`]: method@Device<T>::take
 /// [`task::yield_now`]: function@crate::task::yield_now
-pub struct Device<T: OwnedOps + Send + From<Owned> + 'static>(OwnershipState<T>);
+pub struct Device<T: OwnedOps>(OwnershipState<T>);
 
-unsafe impl <T: OwnedOps + Send + From<Owned> + 'static> Send for Device<T> {}
-unsafe impl <T: OwnedOps + Send + From<Owned> + 'static> Sync for Device<T> {}
+unsafe impl <T: OwnedOps> Send for Device<T> {}
+unsafe impl <T: OwnedOps> Sync for Device<T> {}
 
-impl <T: OwnedOps + Send + From<Owned> + 'static> Device<T> {
+impl <T: OwnedOps> Device<T> {
     /// Get an owned [`Device`] for a block device.
     pub fn new(dev: T) -> Self {
         Self(OwnershipState::Owned(dev))
@@ -273,7 +273,7 @@ impl <T: OwnedOps + Send + From<Owned> + 'static> Device<T> {
     }
 }
 
-impl <T: OwnedOps + Send + From<Owned> + 'static> Drop for Device<T> {
+impl <T: OwnedOps> Drop for Device<T> {
     fn drop(&mut self) {
         if self.is_owned() {
             let dev = self.take();

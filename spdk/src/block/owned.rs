@@ -14,7 +14,7 @@ use crate::{
 
 /// A trait for owned block devices.
 #[async_trait]
-pub trait OwnedOps: Send {
+pub trait OwnedOps: From<Owned> + Send + 'static {
     /// Returns a pointer to the underlying `spdk_bdev` structure.
     fn as_ptr(&self) -> *mut spdk_bdev;
 
@@ -27,7 +27,7 @@ type DestroyFn = fn(Owned) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + 
 /// Destroys the type-erased device managed by the specified [`Owned`] instance.
 fn destroy_device<T>(owned: Owned) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>>
 where
-    T: OwnedOps + From<Owned> + Send + 'static
+    T: OwnedOps
 {
     let device: T = owned.into();
 
@@ -49,7 +49,7 @@ impl Owned {
     /// instance.
     pub(crate) fn new<T>(device: T) -> Device<Self>
     where
-        T: OwnedOps + From<Owned> + Send + 'static
+        T: OwnedOps
     {
         Device::new(Self {
             bdev: unsafe { NonNull::new_unchecked(device.as_ptr()) },
