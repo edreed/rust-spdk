@@ -1,8 +1,4 @@
-use std::{
-    io::Write,
-    ptr::NonNull,
-    task::Poll,
-};
+use std::io::Write;
 
 use async_trait::async_trait;
 use byte_strings::c_str;
@@ -17,19 +13,11 @@ use spdk::{
         ModuleOps,
     },
     block::{
-        Device, Owned, OwnedOps
+        Device,
+        Owned,
     },
     dma,
-    errors::Errno,
-    task::{
-        complete_with_status,
-        Promise,
-    }
-};
-use spdk_sys::{
-    spdk_bdev,
-
-    spdk_bdev_unregister,
+    errors::Errno
 };
 
 /// Implements the NullRs block device module.
@@ -62,13 +50,27 @@ impl BDevIoChannelOps for NullRsChannel {
 
 /// Implements the NullRs block device.
 #[derive(Default)]
-struct NullRsCtx;
+struct NullRs;
 
-unsafe impl Send for NullRsCtx {}
-unsafe impl Sync for NullRsCtx {}
+unsafe impl Send for NullRs {}
+unsafe impl Sync for NullRs {}
+
+impl NullRs {
+    /// Creates a new NullRs block device.
+    pub fn try_new() -> Result<Device<Owned>, Errno> {
+        let mut null = NullRsModule::new_bdev(c_str!("null-rs"), NullRs::default());
+
+        null.bdev.blocklen = 4096;
+        null.bdev.blockcnt = 1;
+
+        null.register()?;
+
+        Ok(null.into_device())
+    }
+}
 
 #[async_trait]
-impl BDevOps for NullRsCtx {
+impl BDevOps for NullRs {
     type IoChannel = NullRsChannel;
 
     async fn destruct(&mut self) -> Result<(), Errno> {
@@ -77,52 +79,6 @@ impl BDevOps for NullRsCtx {
 
     fn io_type_supported(&self, io_type: IoType) -> bool {
         matches!(io_type, IoType::Read | IoType::Write)
-    }
-
-}
-
-/// Implements the owned device wrapper governing the NullRs device lifetime.
-struct NullRs(NonNull<spdk_bdev>);
-
-impl NullRs {
-    pub fn try_new() -> Result<Device<Self>, Errno> {
-        let mut null = NullRsModule::new_bdev(c_str!("null-rs"), NullRsCtx::default());
-
-        null.bdev.blocklen = 4096;
-        null.bdev.blockcnt = 1;
-
-        null.register()?;
-
-        Ok(Device::new(Self(unsafe { NonNull::new_unchecked(null.into_bdev_ptr()) })))
-    }
-}
-
-unsafe impl Send for NullRs {}
-unsafe impl Sync for NullRs {}
-
-impl From<Owned> for NullRs {
-    fn from(owned: Owned) -> Self {
-        NullRs(unsafe { NonNull::new_unchecked(owned.into_ptr()) })
-    }
-}
-
-#[async_trait]
-impl OwnedOps for NullRs {
-    fn as_ptr(&self) -> *mut spdk_bdev {
-        self.0.as_ptr()
-    }
-
-    async fn destroy(self) -> Result<(), Errno> {
-        Promise::new(move |cx| {
-            unsafe {
-                spdk_bdev_unregister(
-                    self.as_ptr(),
-                    Some(complete_with_status),
-                    cx);
-            }
-
-            Poll::Pending
-        }).await
     }
 }
 
