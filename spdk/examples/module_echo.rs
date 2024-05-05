@@ -4,9 +4,7 @@ use std::{
         BufRead,
         Write
     },
-    ptr::NonNull,
     sync::Arc,
-    task::Poll,
 };
 
 use async_trait::async_trait;
@@ -28,24 +26,12 @@ use spdk::{
     block::{
         Device,
         Owned,
-        OwnedOps,
     },
     dma,
     errors::Errno,
     runtime::reactors,
-    task::{
-        self,
-
-        Promise,
-
-        complete_with_status,
-    },
+    task::{self},
     thread::Thread
-};
-use spdk_sys::{
-    spdk_bdev,
-
-    spdk_bdev_unregister,
 };
 
 /// Implements the Echo block device module.
@@ -158,22 +144,35 @@ impl BDevIoChannelOps for EchoChannel {
     }
 }
 
-/// Implements the Echo block device context.
-struct EchoCtx {
+/// Implements the Echo block device.
+struct Echo {
     inner: Arc<Mutex<EchoInner>>
 }
 
-impl Default for EchoCtx {
+impl Echo {
+    fn try_new(name: &CStr) -> Result<Device<Owned>, Errno> {
+        let mut echo = EchoModule::new_bdev(name, Self::default());
+
+        echo.bdev.blocklen = 4096;
+        echo.bdev.blockcnt = 2;
+
+        echo.register()?;
+
+        Ok(echo.into_device())
+    }
+}
+
+impl Default for Echo {
     fn default() -> Self {
         Self { inner: Arc::new(Default::default()) }
     }
 }
 
-unsafe impl Send for EchoCtx {}
-unsafe impl Sync for EchoCtx {}
+unsafe impl Send for Echo {}
+unsafe impl Sync for Echo {}
 
 #[async_trait]
-impl BDevOps for EchoCtx {
+impl BDevOps for Echo {
     type IoChannel = EchoChannel;
 
     async fn destruct(&mut self) -> Result<(), Errno> {
@@ -192,52 +191,6 @@ impl BDevOps for EchoCtx {
     }
 }
 
-/// Implements the owned device wrapper governing the Echo device lifetime.
-struct Echo(NonNull<spdk_bdev>);
-
-unsafe impl Send for Echo {}
-unsafe impl Sync for Echo {}
-
-impl From<Owned> for Echo {
-    fn from(value: Owned) -> Self {
-        Self(unsafe { NonNull::new_unchecked(value.into_ptr()) })
-    }
-}
-
-impl Echo {
-    fn try_new(name: &CStr) -> Result<Device<Self>, Errno> {
-        let mut echo = EchoModule::new_bdev(name, EchoCtx::default());
-
-        echo.bdev.blocklen = 4096;
-        echo.bdev.blockcnt = 2;
-
-        echo.register()?;
-
-        Ok(Device::new(Self(unsafe { NonNull::<spdk_bdev>::new_unchecked(echo.into_bdev_ptr()) })))
-    }
-}
-
-#[async_trait]
-impl OwnedOps for Echo {
-    fn as_ptr(&self) -> *mut spdk_bdev {
-        self.0.as_ptr()
-    }
-
-    async fn destroy(self) -> Result<(), Errno> {
-        Promise::new(move |cx| {
-            unsafe {
-                spdk_bdev_unregister(
-                    self.as_ptr(),
-                    Some(complete_with_status),
-                    cx);
-            }
-
-            Poll::Pending
-        }).await
-    }
-
-}
-
 /// A program the creates an Echo device and writes to it from one reactor and
 /// reads from it from another reactor.
 #[spdk::main]
@@ -248,7 +201,7 @@ async fn main() {
         panic!("ERROR: At least two cores must be specified.")
     }
 
-    let echo = Echo::try_new(c_str!("echo")).unwrap().into_owned().unwrap();
+    let echo = Echo::try_new(c_str!("echo")).unwrap();
 
     let echo_writer = echo.borrow();
 

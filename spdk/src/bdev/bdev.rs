@@ -11,6 +11,8 @@ use std::{
     mem::{
         self,
 
+        ManuallyDrop,
+
         offset_of,
 
         size_of,
@@ -21,9 +23,9 @@ use std::{
     },
     ptr::{
         self,
-
         NonNull,
 
+        addr_of,
         addr_of_mut,
 
         drop_in_place,
@@ -87,6 +89,11 @@ use spdk_sys::{
 };
 
 use crate::{
+    block::{
+        Device,
+        Owned,
+        OwnedOps,
+    },
     errors::Errno,
     runtime::Reactor,
     task::{
@@ -498,14 +505,23 @@ where
         ).await
     }
 
+    /// Consumes the boxed instance and returns a [`Device<Owned>`] instance
+    /// that owns the BDev.
+    pub fn into_device(self: Box<Self>) -> Device<Owned> {
+        Device::new(OwnedImpl::new(self)).into_owned().unwrap()
+    }
+
     /// Consumes the boxed BDev instance and returns a raw pointer to the BDev.
-    pub fn into_bdev_ptr(self: Box<Self>) -> *mut spdk_bdev {
+    /// 
+    /// After calling this function, the caller is responsible for managing the
+    /// memory previously owned by the boxed BDev instance.
+    fn into_bdev_ptr(self: Box<Self>) -> *mut spdk_bdev {
         addr_of_mut!(Box::leak(self).bdev)
     }
 
     /// Constructs a boxed BDev instance from a raw pointer to the BDev.
-    unsafe fn from_bdev_ptr(bdev_ptr: *mut spdk_bdev) -> Box<Self> {
-        Box::from_raw(bdev_ptr.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast())
+    unsafe fn from_ctx_ptr(ctx_ptr: *mut T) -> Box<Self> {
+        Box::from_raw(ctx_ptr.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast())
     }
 
     /// Returns a reference to the BDev context.
@@ -526,7 +542,7 @@ where
     /// Destroys the BDev instance.
     unsafe extern "C" fn destruct(ctx: *mut c_void) -> i32 {
         Reactor::current().spawn(async move {
-            let mut this = Self::from_bdev_ptr(ctx as *mut spdk_bdev);
+            let mut this = Self::from_ctx_ptr(ctx as *mut T);
 
             let rc = match this.ctx.destruct().await {
                 Ok(_) => 0,
@@ -627,5 +643,48 @@ where
 {
     fn from(bdev: *mut spdk_bdev) -> &'static BDevImpl<T> {
         unsafe { &*bdev.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast() }
+    }
+}
+
+/// A wrapper that enables [`Device`] to own a custom BDev implementation.
+pub (crate) struct OwnedImpl<T: BDevOps>(Box<BDevImpl<T>>);
+
+unsafe impl <T: BDevOps> Send for OwnedImpl<T> {}
+
+impl <T: BDevOps> OwnedImpl<T> {
+    /// Creates a new owned BDev instance with the specified BDev implementation.
+    pub(crate) fn new(bdev: Box<BDevImpl<T>>) -> Self {
+        Self(bdev)
+    }
+}
+
+#[async_trait]
+impl <T: BDevOps> OwnedOps for OwnedImpl<T> {
+    fn as_ptr(&self) -> *mut spdk_bdev {
+        addr_of!(self.0.bdev) as *mut _
+    }
+
+    async fn destroy(self) -> Result<(), Errno> {
+        // The BDev implementation's `destruct` method is invoked by the called
+        // to unregister the device and will take care of dropping the box. We
+        // avoid dropping the box here to prevent double-free.
+        let bdev = ManuallyDrop::new(self);
+
+        Promise::new(move |cx| {
+            unsafe {
+                spdk_bdev_unregister(
+                    bdev.as_ptr(),
+                    Some(complete_with_status),
+                    cx);
+            }
+
+            Poll::Pending
+        }).await
+    }
+}
+
+impl <T: BDevOps> From<Owned> for OwnedImpl<T> {
+    fn from(value: Owned) -> Self {
+        Self(unsafe { Box::from_raw(value.as_ptr().cast()) })
     }
 }

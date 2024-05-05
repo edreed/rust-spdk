@@ -1,4 +1,5 @@
 use std::{
+    mem,
     pin::Pin,
     ptr::NonNull,
 };
@@ -51,7 +52,14 @@ impl Owned {
     where
         T: OwnedOps
     {
+        // Since `Device` is taking ownership of the BDev via its `spdk_bdev`
+        // pointer, we need to ensure that the BDev is not dropped here if the
+        // value is a smart pointer type.
+        let device = mem::ManuallyDrop::new(device);
+
         Device::new(Self {
+            // SAFETY: The pointer is guaranteed to be non-null by the wrapper
+            // passed to this function.
             bdev: unsafe { NonNull::new_unchecked(device.as_ptr()) },
             destroy_fn: destroy_device::<T>,
         })
@@ -59,8 +67,11 @@ impl Owned {
 
     /// Consumes this device and returns a pointer to the underlying `spdk_bdev`
     /// structure.
+    /// 
+    /// After calling this function, the caller is responsible for managing the
+    /// memory previously owned by this device.
     pub fn into_ptr(self) -> *mut spdk_bdev {
-        self.bdev.as_ptr()
+        mem::ManuallyDrop::new(self).bdev.as_ptr()
     }
 }
 

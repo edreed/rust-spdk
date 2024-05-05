@@ -11,7 +11,7 @@
 pub mod malloc;
 
 #[cfg(feature = "bdev-module")]
-mod bdev;
+pub (crate) mod bdev;
 #[cfg(feature = "bdev-module")]
 mod module;
 
