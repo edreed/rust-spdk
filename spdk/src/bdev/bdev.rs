@@ -220,7 +220,7 @@ impl Into<spdk_bdev_io_status> for IoStatus {
 /// A trait for implementing the I/O channel operations for a BDev.
 pub trait BDevIoChannelOps: Default + 'static {
     /// The I/O context type for the BDev.
-    type IoContext: 'static;
+    type IoContext: Default + 'static;
 
     /// Submit an I/O request to the BDev.
     fn submit_request(&self, io: BDevIo<Self::IoContext>);
@@ -298,8 +298,23 @@ unsafe impl <T: 'static> Send for BDevIo<T> {}
 
 impl <T> BDevIo<T>
 where
-    T: 'static
+    T: Default + 'static
 {
+    /// Initializes a newly submitted I/O request.
+    /// 
+    /// # Safety
+    /// 
+    /// This function must only be called from the I/O submission callback to
+    /// initialize a newly submitted I/O request. It initializes the driver
+    /// context to a default value.
+    unsafe fn new(io: *mut spdk_bdev_io) -> Self {
+        (*io).driver_ctx.as_mut_ptr().cast::<T>().write(Default::default());
+
+        Self {
+            io: NonNull::new(io).unwrap(),
+            _ctx: PhantomData
+        }
+    }
     /// Returns the raw pointer to the I/O request.
     pub fn as_ptr(&self) -> *mut spdk_bdev_io {
         self.io.as_ptr()
@@ -598,7 +613,7 @@ where
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
         let io_channel: BDevIoChannel<T::IoChannel> = io_channel.into();
 
-        io_channel.ctx().submit_request(io.into());
+        io_channel.ctx().submit_request(BDevIo::new(io));
     }
 
     /// Gets an I/O channel for the BDev for the calling thread.
