@@ -173,6 +173,7 @@ fn main() {
         .allowlist_var("SPDK_.*")
         .opaque_type("spdk_nvme_(ctrlr|health|sgl|tcp)_.*")
         .opaque_type("spdk_nvmf_fabric_.*")
+        .opaque_type("spdk_bdev_ext_io_opts")
         .wrap_static_fns(true)
         .wrap_static_fns_path(&spdk_wrappers)
         .wrap_unsafe_ops(true)
