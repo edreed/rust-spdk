@@ -43,6 +43,7 @@ use super::{
 pub struct Descriptor(NonNull<spdk_bdev_desc>);
 
 unsafe impl Send for Descriptor {}
+unsafe impl Sync for Descriptor {}
 
 impl Descriptor {
     /// Open a block device by its name.
@@ -86,7 +87,7 @@ impl Descriptor {
     /// 
     /// I/O channels are bound to the `spdk_thread` on which this function is
     /// called. The returned [`IoChannel`] cannot be used from any other thread.
-    pub fn io_channel(&self) -> Result<IoChannel<'_>, Errno> {
+    pub fn io_channel(&self) -> Result<IoChannel, Errno> {
         IoChannel::new(self)
     }
 }

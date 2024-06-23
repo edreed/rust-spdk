@@ -74,6 +74,29 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'module_passthru'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=module_passthru",
+                    "--package=spdk",
+                    "--features=bdev-malloc,bdev-module"
+                ],
+                "filter": {
+                    "name": "module_passthru",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'reactor'",
             "cargo": {
                 "args": [

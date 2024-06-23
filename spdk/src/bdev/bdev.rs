@@ -94,15 +94,20 @@ use crate::{
         Owned,
         OwnedOps,
     },
-    errors::Errno,
+    errors::{
+        Errno,
+
+        ECANCELED,
+        EINPROGRESS,
+        ENOMEM
+    },
     runtime::Reactor,
     task::{
-        Promise,
-
-        complete_with_status,
+        complete_with_status, Promise
     },
     thread::{
         self,
+
         Thread,
     },
 
@@ -199,6 +204,26 @@ impl From<spdk_bdev_io_status> for IoStatus {
             SPDK_BDEV_IO_STATUS_PENDING => IoStatus::Pending,
             SPDK_BDEV_IO_STATUS_SUCCESS => IoStatus::Success,
             _ => unreachable!("unexpected spdk_bdev_io_status value")
+        }
+    }
+}
+
+impl From<Errno> for IoStatus {
+    fn from(err: Errno) -> Self {
+        match err {
+            ENOMEM => IoStatus::NoMem,
+            EINPROGRESS => IoStatus::Pending,
+            ECANCELED => IoStatus::Aborted,
+            _ => IoStatus::Failed,
+        }
+    }
+}
+
+impl From<Result<(), Errno>> for IoStatus {
+    fn from(result: Result<(), Errno>) -> Self {
+        match result {
+            Ok(_) => IoStatus::Success,
+            Err(e) => e.into(),
         }
     }
 }
@@ -364,6 +389,16 @@ where
         unsafe { self.io.as_ref().u.bdev.offset_blocks }
     }
 
+    /// Returns the length in blocks for the I/O request.
+    pub fn num_blocks(&self) -> u64 {
+        unsafe { self.io.as_ref().u.bdev.num_blocks }
+    }
+
+    /// Returns the source offset in blocks for a copy I/O request.
+    pub fn copy_source_offset_blocks(&self) -> u64 {
+        unsafe { self.io.as_ref().u.bdev.copy.src_offset_blocks }
+    }
+
     /// Returns the context associated with the I/O request.
     pub fn ctx(&self) -> &T {
         unsafe { &*self.io.as_ref().driver_ctx.as_ptr().cast() }
@@ -477,7 +512,7 @@ where
     pub fn new(name: &CStr, module: *const spdk_bdev_module, ctx: T) -> Box<Self> {
         let mut this = Box::new(Self {
             bdev: unsafe { mem::zeroed() },
-            ctx: ctx
+            ctx
         });
 
         this.bdev.ctxt = addr_of_mut!(this.ctx) as *mut c_void;
@@ -608,9 +643,9 @@ where
 
     /// Returns whether the specified I/O type is supported by the BDev.
     unsafe extern "C" fn io_type_supported(ctx: *mut c_void, io_type: spdk_bdev_io_type) -> bool {
-        let this = ctx.cast::<Self>();
+        let this = &*ctx.cast::<T>();
 
-        (*this).ctx.io_type_supported(io_type.into())
+        this.io_type_supported(io_type.into())
     }
 
     /// Submits an I/O request to the BDev.

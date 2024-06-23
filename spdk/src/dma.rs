@@ -10,11 +10,15 @@
 use std::{
     alloc::{
         Layout,
-        
-        handle_alloc_error
+
+        handle_alloc_error,
     },
     cmp,
-    io::Cursor,
+    io::{
+        Cursor,
+        IoSlice,
+        IoSliceMut,
+    },
     ptr::{
         copy_nonoverlapping,
         null_mut,
@@ -24,6 +28,8 @@ use std::{
 };
 
 use spdk_sys::{
+    iovec as IoVec,
+
     spdk_dma_free,
     spdk_dma_malloc,
     spdk_dma_realloc,
@@ -32,7 +38,7 @@ use spdk_sys::{
 
 use crate::errors::{
     Errno,
- 
+
     EINVAL,
 };
 
@@ -83,10 +89,8 @@ pub fn free(ptr: *mut u8) {
 }
 
 /// A buffer allocated using the SPDK memory allocator.
-pub struct Buffer {
-    buf: *mut u8,
-    layout: Layout,
-}
+#[repr(transparent)]
+pub struct Buffer(IoVec);
 
 unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
@@ -94,53 +98,47 @@ unsafe impl Sync for Buffer {}
 impl Buffer {
     /// Allocates a new buffer using the SPDK memory allocator.
     pub fn new(layout: Layout) -> Self {
-        Self {
-            buf: alloc(layout),
-            layout
-        }
+        Self(IoVec{ iov_base: alloc(layout).cast(), iov_len: layout.size() })
     }
 
     /// Allocates a new zeroed buffer using the SPDK memory allocator.
     pub fn new_zeroed(layout: Layout) -> Self {
-        Self {
-            buf: alloc_zeroed(layout),
-            layout
-        }
+        Self(IoVec{ iov_base: alloc_zeroed(layout).cast(), iov_len: layout.size() })
     }
 
     /// Get a pointer to the buffer.
-    pub fn as_ptr(&self) -> *mut u8 {
-        self.buf
+    pub fn as_ptr(&self) -> *const u8 {
+        self.0.iov_base.cast()
     }
 
     /// Get a mutable pointer to the buffer.
     pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        self.buf
+        self.0.iov_base.cast()
     }
 
     /// Get the size of the buffer.
     pub fn size(&self) -> usize {
-        self.layout.size()
+        self.0.iov_len
     }
 
     /// Get a slice referencing the buffer.
     pub fn as_slice(&self) -> &[u8] {
         unsafe {
-            slice::from_raw_parts(self.buf, self.layout.size())
+            slice::from_raw_parts(self.0.iov_base.cast(), self.0.iov_len)
         }
     }
 
     /// Get a mutable slice referencing the buffer.
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
         unsafe {
-            slice::from_raw_parts_mut(self.buf, self.layout.size())
+            slice::from_raw_parts_mut(self.0.iov_base.cast(), self.0.iov_len)
         }
     }
 
     /// Resize the buffer.
-    pub fn resize(&mut self, new_size: usize) {
-        self.buf = realloc(self.buf, self.layout, new_size);
-        self.layout = Layout::from_size_align(new_size, self.layout.align()).unwrap();
+    pub fn resize(&mut self, layout: Layout, mut new_size: usize) {
+        new_size = Layout::from_size_align(new_size, layout.align()).expect("align must be power of 2").size();
+        self.0.iov_base = realloc(self.0.iov_base.cast(), layout, new_size).cast();
     }
 
     /// Sets the bytes of the buffer to zeroes.
@@ -228,7 +226,7 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        free(self.buf);
+        free(self.0.iov_base.cast());
     }
 }
 
@@ -253,5 +251,21 @@ impl AsMut<Buffer> for Buffer {
 impl AsMut<[u8]> for Buffer {
     fn as_mut(&mut self) -> &mut [u8] {
         self.as_slice_mut()
+    }
+}
+
+impl<'a> AsRef<IoSlice<'a>> for Buffer {
+    fn as_ref(&self) -> &IoSlice<'a> {
+        unsafe {
+            &*(&self.0 as *const _ as *const IoSlice<'a>)
+        }
+    }
+}
+
+impl<'a> AsMut<IoSliceMut<'a>> for Buffer {
+    fn as_mut(&mut self) -> &mut IoSliceMut<'a> {
+        unsafe {
+            &mut *(&mut self.0 as *mut _ as *mut IoSliceMut<'a>)
+        }
     }
 }
