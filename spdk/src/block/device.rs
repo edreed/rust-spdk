@@ -4,6 +4,12 @@ use std::{
         LayoutError,
     },
     ffi::CStr,
+    fmt::{
+        self,
+
+        Debug,
+        Formatter,
+    },
     mem::{self},
     ptr::NonNull,
 };
@@ -21,22 +27,24 @@ use spdk_sys::{
     spdk_bdev_get_physical_block_size,
     spdk_bdev_get_product_name,
     spdk_bdev_get_write_unit_size,
+    spdk_bdev_io_type_supported,
     spdk_bdev_has_write_cache,
     spdk_bdev_is_zoned,
     spdk_bdev_next,
 };
 
 use crate::{
+    bdev::IoType,
     block::{
         Any,
-        OwnedOps,
         Owned,
+        OwnedOps,
     },
     errors::{
         Errno,
 
-        EPERM,
         ENODEV,
+        EPERM,
     },
     thread,
 };
@@ -110,6 +118,15 @@ impl <T: OwnedOps> Device<T> {
             },
             None => panic!("device pointer must not be null"),
         }
+    }
+
+    /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
+    /// 
+    /// # Safety
+    /// 
+    /// `bdev` must be non-null.
+    pub unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Device<Any> {
+        Device::<Any>(OwnershipState::Borrowed(NonNull::new_unchecked(bdev)))
     }
 
     /// Get a pointer to the underlying `spdk_bdev` struct.
@@ -271,6 +288,11 @@ impl <T: OwnedOps> Device<T> {
     pub fn has_write_cache(&self) -> bool {
         unsafe { spdk_bdev_has_write_cache(self.as_ptr()) }
     }
+
+    /// Gets whether this block device supports the specified I/O type.
+    pub fn io_type_supported(&self, io_type: IoType) -> bool {
+        unsafe { spdk_bdev_io_type_supported(self.as_ptr(), io_type as u32) }
+    }
 }
 
 impl <T: OwnedOps> Drop for Device<T> {
@@ -280,6 +302,12 @@ impl <T: OwnedOps> Drop for Device<T> {
 
             thread::block_on(async move { dev.destroy().await }).unwrap();
         }
+    }
+}
+
+impl <T: OwnedOps> Debug for Device<T> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Device({})", self.name().to_string_lossy())
     }
 }
 

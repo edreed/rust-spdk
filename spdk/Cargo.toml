@@ -42,3 +42,7 @@ required-features = ["bdev-module"]
 [[example]]
 name = "module_null"
 required-features = ["bdev-module"]
+
+[[example]]
+name = "module_passthru"
+required-features = ["bdev-malloc", "bdev-module"]

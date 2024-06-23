@@ -32,3 +32,6 @@ pub const EALREADY: Errno = Errno(libc::EALREADY);
 
 /// Operation in progress
 pub const EINPROGRESS: Errno = Errno(libc::EINPROGRESS);
+
+/// Operation canceled
+pub const ECANCELED: Errno = Errno(libc::ECANCELED);

@@ -18,6 +18,12 @@ use std::{
         c_void,
         CStr,
     },
+    fmt::{
+        self,
+
+        Debug,
+        Formatter,
+    },
     future::Future,
     mem::MaybeUninit,
     pin::Pin,
@@ -342,6 +348,12 @@ impl Drop for Thread {
         if let OwnershipState::Owned(t) = self.0 {
             unsafe { spdk_thread_exit(t.as_ptr()); }
         }
+    }
+}
+
+impl Debug for Thread {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Thread(\"{}\")", self.name().to_string_lossy())
     }
 }
 
