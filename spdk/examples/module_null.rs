@@ -88,7 +88,7 @@ impl BDevOps for NullRs {
 async fn main() {
     let null = NullRs::try_new().unwrap();
     let desc = null.open(true).await.unwrap();
-    let mut ch = desc.io_channel().unwrap();
+    let ch = desc.io_channel().unwrap();
     let layout = null.layout_for_blocks(1).unwrap();
     let mut buf = dma::Buffer::new_zeroed(layout);
 

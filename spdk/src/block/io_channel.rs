@@ -128,7 +128,7 @@ impl <'a> IoChannel<'a> {
     }
 
     /// Resets the block device zone.
-    pub async fn reset_zone(&mut self, zone_id: u64) -> Result<(), Errno> {
+    pub async fn reset_zone(&self, zone_id: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_zone_management(
@@ -144,7 +144,7 @@ impl <'a> IoChannel<'a> {
 
     /// Writes the data in the buffer to the block device at the specified
     /// byte offset.
-    pub async fn write_at<B: AsRef<[u8]>>(&mut self, buf: &B, offset: u64) -> Result<(), Errno> {
+    pub async fn write_at<B: AsRef<[u8]>>(&self, buf: &B, offset: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             let buf = buf.as_ref();
 
@@ -165,7 +165,7 @@ impl <'a> IoChannel<'a> {
     /// block offset.
     ///
     /// The buffer must be a multiple of the block size of the device.
-    pub async fn write_blocks_at<B: AsRef<[u8]>>(&mut self, buf: &B, offset_blocks: u64) -> Result<(), Errno> {
+    pub async fn write_blocks_at<B: AsRef<[u8]>>(&self, buf: &B, offset_blocks: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             let buf = buf.as_ref();
             let logical_block_size = self.descriptor().device().logical_block_size() as usize;
@@ -188,7 +188,7 @@ impl <'a> IoChannel<'a> {
     }
 
     /// Writes zeroes to the block device at the specified byte offset.
-    pub async fn write_zeroes_at(&mut self, offset: u64, len: u64) -> Result<(), Errno> {
+    pub async fn write_zeroes_at(&self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_write_zeroes(
@@ -203,7 +203,7 @@ impl <'a> IoChannel<'a> {
     }
 
     /// Writes zeroes to the block device at the specified block offset.
-    pub async fn write_zeroes_blocks_at(&mut self, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
+    pub async fn write_zeroes_blocks_at(&self, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_write_zeroes_blocks(
@@ -219,7 +219,7 @@ impl <'a> IoChannel<'a> {
 
     /// Reads data from the block device at the specified byte offset into the
     /// buffer.
-    pub async fn read_at<B: AsMut<[u8]>>(&mut self, buf: &mut B, offset: u64) -> Result<(), Errno> {
+    pub async fn read_at<B: AsMut<[u8]>>(&self, buf: &mut B, offset: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_read(
@@ -238,7 +238,7 @@ impl <'a> IoChannel<'a> {
     /// buffer.
     ///
     /// The buffer must be a multiple of the block size of the device.
-    pub async fn read_blocks_at<B: AsMut<[u8]>>(&mut self, buf: &mut B, offset_blocks: u64) -> Result<(), Errno> {
+    pub async fn read_blocks_at<B: AsMut<[u8]>>(&self, buf: &mut B, offset_blocks: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             let buf = buf.as_mut();
             let logical_block_size = self.descriptor().device().logical_block_size() as usize;
@@ -262,7 +262,7 @@ impl <'a> IoChannel<'a> {
 
     /// Notifies the block device that the specified range of bytes is no longer
     /// valid.
-    pub async fn unmap(&mut self, offset: u64, len: u64) -> Result<(), Errno> {
+    pub async fn unmap(&self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_unmap(
@@ -278,7 +278,7 @@ impl <'a> IoChannel<'a> {
 
     /// Notifies the block device that the specified range of blocks is no longer
     /// valid.
-    pub async fn unmap_blocks(&mut self, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
+    pub async fn unmap_blocks(&self, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_unmap_blocks(
@@ -297,7 +297,7 @@ impl <'a> IoChannel<'a> {
     /// 
     /// For devices with volatile cache, data is not guaranteed to be persistent
     /// until the completion of the flush operation.
-    pub async fn flush(&mut self, offset: u64, len: u64) -> Result<(), Errno> {
+    pub async fn flush(&self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_flush(
@@ -312,7 +312,7 @@ impl <'a> IoChannel<'a> {
     }
 
     /// Resets the block device.
-    pub async fn reset(&mut self) -> Result<(), Errno> {
+    pub async fn reset(&self) -> Result<(), Errno> {
         self.execute_io(|cx| {
             unsafe {
                 to_poll_pending_on_ok!(spdk_bdev_reset(

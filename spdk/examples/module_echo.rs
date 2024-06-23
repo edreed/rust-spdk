@@ -205,7 +205,7 @@ async fn main() {
 
     let write_task = reactors[0].spawn(async move {
         let writer = echo_writer.open(true).await.unwrap();
-        let mut writer_ch = writer.io_channel().unwrap();
+        let writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 
@@ -224,7 +224,7 @@ async fn main() {
 
     let read_task = reactors[1].spawn(async move {
         let reader = echo_reader.open(true).await.unwrap();
-        let mut reader_ch = reader.io_channel().unwrap();
+        let reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 

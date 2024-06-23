@@ -38,7 +38,7 @@ async fn main() {
     let desc = malloc.open(true).await.unwrap();
 
     thread::spawn_local(async move {
-        let mut io_chan = desc.io_channel().unwrap();
+        let io_chan = desc.io_channel().unwrap();
         let layout = desc.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 
