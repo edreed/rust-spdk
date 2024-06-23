@@ -353,12 +353,16 @@ impl From<*mut spdk_thread> for Thread {
 
 /// Spawns a new asynchronous task to be executed on the current SPDK thread and
 /// returns a [`JoinHandle`] to await results.
-pub fn spawn<F, T>(fut: F) -> JoinHandle<T>
+pub fn spawn_local<F, T>(fut: F) -> JoinHandle<T>
 where
-    F: Future<Output = T> + Send + 'static,
-    T: Send + 'static
+    F: Future<Output = T> + 'static,
+    T: 'static
 {
-    Thread::current().spawn(fut)
+    let (task, join_handle) = ThreadTask::with_future(Some(Thread::current()), fut);
+
+    Task::schedule(task);
+
+    join_handle
 }
 
 /// Runs the provided future on the current SPDK thread until completion.
