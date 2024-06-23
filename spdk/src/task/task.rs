@@ -220,11 +220,9 @@ impl <T: 'static> Task for ThreadTask<T> {
 
         // If the current thread is the target of this task, attempt to run it
         // synchronously.
-        if let Some(t) = Thread::try_current() {
-            if t == target_thread {
-                if Self::run(&arc_self) {
-                    return;
-                }
+        if target_thread.is_current() {
+            if Self::run(&arc_self) {
+                return;
             }
         }
 
@@ -331,11 +329,9 @@ impl <T: 'static> Task for ReactorTask<T> {
 
         // If the current reactor is the target of this task, attempt to run it
         // synchronously.
-        if let Some(r) = Reactor::try_current() {
-            if r == target_reactor {
-                if Self::run(&arc_self) {
-                    return;
-                }
+        if target_reactor.is_current() {
+            if Self::run(&arc_self) {
+                return;
             }
         }
 

@@ -30,7 +30,9 @@ use crate::{
 /// 
 /// ```mermaid
 /// stateDiagram-v2
-/// Empty --> Waiting : poll(cx)
+/// Empty --> Requesting : poll(cx)
+/// Requesting --> Waiting : poll(cx)
+/// Requesting --> Kept : set_result(res) | Ready(res)
 /// Waiting --> Waiting : poll(cx)
 /// Waiting --> Kept : set_result(res)
 /// Kept --> Fulfilled : poll(cx)
@@ -41,13 +43,34 @@ enum PromiseState<T: Debug + Send + 'static> {
     #[default]
     Empty,
 
+    /// The promisee is requesting a promise.
+    /// 
+    /// This state indicates the promise is invoking the function to start the
+    /// asynchronous operation.
+    Requesting,
+
     /// The promisee is waiting for the promise to be kept.
+    /// 
+    /// This state occurs when the start function returns `Poll::Pending` and
+    /// before a completion callback is invoked.
     Waiting(Waker),
 
     /// The promisor has kept the promise and delivered a result.
+    /// 
+    /// This state occurs either when the start function returns
+    /// `Poll::Ready(res)` or when the asynchrounous operation invokes a
+    /// completion callback.
+    /// 
+    /// If a completion function is invoked before the start function returns,
+    /// the promise transitions from the `Requesting` state to the `Kept` state
+    /// directly. Otherwise, the promise transitions from the `Requesting` state
+    /// to the `Waiting` state.
     Kept(Result<T, Errno>),
 
     /// The promisee has received the promised result.
+    /// 
+    /// This state occurs when the result has been returned to the promise's
+    /// caller.
     Fulfilled,
 }
 
@@ -77,7 +100,7 @@ impl <T: Debug + Send + 'static> PromiseState<T> {
 
         match prev_state {
             Ok(prev_state) => match prev_state {
-                Self::Empty => (),
+                Self::Requesting => (),
                 Self::Waiting(waker) => waker.wake(),
                 _ => panic!("promise kept in unexpected state: {:?}", prev_state),
             }
@@ -92,7 +115,8 @@ impl <T: Debug + Send + 'static> PromiseState<T> {
     /// Polls the state of the operation, advancing to the next state if possible.
     fn poll(&mut self, cx: &Context<'_>) -> Self {
         match self {
-            Self::Empty => self.replace(Self::Waiting(cx.waker().clone())),
+            Self::Empty => self.replace(Self::Requesting),
+            Self::Requesting => self.replace(Self::Waiting(cx.waker().clone())),
             Self::Waiting(waker) => Self::Waiting(waker.clone()),
             Self::Kept(_) => self.replace(Self::Fulfilled),
             _ => panic!("promise polled in unexpected state: {:?}", self),
@@ -188,7 +212,17 @@ where
                 let promise_cx = Arc::into_raw(self.state.clone());
 
                 match (self.as_mut().start_fn)(promise_cx as *mut c_void) {
-                    Poll::Pending => Poll::Pending,
+                    Poll::Pending => {
+                        let state = self.state.lock().unwrap().poll(cx);
+
+                        if let PromiseState::Kept(res) = state {
+                            unsafe { Arc::from_raw(promise_cx) };
+
+                            return Poll::Ready(res);
+                        }
+
+                        Poll::Pending
+                    },
                     Poll::Ready(res) => {
                         unsafe { Arc::from_raw(promise_cx) };
 
