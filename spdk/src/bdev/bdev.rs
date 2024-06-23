@@ -101,7 +101,10 @@ use crate::{
 
         complete_with_status,
     },
-    thread::Thread,
+    thread::{
+        self,
+        Thread,
+    },
 
     to_result,
 };
@@ -218,12 +221,13 @@ impl Into<spdk_bdev_io_status> for IoStatus {
 }
 
 /// A trait for implementing the I/O channel operations for a BDev.
+#[async_trait]
 pub trait BDevIoChannelOps: Default + 'static {
     /// The I/O context type for the BDev.
     type IoContext: Default + 'static;
 
     /// Submit an I/O request to the BDev.
-    fn submit_request(&self, io: BDevIo<Self::IoContext>);
+    async fn submit_request(&self, io: BDevIo<Self::IoContext>);
 }
 
 /// A BDev I/O channel implementation.
@@ -612,8 +616,9 @@ where
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
         let io_channel: BDevIoChannel<T::IoChannel> = io_channel.into();
+        let io = BDevIo::new(io);
 
-        io_channel.ctx().submit_request(BDevIo::new(io));
+        thread::spawn_local(async move{ io_channel.ctx().submit_request(io).await; });
     }
 
     /// Gets an I/O channel for the BDev for the calling thread.

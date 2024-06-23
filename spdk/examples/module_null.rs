@@ -34,10 +34,11 @@ impl ModuleOps for NullRsModule {
 #[derive(Debug, Default)]
 struct NullRsChannel;
 
+#[async_trait]
 impl BDevIoChannelOps for NullRsChannel {
     type IoContext = ();
 
-    fn submit_request(&self, io: BDevIo<Self::IoContext>) {
+    async fn submit_request(&self, io: BDevIo<Self::IoContext>) {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();
 

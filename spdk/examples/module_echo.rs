@@ -31,7 +31,6 @@ use spdk::{
     errors::Errno,
     runtime::reactors,
     task::{self},
-    thread::Thread
 };
 
 /// Implements the Echo block device module.
@@ -74,73 +73,72 @@ struct EchoChannel {
     device: Arc<Mutex<EchoInner>>
 }
 
+#[async_trait]
 impl BDevIoChannelOps for EchoChannel {
     type IoContext = ();
 
-    fn submit_request(&self, io: BDevIo<Self::IoContext>) {
+    async fn submit_request(&self, io: BDevIo<Self::IoContext>) {
         let device = self.device.clone();
 
-        Thread::current().spawn(async move {
-            let (read_io, write_io, status) = {
-                let mut device = device.lock().await;
-                match io.io_type() {
-                    IoType::Read => {
-                        if io.offset_blocks() == 0 {
-                            // Some Virtual BDev read the first block to inspect
-                            // partition or other metadata to determine whether
-                            // to claim the device. We imply return a block of
-                            // zeros to prevent this BDev from claiming the device.
-                            let dst = io.buffers_mut();
+        let (read_io, write_io, status) = {
+            let mut device = device.lock().await;
+            match io.io_type() {
+                IoType::Read => {
+                    if io.offset_blocks() == 0 {
+                        // Some Virtual BDev read the first block to inspect
+                        // partition or other metadata to determine whether
+                        // to claim the device. We imply return a block of
+                        // zeros to prevent this BDev from claiming the device.
+                        let dst = io.buffers_mut();
 
-                            dst[0].fill(0);
+                        dst[0].fill(0);
 
-                            (Some(io), None, IoStatus::Success)
-                        } else if device.pending_read.is_some() {
-                            (Some(io), None, IoStatus::NoMem)
-                        } else if device.pending_write.is_none() {
-                            device.pending_read = Some(io);
-                            (None, None, IoStatus::Pending)
-                        } else {
-                            let dst = io.buffers_mut();
-                            let write_io = device.pending_write.take().unwrap();
-                            let src = write_io.buffers();
+                        (Some(io), None, IoStatus::Success)
+                    } else if device.pending_read.is_some() {
+                        (Some(io), None, IoStatus::NoMem)
+                    } else if device.pending_write.is_none() {
+                        device.pending_read = Some(io);
+                        (None, None, IoStatus::Pending)
+                    } else {
+                        let dst = io.buffers_mut();
+                        let write_io = device.pending_write.take().unwrap();
+                        let src = write_io.buffers();
 
-                            dst[0].copy_from_slice(&src[0]);
+                        dst[0].copy_from_slice(&src[0]);
 
-                            (Some(io), Some(write_io), IoStatus::Success)
-                        }
-                    },
-                    IoType::Write => {
-                        if io.offset_blocks() == 0 {
-                            // Ignore writes to block 0.
-                            (None, Some(io), IoStatus::Success)
-                        } else if device.pending_write.is_some() {
-                            (None, Some(io), IoStatus::NoMem)
-                        } else if device.pending_read.is_none() {
-                            device.pending_write = Some(io);
-                            (None, None, IoStatus::Pending)
-                        } else {
-                            let src: &[std::io::IoSlice<'_>] = io.buffers();
-                            let read_io = device.pending_read.take().unwrap();
-                            let dst = read_io.buffers_mut();
+                        (Some(io), Some(write_io), IoStatus::Success)
+                    }
+                },
+                IoType::Write => {
+                    if io.offset_blocks() == 0 {
+                        // Ignore writes to block 0.
+                        (None, Some(io), IoStatus::Success)
+                    } else if device.pending_write.is_some() {
+                        (None, Some(io), IoStatus::NoMem)
+                    } else if device.pending_read.is_none() {
+                        device.pending_write = Some(io);
+                        (None, None, IoStatus::Pending)
+                    } else {
+                        let src: &[std::io::IoSlice<'_>] = io.buffers();
+                        let read_io = device.pending_read.take().unwrap();
+                        let dst = read_io.buffers_mut();
 
-                            dst[0].copy_from_slice(&src[0]);
+                        dst[0].copy_from_slice(&src[0]);
 
-                            (Some(read_io), Some(io), IoStatus::Success)
-                        }
-                    },
-                    _ => unreachable!("unexpected IoType value")
-                }
-            };
-
-            if let Some(read_io) = read_io {
-                read_io.complete(status);
+                        (Some(read_io), Some(io), IoStatus::Success)
+                    }
+                },
+                _ => unreachable!("unexpected IoType value")
             }
+        };
 
-            if let Some(write_io) = write_io {
-                write_io.complete(status)
-            }
-        });
+        if let Some(read_io) = read_io {
+            read_io.complete(status);
+        }
+
+        if let Some(write_io) = write_io {
+            write_io.complete(status)
+        }
     }
 }
 
