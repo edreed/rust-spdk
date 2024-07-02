@@ -409,15 +409,18 @@ where
         unsafe { &mut *self.io.as_mut().driver_ctx.as_mut_ptr().cast() }
     }
 
-    /// Completes the I/O request with the specified status. The I.O request
-    /// must be completed on the thread returned by the [`thread()`] method.
+    /// Completes the I/O request with the specified status.
     /// 
     /// [`thread()`]: fn@BDevIo::thread
-    pub fn complete(self, status: IoStatus) {
+    pub fn complete(mut self, status: IoStatus) {
         let io_thread = self.thread();
 
         if io_thread.is_current() {
-            unsafe { spdk_bdev_io_complete(self.as_ptr(), status.into()); }
+            unsafe {
+                ptr::drop_in_place(self.io.as_mut().driver_ctx.as_mut_ptr() as *mut T);
+
+                spdk_bdev_io_complete(self.as_ptr(), status.into());
+            }
         } else {
             io_thread.send_msg(move || { self.complete(status) }).unwrap();
         }
