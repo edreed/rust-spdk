@@ -272,6 +272,18 @@ impl Thread {
         }
     }
 
+    /// Invokes a function sent via [`Thread::send_msg()`] on the current thread.
+    /// 
+    /// [`Thread::send_msg()`]: method@Thread::send_msg
+    unsafe extern "C" fn handle_msg<F>(ctx: *mut c_void)
+    where
+        F: FnOnce() + 'static
+    {
+        let msg_fn = Box::from_raw(ctx as *mut F);
+
+        (*msg_fn)();
+    }
+
     /// Sends a message function to be executed on this thread.
     /// 
     /// The message is sent asynchronously. This function may return before the
@@ -301,21 +313,10 @@ impl Thread {
     where
         F: FnOnce() + 'static
      {
-        struct Msg {
-            msg_fn: Box<dyn FnOnce()>
-        }
-    
-        unsafe extern "C" fn handle_msg(ctx: *mut c_void) {
-            let msg = Box::from_raw(ctx as *mut Msg);
-    
-            (msg.msg_fn)();
-        }
-
-        let msg = Msg{ msg_fn: Box::new(f) };
-        let ctx = Box::into_raw(Box::new(msg)).cast();
+        let ctx = Box::into_raw(Box::new(f)).cast();
 
         unsafe {
-            to_result!(spdk_thread_send_msg(self.as_ptr(), Some(handle_msg), ctx))
+            to_result!(spdk_thread_send_msg(self.as_ptr(), Some(Self::handle_msg::<F>), ctx))
         }
     }
 
