@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bindgen::callbacks::ParseCallbacks;
+use bindgen::callbacks::{
+    IntKind::{self, Custom},
+    ParseCallbacks,
+};
 use fs_extra::dir;
 use itertools::Itertools;
 use lazy_regex::regex_replace_all;
@@ -53,6 +56,29 @@ impl ParseCallbacks for DoxygenCallbacks {
         let transformed = regex_replace_all!(r"\[(\w+)\]", &transformed, r"\[$1\]");
 
         Some(transformed.into())
+    }
+}
+
+#[derive(Debug)]
+struct OverrideCallbacks;
+
+impl OverrideCallbacks {
+    fn new() -> Box<Self> {
+        Box::new(Self)
+    }
+}
+
+impl ParseCallbacks for OverrideCallbacks {
+    fn int_macro(&self, name: &str, _value: i64) -> Option<IntKind> {
+        match name {
+            "SPDK_MEMPOOL_ALIGN"
+            | "SPDK_MEMPOOL_DEFAULT_CACHE_SIZE"
+            | "SPDK_MAX_MEMPOOL_NAME_LEN" => Some(Custom {
+                name: "usize",
+                is_signed: false,
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -265,7 +291,7 @@ const ALL_FEATURES: [Feature; 13] = [
         ]
         .as_slice(),
         ["spdk/isa-l/.libs", "spdk/isa-l-crypto/.libs"].as_slice(),
-        ["spdk/include", "spdk/module"].as_slice(),
+        ["spdk/include", "spdk/module", "spdk/dpdk/build/include"].as_slice(),
         [
             AllowFunction("spdk_.*"),
             AllowType("spdk_.*"),
@@ -673,6 +699,7 @@ impl Builder<'_> {
             .header("wrapper.h")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .parse_callbacks(DoxygenCallbacks::new())
+            .parse_callbacks(OverrideCallbacks::new())
             .clang_args(
                 include_paths
                     .iter()
