@@ -27,7 +27,6 @@ use std::{
     ffi::{CStr, c_void},
     fmt::{self, Debug, Formatter},
     future::Future,
-    mem::MaybeUninit,
     pin::Pin,
     ptr::null_mut,
     task::{Context, Poll},
@@ -42,8 +41,8 @@ use spdk_sys::{
 
 use crate::{
     Result,
+    env::CpuSet,
     errors::EINVAL,
-    runtime::CpuSet,
     task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
     to_result,
 };
@@ -138,21 +137,19 @@ where
 
     /// Returns the CPU set for this thread.
     pub fn cpuset(&self) -> CpuSet {
-        unsafe {
-            let mut cpuset = MaybeUninit::uninit();
+        let mut cpuset = CpuSet::empty();
 
+        unsafe {
             spdk_cpuset_copy(
                 cpuset.as_mut_ptr(),
                 spdk_thread_get_cpumask(self.as_ptr() as *mut _),
-            );
+            )
+        };
 
-            cpuset.assume_init().into()
-        }
+        cpuset
     }
 
-    /// Invokes a function sent via [`Thread::send_msg()`] on the current thread.
-    ///
-    /// [`Thread::send_msg()`]: method@Thread::send_msg
+    /// Invokes a function sent via [`Thread::send_msg`] on this [`Thread`]`.
     unsafe extern "C" fn handle_msg<F>(ctx: *mut c_void)
     where
         F: FnOnce(),
@@ -162,7 +159,7 @@ where
         (*msg_fn)();
     }
 
-    /// Sends a message function to be executed on this thread.
+    /// Sends a message function to be executed on this [`Thread`].
     ///
     /// The message is sent asynchronously. This function may return before the message function is
     /// called.
@@ -171,8 +168,8 @@ where
     ///
     /// This function returns `Ok(())` if the message function was successfully queued.
     ///
-    /// This function return [`ENOMEM`] if the message could not be allocated and [`EIO`] if the
-    /// message could not be sent to the destination thread.
+    /// This function returns `Err(`[`ENOMEM`]`)` if the message could not be allocated and
+    /// `Err(`[`EIO`]`)` if the message could not be sent to the destination thread.
     ///
     /// # Examples
     ///
@@ -190,14 +187,18 @@ where
     where
         F: FnOnce(),
     {
-        let ctx = Box::into_raw(Box::new(f)).cast();
+        let ctx = Box::into_raw(Box::new(f));
 
         unsafe {
             to_result!(spdk_thread_send_msg(
                 self.as_ptr(),
                 Some(Self::handle_msg::<F>),
-                ctx
+                ctx.cast()
             ))
+            .or_else(|e| {
+                drop(Box::from_raw(ctx));
+                Err(e)
+            })
         }
     }
 

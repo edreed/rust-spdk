@@ -2,7 +2,7 @@ use std::{ffi::CStr, mem::transmute, os::raw::c_void, ptr::NonNull};
 
 use spdk_sys::{spdk_thread, spdk_thread_create, spdk_thread_exit, spdk_thread_send_msg};
 
-use crate::{Result, errors::ENOMEM, runtime::CpuSet, to_result};
+use crate::{Result, env::CpuSet, errors::ENOMEM, to_result};
 
 use super::AsRawThread;
 
