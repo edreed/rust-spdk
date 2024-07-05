@@ -11,6 +11,7 @@ pub mod json;
 pub mod macros;
 pub mod nvme;
 pub mod nvmf;
+pub mod pooled;
 pub mod runtime;
 pub mod task;
 pub mod thread;
