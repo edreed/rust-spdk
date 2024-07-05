@@ -19,3 +19,14 @@
 #include "spdk/nvmf_spec.h"
 #include "event/subsystems/nvmf/event_nvmf.h"
 #endif
+
+/**
+ * Return a pointer to the mempool owning this object.
+ *
+ * @param obj
+ *   An object that is owned by a pool. If this is not the case,
+ *   the behavior is undefined.
+ * @return
+ *   A pointer to the mempool structure.
+ */
+struct spdk_mempool *spdk_mempool_from_obj(void *obj);

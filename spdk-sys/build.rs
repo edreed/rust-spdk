@@ -39,6 +39,7 @@ impl ParseCallbacks for DoxygenCallbacks {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed=ext.c");
 
     let spdk_src_dir = canonicalize("spdk").expect("spdk submodule to be initialized");
 
@@ -48,6 +49,7 @@ fn main() {
     let spdk_pkgconfig_dir = spdk_lib_dir.join("pkgconfig");
     let spdk_include_dir = spdk_src_dir.join("include");
     let spdk_module_dir = spdk_src_dir.join("module");
+    let dpdk_include = spdk_dir.join("dpdk/build/include");
     let isal_lib_dir = spdk_dir.join("isa-l/.libs");
     let isal_crypto_lib_dir = spdk_dir.join("isa-l-crypto/.libs");
     let spdk_wrappers = spdk_dir.join("build/wrappers.c");
@@ -201,17 +203,19 @@ fn main() {
         .expect("spdk bindings generated")
         .write_to_file(out_dir.join("bindings.rs").as_path());
 
-    if spdk_wrappers.exists() {
-        let mut wrappers = cc::Build::new();
+    let mut extras = cc::Build::new();
 
-        wrappers
-            .file(spdk_wrappers)
-            .include(".")
-            .includes(include_paths);
+    extras
+        .file("ext.c")
+        .include(".")
+        .include(dpdk_include)
+        .includes(include_paths);
 
-        defines.iter().for_each(|d| _ = wrappers.define(d, None));
+        if spdk_wrappers.exists() {
+            extras.file(spdk_wrappers);
+        }
 
-        wrappers
-            .compile("spdk_wrappers");
-    }
+    defines.iter().for_each(|d| _ = extras.define(d, None));
+
+    extras.compile("spdk_extras");
 }
