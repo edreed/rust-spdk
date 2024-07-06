@@ -40,16 +40,21 @@ use spdk_sys::{
 use static_init::dynamic;
 
 use crate::{
-    errors::{Errno, EINVAL},
+    errors::{
+        Errno,
+
+        EINVAL,
+    },
     runtime::{
         Reactor,
 
         reactors,
     },
     task::{
-        ThreadTask,
         Task,
+        ThreadTask,
     },
+    to_result,
 };
 
 /// Builds a runtime using the Application Framework component of the
@@ -231,8 +236,37 @@ impl Runtime {
             .build())
     }
 
+    /// Returns whether the Application Framework is shutting down.
     pub fn is_shutting_down() -> bool {
         SHUTDOWN_STARTED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A callback invoked to start the application's main future on the
+    /// Application Framework.
+    unsafe extern "C" fn handle_start<F>(ctx: *mut c_void)
+    where
+        F: Future<Output = ()> + 'static,
+        F::Output: 'static
+    {
+        let task = Arc::from_raw(ctx.cast::<ThreadTask<(), F>>());
+
+        Task::schedule_by_ref(&task);
+    }
+
+    /// Starts the SPDK Application Framework with the given future.
+    fn start<F>(&self, fut: F)
+    where
+        F: Future<Output = ()> + 'static,
+        F::Output: 'static
+    {
+        let (task, _) = ThreadTask::with_future(None, fut);
+        let ctx = Arc::into_raw(task).cast_mut();
+
+        unsafe {
+            to_result!(spdk_app_start(self.0.as_ptr(), Some(Self::handle_start::<F>), ctx.cast()))
+                .expect("app started");
+        }
+
     }
 
     /// Runs a future to completion on the SPDK Application Framework.
@@ -270,12 +304,6 @@ impl Runtime {
                 unsafe { spdk_app_stop(0); }
             }
         }
-        
-        unsafe extern "C" fn start(ctx: *mut c_void) {
-            let task = Arc::from_raw(ctx.cast::<ThreadTask<()>>());
-
-            Task::run(&task);
-        }
 
         let wrapped_fut = async move {
             let _sg = StopGuard{};
@@ -290,13 +318,6 @@ impl Runtime {
             exits.into_iter().for_each(|e| e.send(()).unwrap());
         };
 
-        let (task, _) = ThreadTask::with_future(None, wrapped_fut);
-        let ctx = Arc::into_raw(task).cast_mut();
-
-        unsafe {
-            if spdk_app_start(self.0.as_ptr(), Some(start), ctx.cast()) != 0 {
-                panic!("app failed to start");
-            }
-        }
+        self.start(wrapped_fut);
     }
 }

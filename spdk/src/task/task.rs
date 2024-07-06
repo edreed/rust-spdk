@@ -1,16 +1,17 @@
 use std::{
-    cell::RefCell,
+    cell::{
+        RefCell,
+        UnsafeCell,
+    },
     fmt::Debug,
+    future::Future,
     mem::{
         self,
 
         ManuallyDrop,
     },
     pin::Pin,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::Arc,
     task::{
         Context,
         Poll,
@@ -22,7 +23,6 @@ use std::{
 
 use futures::{
     channel::oneshot,
-    Future,
     task::WakerRef,
 };
 
@@ -48,15 +48,6 @@ pub(crate) trait Task: Send {
     /// This method panics if this task's target executor is not the current
     /// executor.
     fn schedule_by_ref(arc_self: &Arc<Self>);
-
-    /// Executes a task on the executor.
-    /// 
-    /// # Returns
-    /// 
-    /// This method returns `true` if the task was run synchronously. If it
-    /// returns `false`, the task could not be executed synchronously and
-    /// should be scheduled to run later.
-    fn run(arc_self: &Arc<Self>) -> bool;
 }
 
 /// Clones the [`RawWaker`] for this task.
@@ -120,10 +111,22 @@ fn waker_ref<W: Task>(arc_self: &Arc<W>) -> WakerRef<'_> {
     WakerRef::new_unowned(waker)
 }
 
-/// Encapsulates the execution state of a [`Future`].
-enum TaskState<T: 'static> {
+#[cfg_attr(doc, aquamarine::aquamarine)]
+/// Encapsulates the execution state of a [`Task`].
+/// 
+/// The following state diagram shows the state transitions of a [`Task`].
+/// 
+/// ```mermaid
+/// stateDiagram-v2
+/// Pending --> Polling : poll()
+/// Polling --> Polling : poll()
+/// Polling --> Pending : mark_pending()
+/// Polling --> Done : mark_done()
+/// ```
+#[derive(Debug, Eq, PartialEq)]
+enum TaskState {
     /// The task is pending execution.
-    Pending(Pin<Box<dyn Future<Output = T> + 'static>>),
+    Pending,
 
     /// The task is currently being polled.
     Polling,
@@ -132,42 +135,71 @@ enum TaskState<T: 'static> {
     Done,
 }
 
-impl <T: 'static> TaskState<T> {
+impl TaskState {
     /// Replaces the current state with the specified value and returns the old state.
+    #[inline]
     fn replace(&mut self, value: Self) -> Self {
         mem::replace(&mut *self, value)
     }
 
+    /// Marks the task state as pending.
+    /// 
+    /// # Panics
+    /// 
+    /// This method panics if the current state is not `Polling`.
+    #[inline]
+    fn mark_pending(&mut self) {
+        assert_eq!(self.replace(Self::Pending), Self::Polling);
+    }
+
+    /// Marks the task state as done.
+    /// 
+    /// # Panics
+    /// 
+    /// This method panics if the current state is not `Polling`.
+    #[inline]
+    fn mark_done(&mut self) {
+        assert_eq!(self.replace(Self::Done), Self::Polling);
+    }
+
     /// Polls the state of the task, advancing to the next state if possible.
+    /// 
+    /// # Panics
+    /// 
+    /// This method panics if the task is polled in a state other than `Pending`
+    /// or `Polling`.
     fn poll(&mut self) -> Self{
         match self {
-            Self::Pending(_) => self.replace(Self::Polling),
+            Self::Pending => self.replace(Self::Polling),
             Self::Polling => Self::Polling,
             _ => panic!("task polled in unexpected state: {:?}", self),
         }
     }
 }
 
-impl <T: 'static> Debug for TaskState<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending(_) => write!(f, "Pending"),
-            Self::Polling => write!(f, "Polling"),
-            Self::Done => write!(f, "Done"),
-        }
-    }
-}
-
 /// Orchestrates the execution of a [`Future`].
-pub(crate) struct ThreadTask<T: 'static> {
+pub(crate) struct ThreadTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
     target_thread: Option<Thread>,
-    result_sender: RefCell<Option<oneshot::Sender<T>>>,
-    state: Mutex<TaskState<T>>,
+    state: RefCell<TaskState>,
+    result_sender: UnsafeCell<Option<oneshot::Sender<T>>>,
+    future: UnsafeCell<F>,
 }
 
-unsafe impl <T: 'static> Send for ThreadTask<T> {}
+unsafe impl <T, F> Send for ThreadTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{}
 
-impl <T: 'static> ThreadTask<T> {
+impl <T, F> ThreadTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
     /// Constructs a new task from a [`Future`] to be scheduled on a [`Thread`].
     /// 
     /// If `target_thread` is `None`, the task will be scheduled to run on the
@@ -180,90 +212,54 @@ impl <T: 'static> ThreadTask<T> {
     /// [`Future`].
     pub(crate) fn with_future(
         target_thread: Option<Thread>,
-        fut: impl Future<Output = T> + 'static
-    ) -> (Arc<Self>, JoinHandle<T>) {
-        Self::with_boxed(target_thread, Box::pin(fut))
-    }
-
-    /// Constructs a new task from a [`Pin<Box<Future>>`] to be scheduled on a
-    /// [`Thread`].
-    /// 
-    /// If `target_thread` is `None`, the task will be scheduled to run on the
-    /// application thread.
-    /// 
-    /// # Return
-    /// 
-    /// This function returns both a newly constructed [`ThreadTask`] and a
-    /// [`JoinHandle`] that can be used to await the result of executing the
-    /// [`Future`].
-    pub(crate) fn with_boxed(
-        target_thread: Option<Thread>,
-        boxed_fut: Pin<Box<dyn Future<Output = T> + 'static>>
+        fut: F
     ) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
             target_thread: target_thread,
-            result_sender: RefCell::new(Some(sx)),
-            state: Mutex::new(TaskState::Pending(boxed_fut)),
+            state: RefCell::new(TaskState::Pending),
+            result_sender: UnsafeCell::new(Some(sx)),
+            future: UnsafeCell::new(fut),
         });
 
         (task, JoinHandle::new(rx))
     }
-}
 
-impl <T: 'static> Task for ThreadTask<T> {
-    fn schedule(arc_self: Arc<Self>) {
-        let target_thread = arc_self.target_thread
+    /// Returns the target [`Thread`] of this task.
+    fn target_thread(&self) -> Thread {
+        self.target_thread
             .as_ref()
             .map(Thread::borrow)
-            .unwrap_or_else(|| Thread::application());
-
-        // If the current thread is the target of this task, attempt to run it
-        // synchronously.
-        if target_thread.is_current() {
-            if Self::run(&arc_self) {
-                return;
-            }
-        }
-
-        // The task could not be run synchronously, so enqueue it to run on the
-        // this thread at a later time.
-        target_thread.send_msg(move || assert!(Task::run(&arc_self))).unwrap();
+            .unwrap_or_else(|| Thread::application())
     }
 
-    fn schedule_by_ref(arc_self: &Arc<Self>) {
-        let target_thread = arc_self.target_thread
-            .as_ref()
-            .map(Thread::borrow)
-            .unwrap_or_else(|| Thread::application());
-
-        assert!(target_thread.is_current());
-
-        // First, attempt to run the task synchronously.
-        if !Self::run(arc_self) {
-            // The task could not be run synchronously, so enqueue it to run on the
-            // this thread at a later time.
-            let cloned_task = arc_self.clone();
-
-            target_thread.send_msg(move || assert!(Task::run(&cloned_task))).unwrap();
-        }
-    }
-
+    /// Executes a task on the executor.
+    /// 
+    /// # Returns
+    /// 
+    /// This method returns `true` if the task was run synchronously. If it
+    /// returns `false`, the task could not be executed synchronously and
+    /// should be scheduled to run later.
     fn run(arc_self: &Arc<Self>) -> bool {
-        let state = arc_self.state.lock().unwrap().poll();
+        let state = arc_self.state.borrow_mut().poll();
 
         match state {
-            TaskState::Pending(mut fut) => {
+            TaskState::Pending => {
                 let waker = waker_ref(arc_self);
                 let ctx = &mut Context::from_waker(&waker);
 
+                // SAFETY: The future is only polled when in the `Polling` state
+                // (i.e. previous state was `Pending`). There are no other
+                // references to it.
+                let mut fut = unsafe { Pin::new_unchecked(&mut *arc_self.future.get()) };
+
                 match fut.as_mut().poll(ctx) {
-                    Poll::Pending => {
-                        *arc_self.state.lock().unwrap() = TaskState::Pending(fut);
-                    },
+                    Poll::Pending => arc_self.state.borrow_mut().mark_pending(),
                     Poll::Ready(r) => {
-                        let _ = arc_self.result_sender.borrow_mut().take().unwrap().send(r);
-                        *arc_self.state.lock().unwrap() = TaskState::Done;
+                        // SAFETY: The result sender is only taken when in the
+                        // `Done` state. There are no other references to it.
+                        let _ = unsafe { &mut *arc_self.result_sender.get() }.take().unwrap().send(r);
+                        arc_self.state.borrow_mut().mark_done();
                     },
                 }
 
@@ -275,16 +271,66 @@ impl <T: 'static> Task for ThreadTask<T> {
     }
 }
 
-/// Orchestrates the execution of a [`Future`] on a reactor.
-pub(crate) struct ReactorTask<T: 'static> {
-    target_reactor: Reactor,
-    result_sender: RefCell<Option<oneshot::Sender<T>>>,
-    state: Mutex<TaskState<T>>,
+impl <T, F> Task for ThreadTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
+    fn schedule(arc_self: Arc<Self>) {
+        let target_thread = arc_self.target_thread();
+
+        // If the current thread is the target of this task, attempt to run it
+        // synchronously.
+        if target_thread.is_current() {
+            if Self::run(&arc_self) {
+                return;
+            }
+        }
+
+        // The task could not be run synchronously, so enqueue it to run on the
+        // this thread at a later time.
+        target_thread.send_msg(move || assert!(Self::run(&arc_self))).unwrap();
+    }
+
+    fn schedule_by_ref(arc_self: &Arc<Self>) {
+        let target_thread = arc_self.target_thread();
+
+        assert!(target_thread.is_current());
+
+        // First, attempt to run the task synchronously.
+        if !Self::run(arc_self) {
+            // The task could not be run synchronously, so enqueue it to run on the
+            // this thread at a later time.
+            let cloned_task = arc_self.clone();
+
+            target_thread.send_msg(move || assert!(Self::run(&cloned_task))).unwrap();
+        }
+    }
 }
 
-unsafe impl <T: 'static> Send for ReactorTask<T> {}
+/// Orchestrates the execution of a [`Future`] on a reactor.
+pub(crate) struct ReactorTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
+    target_reactor: Reactor,
+    state: RefCell<TaskState>,
+    result_sender: UnsafeCell<Option<oneshot::Sender<T>>>,
+    future: UnsafeCell<F>,
+}
 
-impl <T: 'static> ReactorTask<T> {
+unsafe impl <T, F> Send for ReactorTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{}
+
+impl <T, F> ReactorTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
     /// Constructs a new task from a [`Future`] to be scheduled on the given
     /// [`Reactor`]
     /// 
@@ -295,35 +341,62 @@ impl <T: 'static> ReactorTask<T> {
     /// [`Future`].
     pub(crate) fn with_future(
         target_reactor: Reactor,
-        fut: impl Future<Output = T> + 'static
-    ) -> (Arc<Self>, JoinHandle<T>) {
-        Self::with_boxed(target_reactor, Box::pin(fut))
-    }
-
-    /// Constructs a new task from a [`Pin<Box<Future>>`] to be scheduled on the
-    /// given [`Reactor`]
-    /// 
-    /// # Return
-    /// 
-    /// This function returns both a newly constructed [`ReactorTask`] and a
-    /// [`JoinHandle`] that can be used to await the result of executing the
-    /// [`Future`].
-    pub(crate) fn with_boxed(
-        target_reactor: Reactor,
-        boxed_fut: Pin<Box<dyn Future<Output = T> + 'static>>
+        fut: F,
     ) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self{
             target_reactor: target_reactor,
-            result_sender: RefCell::new(Some(sx)),
-            state: Mutex::new(TaskState::Pending(boxed_fut)),
+            state: RefCell::new(TaskState::Pending),
+            result_sender: UnsafeCell::new(Some(sx)),
+            future: UnsafeCell::new(fut),
         });
 
         (task, JoinHandle::new(rx))
     }
+
+    /// Executes a task on the executor.
+    /// 
+    /// # Returns
+    /// 
+    /// This method returns `true` if the task was run synchronously. If it
+    /// returns `false`, the task could not be executed synchronously and
+    /// should be scheduled to run later.
+    fn run(arc_self: &Arc<Self>) -> bool {
+        let state = arc_self.state.borrow_mut().poll();
+
+        match state {
+            TaskState::Pending => {
+                let waker = waker_ref(arc_self);
+                let ctx = &mut Context::from_waker(&waker);
+
+                // SAFETY: The future is only polled when in the `Polling` state
+                // (i.e. previous state was `Pending`). There are no other
+                // references to it.
+                let mut fut = unsafe { Pin::new_unchecked(&mut *arc_self.future.get()) };
+
+                match fut.as_mut().poll(ctx) {
+                    Poll::Pending => arc_self.state.borrow_mut().mark_pending(),
+                    Poll::Ready(r) => {
+                        // SAFETY: The result sender is only taken when in the
+                        // `Done` state. There are no other references to it.
+                        let _ = unsafe { &mut *arc_self.result_sender.get() }.take().unwrap().send(r);
+                        arc_self.state.borrow_mut().mark_done();
+                    },
+                }
+
+                true
+            },
+            TaskState::Polling => false,
+            _ => unreachable!()
+        }
+    }
 }
 
-impl <T: 'static> Task for ReactorTask<T> {
+impl <T, F> Task for ReactorTask<T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
     fn schedule(arc_self: Arc<Self>) {
         let target_reactor = arc_self.target_reactor;
 
@@ -337,7 +410,7 @@ impl <T: 'static> Task for ReactorTask<T> {
 
         // The task could not be run synchronously, so enqueue it to run on the
         // this reactor at a later time.
-        target_reactor.send_event(move || assert!(Task::run(&arc_self))).unwrap();
+        target_reactor.send_event(move || assert!(Self::run(&arc_self))).unwrap();
     }
 
     fn schedule_by_ref(arc_self: &Arc<Self>) {
@@ -351,32 +424,7 @@ impl <T: 'static> Task for ReactorTask<T> {
             // the this reactor at a later time.
             let cloned_task = arc_self.clone();
 
-            target_reactor.send_event(move || assert!(Task::run(&cloned_task))).unwrap();
-        }
-    }
-
-    fn run(arc_self: &Arc<Self>) -> bool {
-        let state = arc_self.state.lock().unwrap().poll();
-
-        match state {
-            TaskState::Pending(mut fut) => {
-                let waker = waker_ref(arc_self);
-                let ctx = &mut Context::from_waker(&waker);
-
-                match fut.as_mut().poll(ctx) {
-                    Poll::Pending => {
-                        *arc_self.state.lock().unwrap() = TaskState::Pending(fut);
-                    },
-                    Poll::Ready(r) => {
-                        let _ = arc_self.result_sender.borrow_mut().take().unwrap().send(r);
-                        *arc_self.state.lock().unwrap() = TaskState::Done;
-                    },
-                }
-
-                true
-            },
-            TaskState::Polling => false,
-            _ => unreachable!()
+            target_reactor.send_event(move || assert!(Self::run(&cloned_task))).unwrap();
         }
     }
 }
