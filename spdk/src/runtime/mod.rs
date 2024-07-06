@@ -1,4 +1,5 @@
-//! Support for Storage Performance Development Kit [Event Framework][SPEF].
+//! Asynchronous runtime support for the Storage Performance Development Kit
+//! [Event Framework][SPEF].
 //! 
 //! [SPEF]: https://spdk.io/doc/event.html
 mod cpu_core;
