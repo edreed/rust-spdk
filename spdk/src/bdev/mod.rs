@@ -25,6 +25,8 @@ pub use bdev::{
     IoStatus,
     IoType,
 };
+#[cfg(feature = "bdev-module")]
+pub(crate) use bdev::BDevIoCtx;
 
 #[cfg(feature = "bdev-module")]
 pub use module::{

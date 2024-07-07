@@ -25,7 +25,8 @@ use crate::{
 
 use super::{
     BDevImpl,
-    BDevOps
+    BDevIoCtx,
+    BDevOps,
 };
 
 
@@ -37,7 +38,7 @@ pub trait ModuleOps {
     ///
     /// [`BDevIo::ctx()`]: method@super::BDevIo::ctx
     /// [`BDevIo::ctx_mut()`]: method@super::BDevIo::ctx_mut
-    type IoContext;
+    type IoContext: Default + 'static;
 
     /// Initializes the module.
     async fn init(&self) {
@@ -49,7 +50,7 @@ pub trait ModuleOps {
 
     /// Returns the size of the per-I/O context.
     fn get_io_context_size(&self) -> usize {
-        size_of::<Self::IoContext>()
+        size_of::<BDevIoCtx<Self::IoContext>>()
     }
 
     /// Examines the specified block device to determine whether it should be

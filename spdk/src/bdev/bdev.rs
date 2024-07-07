@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     ffi::{
         CStr,
         CString,
@@ -23,6 +24,7 @@ use std::{
     },
     ptr::{
         self,
+
         NonNull,
 
         addr_of,
@@ -77,6 +79,7 @@ use spdk_sys::{
 
     spdk_bdev_destruct_done,
     spdk_bdev_io_complete,
+    spdk_bdev_io_get_buf,
     spdk_bdev_io_get_iovec,
     spdk_bdev_io_get_thread,
     spdk_bdev_register,
@@ -87,9 +90,11 @@ use spdk_sys::{
     spdk_io_device_register,
     spdk_io_device_unregister,
 };
+use ternary_rs::if_else;
 
 use crate::{
     block::{
+        Any,
         Device,
         Owned,
         OwnedOps,
@@ -103,7 +108,11 @@ use crate::{
     },
     runtime::Reactor,
     task::{
-        complete_with_status, Promise
+        self,
+
+        Promise,
+
+        complete_with_status,
     },
     thread::{
         self,
@@ -312,18 +321,41 @@ where
     }
 }
 
+/// Represents driver-specific context for an I/O request.
+/// 
+/// The type parameter `T` is the I/O context type for the BDev implementation.
+pub(crate) struct BDevIoCtx<T>
+where
+    T: Default + 'static
+{
+    promise_cx: Cell<*mut c_void>,
+    inner: T
+}
+
+impl <T> Default for BDevIoCtx<T>
+where
+    T: Default + 'static
+{
+    fn default() -> Self {
+        Self {
+            promise_cx: Cell::new(ptr::null_mut()),
+            inner: Default::default()
+        }
+    }
+}
+
 /// A BDev I/O request.
 /// 
 /// The type parameter `T` is the I/O context type for the BDev implementation.
 pub struct BDevIo<T>
 where
-    T: 'static
+    T: Default + 'static
 {
     io: NonNull<spdk_bdev_io>,
     _ctx: PhantomData<T>
 }
 
-unsafe impl <T: 'static> Send for BDevIo<T> {}
+unsafe impl <T: Default + 'static> Send for BDevIo<T> {}
 
 impl <T> BDevIo<T>
 where
@@ -337,7 +369,7 @@ where
     /// initialize a newly submitted I/O request. It initializes the driver
     /// context to a default value.
     unsafe fn new(io: *mut spdk_bdev_io) -> Self {
-        (*io).driver_ctx.as_mut_ptr().cast::<T>().write(Default::default());
+        (*io).driver_ctx.as_mut_ptr().cast::<BDevIoCtx<T>>().write(Default::default());
 
         Self {
             io: NonNull::new(io).unwrap(),
@@ -357,7 +389,16 @@ where
     /// Returns the thread associated with the I/O request. The I/O request must
     /// be completed on this thread.
     pub fn thread(&self) -> Thread {
-        (unsafe { spdk_bdev_io_get_thread(self.as_ptr())}).into()
+        // SAFETY: The thread associated with the I/O request is guaranteed to
+        // be non-null and valid.
+        unsafe { Thread::from_ptr_unchecked(spdk_bdev_io_get_thread(self.as_ptr())) }
+    }
+
+    /// Returns the block device associated with the I/O request.
+    pub fn device(&self) -> Device<Any> {
+        // SAFETY: The block device associated with the I/O request is
+        // guaranteed to be non-null and valid.
+        unsafe { Device::<Any>::from_ptr_unchecked(self.io.as_ref().bdev) }
     }
 
     /// Returns the buffers associated with the I/O request.
@@ -399,14 +440,64 @@ where
         unsafe { self.io.as_ref().u.bdev.copy.src_offset_blocks }
     }
 
-    /// Returns the context associated with the I/O request.
-    pub fn ctx(&self) -> &T {
+    /// Returns a reference to the internal context associated with the I/O
+    /// request.
+    fn internal_ctx(&self) -> &BDevIoCtx<T> {
         unsafe { &*self.io.as_ref().driver_ctx.as_ptr().cast() }
     }
 
-    /// Returns the mutable context associated with the I/O request.
-    pub fn ctx_mut(&mut self) -> &mut T {
+    /// Returns a mutable reference to the internal context associated with the
+    /// I/O request.
+    fn internal_ctx_mut(&mut self) -> &mut BDevIoCtx<T> {
         unsafe { &mut *self.io.as_mut().driver_ctx.as_mut_ptr().cast() }
+    }
+
+    /// Returns a reference to the implementation-defined context associated
+    /// with the I/O request. 
+    pub fn ctx(&self) -> &T {
+        &self.internal_ctx().inner
+    }
+
+    /// Returns a mutable reference to the implementation-defined context
+    /// associated with the I/O request. 
+    pub fn ctx_mut(&mut self) -> &mut T {
+        &mut self.internal_ctx_mut().inner
+    }
+
+    /// Invoked when buffers requested by [`BDevIo<T>::allocate_buffers`] have
+    /// been allocated for the I/O request.
+    /// 
+    /// [`BDevIo<T>::allocate_buffers`]: method@BDevIo::allocate_buffers
+    unsafe extern "C" fn buffers_allocated(_ch: *mut spdk_io_channel, io: *mut spdk_bdev_io, success: bool) {
+        let io: Self = BDevIo::from(io);
+        let cx = io.internal_ctx().promise_cx.replace(ptr::null_mut());
+
+        task::complete_with_status(cx, if_else!(success, 0, -libc::EINVAL));
+    }
+
+    /// Allocates buffers aligned to the BDev's requirement for the I/O request.
+    /// 
+    /// Allocation will only occur if no buffers are assigned or the buffers are
+    /// not aligned to the BDev's requirement. If the buffers are not aligned,
+    /// this call will cause a copy from the current buffers to a bounce buffer
+    /// on write or a copy from the bounce buffer to the current buffers on read.
+    /// 
+    /// If no buffers are currently assigned to this I/O request, the `length`
+    /// parameter specifies the size of the buffers to allocate in bytes. This
+    /// value must be no larger than `SPDK_BDEV_LARGE_BUF_MAX_SIZE`.
+    /// 
+    /// Any buffers allocated by this method will automatically be freed on
+    /// completion of this I/O request.
+    pub async fn allocate_buffers(&mut self, length: u64) -> Result<(), Errno> {
+        Promise::new(move |cx| {
+            self.internal_ctx().promise_cx.set(cx);
+
+            unsafe {
+                spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length)
+            };
+
+            Poll::Pending
+        }).await
     }
 
     /// Completes the I/O request with the specified status.
@@ -417,7 +508,7 @@ where
 
         if io_thread.is_current() {
             unsafe {
-                ptr::drop_in_place(self.io.as_mut().driver_ctx.as_mut_ptr() as *mut T);
+                ptr::drop_in_place(self.io.as_mut().driver_ctx.as_mut_ptr() as *mut BDevIoCtx<T>);
 
                 spdk_bdev_io_complete(self.as_ptr(), status.into());
             }
@@ -427,7 +518,10 @@ where
     }
 }
 
-impl<T> From<*mut spdk_bdev_io> for BDevIo<T> {
+impl<T> From<*mut spdk_bdev_io> for BDevIo<T>
+where
+    T: Default + 'static
+{
     fn from(io: *mut spdk_bdev_io) -> Self {
         Self {
             io: NonNull::new(io).unwrap(),

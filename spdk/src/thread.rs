@@ -123,6 +123,16 @@ impl Thread {
         }
     }
 
+    /// Returns a borrowed thread object for the specified non-null pointer.
+    ///
+    /// # Safety
+    /// 
+    /// The caller must ensure that `thread` is non-null and points to a valid
+    /// `spdk_thread` object.
+    pub unsafe fn from_ptr_unchecked(thread: *mut spdk_thread) -> Self {
+        Self(OwnershipState::Borrowed(NonNull::new_unchecked(thread)))
+    }
+
     /// Returns the borrowed thread with the specified unique identifier.
     pub fn from_id(id: u64) -> Option<Self> {
         unsafe {

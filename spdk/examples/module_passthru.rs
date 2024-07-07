@@ -58,15 +58,11 @@ impl PassthruRsChannel {
     fn channel(&self) -> &IoChannel {
         &self.ch.as_ref().unwrap()
     }
-}
 
-#[async_trait]
-impl BDevIoChannelOps for PassthruRsChannel {
-    type IoContext = ();
-
-    async fn submit_request(&self, io: BDevIo<Self::IoContext>) {
-        let res = match io.io_type() {
+    async fn forward_request(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
+        match io.io_type() {
             spdk::bdev::IoType::Read => {
+                io.allocate_buffers(io.num_blocks() * io.device().logical_block_size() as u64).await?;
                 self.channel().read_vectored_blocks_at(io.buffers_mut(), io.offset_blocks(), io.num_blocks()).await
             },
             spdk::bdev::IoType::Write => {
@@ -88,7 +84,16 @@ impl BDevIoChannelOps for PassthruRsChannel {
                 self.channel().copy_blocks(io.copy_source_offset_blocks(), io.offset_blocks(), io.num_blocks()).await
             },
             _ => Err(ENOTSUP),
-        };
+        }
+    }
+}
+
+#[async_trait]
+impl BDevIoChannelOps for PassthruRsChannel {
+    type IoContext = ();
+
+    async fn submit_request(&self, mut io: BDevIo<Self::IoContext>) {
+        let res = self.forward_request(&mut io).await;
 
         io.complete(res.into());
     }
