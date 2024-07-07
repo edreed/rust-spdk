@@ -92,7 +92,7 @@ unsafe impl Sync for IoChannel {}
 impl IoChannel {
     /// Creates a new [`IoChannel`].
     pub(crate) fn new(desc: &Descriptor) -> Result<Self, Errno> {
-        // SAFETY: `desc` is guaranteed to contain a  non-null pointer. The SPDK
+        // SAFETY: `desc` is guaranteed to contain a non-null pointer. The SPDK
         // also guarantees the descriptor will live as long as there are
         // outstanding I/O channels.
         let desc = unsafe { NonNull::new_unchecked(desc.as_ptr()) };
@@ -106,12 +106,15 @@ impl IoChannel {
 
     /// Returns the thread associated with this [`IoChannel`].
     pub fn thread(&self) -> Thread {
-        (unsafe { spdk_io_channel_get_thread(self.channel.as_ptr()) }).into()
+        // SAFETY: The thread associated with the I/O channel is guaranteed to
+        // be non-null and valid.
+        unsafe { Thread::from_ptr_unchecked(spdk_io_channel_get_thread(self.channel.as_ptr())) }
     }
 
     /// Returns the block device associated with this [`IoChannel`].
     pub fn device(&self) -> Device<Any> {
-        // SAFETY: `desc` is guaranteed to contain a non-null BDev pointer.
+        // SAFETY: The descriptor associated with the I/O channel is guaranteed
+        // to be non-null and valid.
         unsafe { Device::<Any>::from_ptr_unchecked(spdk_bdev_desc_get_bdev(self.desc.as_ptr())) }
     }
 
@@ -318,7 +321,7 @@ impl IoChannel {
                     addr_of_mut!(*buf.as_mut()) as *mut c_void,
                     offset,
                     buf.as_mut().len() as u64,
-                        Some(Self::complete_io),
+                    Some(Self::complete_io),
                     cx))
             }
         }).await

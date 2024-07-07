@@ -216,8 +216,6 @@ where
                         let state = self.state.lock().unwrap().poll(cx);
 
                         if let PromiseState::Kept(res) = state {
-                            unsafe { Arc::from_raw(promise_cx) };
-
                             return Poll::Ready(res);
                         }
 
