@@ -2,23 +2,25 @@ use std::{
     ffi::CStr,
     io::{
         BufRead,
-        Write
+        IoSlice,
+        Write,
     },
+    mem::transmute,
     sync::Arc,
 };
 
+use async_std::sync::{
+    Condvar,
+    Mutex,
+};
 use async_trait::async_trait;
 use byte_strings::c_str;
-use futures::{
-    future::join,
-    lock::Mutex,
-};
+use futures::future::join;
 use spdk::{
     bdev::{
         BDevIo,
         BDevIoChannelOps,
         BDevOps,
-        IoStatus,
         IoType,
         ModuleInstance,
         ModuleOps,
@@ -28,7 +30,11 @@ use spdk::{
         Owned,
     },
     dma,
-    errors::Errno,
+    errors::{
+        Errno,
+
+        ENOTSUP,
+    },
     runtime::reactors,
     task::{self},
 };
@@ -61,8 +67,9 @@ impl ModuleOps for EchoModule {
 /// State shared among all I/O channels of an Echo block device.
 #[derive(Default)]
 struct EchoInner {
-    pending_write: Option<BDevIo<()>>,
-    pending_read: Option<BDevIo<()>>
+    reader: Condvar,
+    writer: Condvar,
+    src_buf: Mutex<Option<&'static [IoSlice<'static>]>>,
 }
 
 /// Implements the Echo block device I/O channel. Each read request is paired
@@ -70,81 +77,72 @@ struct EchoInner {
 /// write request and the write request completed when read.
 #[derive(Default)]
 struct EchoChannel {
-    device: Arc<Mutex<EchoInner>>
+    device: Arc<EchoInner>
+}
+
+impl EchoChannel {
+    async fn do_read(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
+        let dst_buf = io.buffers_mut();
+
+        if io.offset_blocks() == 0 {
+            // Some Virtual BDev read the first block to inspect
+            // partition or other metadata to determine whether
+            // to claim the device. We imply return a block of
+            // zeros to prevent this BDev from claiming the device.
+            dst_buf[0].fill(0);
+
+            return Ok(());
+        }
+
+        let mut src_buf = self.device.src_buf.lock().await;
+
+        while src_buf.is_none() {
+            src_buf = self.device.reader.wait(src_buf).await;
+        }
+
+        dst_buf[0].copy_from_slice(&src_buf.take().unwrap()[0]);
+
+        self.device.writer.notify_one();
+
+        Ok(())
+    }
+
+    async fn do_write(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
+        let mut src_buf = self.device.src_buf.lock().await;
+
+        while src_buf.is_some() {
+            src_buf = self.device.writer.wait(src_buf).await;
+        }
+
+        // SAFETY: We will wait for the reader to consume the buffer before returning.
+        unsafe { *src_buf = Some(transmute(io.buffers())) };
+
+        self.device.reader.notify_one();
+
+        while src_buf.is_some() {
+            src_buf = self.device.writer.wait(src_buf).await;
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl BDevIoChannelOps for EchoChannel {
     type IoContext = ();
 
-    async fn submit_request(&self, io: BDevIo<Self::IoContext>) {
-        let device = self.device.clone();
-
-        let (read_io, write_io, status) = {
-            let mut device = device.lock().await;
-            match io.io_type() {
-                IoType::Read => {
-                    if io.offset_blocks() == 0 {
-                        // Some Virtual BDev read the first block to inspect
-                        // partition or other metadata to determine whether
-                        // to claim the device. We imply return a block of
-                        // zeros to prevent this BDev from claiming the device.
-                        let dst = io.buffers_mut();
-
-                        dst[0].fill(0);
-
-                        (Some(io), None, IoStatus::Success)
-                    } else if device.pending_read.is_some() {
-                        (Some(io), None, IoStatus::NoMem)
-                    } else if device.pending_write.is_none() {
-                        device.pending_read = Some(io);
-                        (None, None, IoStatus::Pending)
-                    } else {
-                        let dst = io.buffers_mut();
-                        let write_io = device.pending_write.take().unwrap();
-                        let src = write_io.buffers();
-
-                        dst[0].copy_from_slice(&src[0]);
-
-                        (Some(io), Some(write_io), IoStatus::Success)
-                    }
-                },
-                IoType::Write => {
-                    if io.offset_blocks() == 0 {
-                        // Ignore writes to block 0.
-                        (None, Some(io), IoStatus::Success)
-                    } else if device.pending_write.is_some() {
-                        (None, Some(io), IoStatus::NoMem)
-                    } else if device.pending_read.is_none() {
-                        device.pending_write = Some(io);
-                        (None, None, IoStatus::Pending)
-                    } else {
-                        let src: &[std::io::IoSlice<'_>] = io.buffers();
-                        let read_io = device.pending_read.take().unwrap();
-                        let dst = read_io.buffers_mut();
-
-                        dst[0].copy_from_slice(&src[0]);
-
-                        (Some(read_io), Some(io), IoStatus::Success)
-                    }
-                },
-                _ => unreachable!("unexpected IoType value")
-            }
-        };
-
-        if let Some(read_io) = read_io {
-            read_io.complete(status);
-        }
-
-        if let Some(write_io) = write_io {
-            write_io.complete(status)
+    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
+        match io.io_type() {
+            IoType::Read => self.do_read(io).await,
+            IoType::Write => self.do_write(io).await,
+            _ => Err(ENOTSUP)
         }
     }
 }
 
 /// Implements the Echo block device.
 struct Echo {
-    inner: Arc<Mutex<EchoInner>>
+    inner: Arc<EchoInner>
 }
 
 impl Echo {

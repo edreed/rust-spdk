@@ -7,7 +7,6 @@ use spdk::{
         BDevIo,
         BDevIoChannelOps,
         BDevOps,
-        IoStatus,
         IoType,
         ModuleInstance,
         ModuleOps,
@@ -38,14 +37,14 @@ struct NullRsChannel;
 impl BDevIoChannelOps for NullRsChannel {
     type IoContext = ();
 
-    async fn submit_request(&self, io: BDevIo<Self::IoContext>) {
+    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();
 
             dst[0].fill(0);
         }
 
-        io.complete(IoStatus::Success);
+        Ok(())
     }
 }
 
