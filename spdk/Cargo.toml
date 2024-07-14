@@ -19,6 +19,7 @@ static_init = "1.0.3"
 ternary-rs = "1.0.0"
 
 [dev-dependencies]
+async-std = { version = "1.12.0", features = ["unstable"] }
 byte-strings= "0.3.1"
 
 [features]

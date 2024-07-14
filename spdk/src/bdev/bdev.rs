@@ -261,7 +261,7 @@ pub trait BDevIoChannelOps: Default + 'static {
     type IoContext: Default + 'static;
 
     /// Submit an I/O request to the BDev.
-    async fn submit_request(&self, io: BDevIo<Self::IoContext>);
+    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno>;
 }
 
 /// A BDev I/O channel implementation.
@@ -502,18 +502,16 @@ where
 
     /// Completes the I/O request with the specified status.
     /// 
-    /// [`thread()`]: fn@BDevIo::thread
-    pub fn complete(mut self, status: IoStatus) {
-        let io_thread = self.thread();
+    /// # Panics
+    /// 
+    /// This method panics if not called on the thread associated with the I/O.
+    fn complete(mut self, status: IoStatus) {
+        assert!(self.thread().is_current());
 
-        if io_thread.is_current() {
-            unsafe {
-                ptr::drop_in_place(self.io.as_mut().driver_ctx.as_mut_ptr() as *mut BDevIoCtx<T>);
+        unsafe {
+            ptr::drop_in_place(self.io.as_mut().driver_ctx.as_mut_ptr() as *mut BDevIoCtx<T>);
 
-                spdk_bdev_io_complete(self.as_ptr(), status.into());
-            }
-        } else {
-            io_thread.send_msg(move || { self.complete(status) }).unwrap();
+            spdk_bdev_io_complete(self.as_ptr(), status.into());
         }
     }
 }
@@ -748,9 +746,13 @@ where
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
         let io_channel: BDevIoChannel<T::IoChannel> = io_channel.into();
-        let io = BDevIo::new(io);
+        let mut io = BDevIo::new(io);
 
-        thread::spawn_local(async move{ io_channel.ctx().submit_request(io).await; });
+        thread::spawn_local(async move {
+            let res = io_channel.ctx().submit_request(&mut io).await;
+
+            io.complete(res.into());
+        });
     }
 
     /// Gets an I/O channel for the BDev for the calling thread.
