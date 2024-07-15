@@ -256,7 +256,7 @@ impl Into<spdk_bdev_io_status> for IoStatus {
 
 /// A trait for implementing the I/O channel operations for a BDev.
 #[async_trait]
-pub trait BDevIoChannelOps: Default + 'static {
+pub trait BDevIoChannelOps: 'static {
     /// The I/O context type for the BDev.
     type IoContext: Default + 'static;
 
@@ -279,45 +279,53 @@ impl <T> BDevIoChannel<T>
 where
     T: BDevIoChannelOps
 {
-    /// Returns the raw pointer to the I/O channel.
-    pub(crate) fn as_ptr(&self) -> *mut spdk_io_channel {
+    /// Converts the I/O channel into a raw pointer.
+    fn into_raw(self) -> *mut spdk_io_channel {
         self.channel.as_ptr()
+    }
+
+    /// Constructs a new I/O channel from a raw pointer.
+    /// 
+    /// # Safety
+    /// 
+    /// The caller must guarantee that the raw pointer is non-null and valid.
+    unsafe fn from_raw(channel: *mut spdk_io_channel) -> Self {
+        Self {
+            channel: NonNull::new_unchecked(channel),
+            _ctx: PhantomData
+        }
     }
 
     /// Returns a reference to the I/O channel context.
     pub fn ctx(&self) -> &T {
-        unsafe { &*spdk_io_channel_get_ctx(self.as_ptr()).cast() }
+        unsafe { &*spdk_io_channel_get_ctx(self.channel.as_ptr()).cast() }
     }
 
     /// Returns a mutable reference to the I/O channel context.
     pub fn ctx_mut(&mut self) -> &mut T {
-        unsafe { &mut *spdk_io_channel_get_ctx(self.as_ptr()).cast() }
+        unsafe { &mut *spdk_io_channel_get_ctx(self.channel.as_ptr()).cast() }
     }
 
     /// Returns the thread associated with the I/O channel.
     pub fn thread(&self) -> Thread {
-        unsafe { spdk_io_channel_get_thread(self.as_ptr()).into() }
+        unsafe { spdk_io_channel_get_thread(self.channel.as_ptr()).into() }
     }
 }
 
-impl <T> From<*mut spdk_io_channel> for BDevIoChannel<T>
+impl <T> TryFrom<*mut spdk_io_channel> for BDevIoChannel<T>
 where
     T: BDevIoChannelOps
 {
-    fn from(channel: *mut spdk_io_channel) -> Self {
-        Self {
-            channel: NonNull::new(channel).unwrap(),
-            _ctx: PhantomData,
+    type Error = Errno;
+
+    fn try_from(channel: *mut spdk_io_channel) -> Result<Self, Self::Error> {
+        match NonNull::new(channel) {
+            Some(channel) => Ok(Self {
+                channel,
+                _ctx: PhantomData,
+            }),
+            None => Err(ENOMEM),
         }
-    }
-}
-
-impl <T> Into<*mut spdk_io_channel> for BDevIoChannel<T>
-where
-    T: BDevIoChannelOps
-{
-    fn into(self) -> *mut spdk_io_channel {
-        self.as_ptr()
     }
 }
 
@@ -546,31 +554,16 @@ pub trait BDevOps: Send + Sync + 'static {
     /// # Notes
     /// 
     /// The default implementation returns a per-thread I/O channel for the
-    /// BDev. Implementations may override this method to provide a different
+    /// BDev. Implementations may override this method to provide different
     /// behavior.
-    fn get_io_channel(&self) -> BDevIoChannel<Self::IoChannel> {
+    fn get_io_channel(&self) -> Result<BDevIoChannel<Self::IoChannel>, Errno> {
         unsafe {
-            spdk_get_io_channel(self as *const _ as *mut _).into()
+            spdk_get_io_channel(self as *const _ as *mut _).try_into()
         }
     }
 
-    /// Prepares a new I/O channel for the BDev.
-    /// 
-    /// # Notes
-    /// 
-    /// The default implementation relies on the [`Default`] trait to initialize
-    /// the I/O channel. Implementations may override this to peform more
-    /// complex initialization.
-    fn prepare_io_channel(&mut self, _channel: &mut Self::IoChannel) {}
-
-    /// Releases the resources associated with the I/O channel.
-    /// 
-    /// # Notes
-    /// 
-    /// Implementations should generally rely on the [`Drop`] trait to release
-    /// resources associated with the I/O channel. Implementations may override
-    /// to perform cleanup that cannot be done otherwise.
-    fn cleanup_io_channel(&mut self, _channel: &mut Self::IoChannel) {}
+    /// Creates a new I/O channel for the BDev.
+    fn new_io_channel(&mut self) -> Result<Self::IoChannel, Errno>;
 }
 
 /// A BDev implementation.
@@ -719,19 +712,18 @@ where
         let this = &mut *io_device.cast::<T>();
         let ctx = ctx_buf as *mut T::IoChannel;
 
-        ctx.write(Default::default());
-
-        this.prepare_io_channel(&mut *ctx);
-
-        0
+        match this.new_io_channel() {
+            Ok(channel) => {
+                ctx.write(channel);
+                0
+            },
+            Err(e) => e.into()
+        }
     }
 
     /// Destroys an I/O channel for the BDev.
-    unsafe extern "C" fn destroy_io_channel(io_device: *mut c_void, ctx_buf: *mut c_void) {
-        let this = &mut *io_device.cast::<T>();
+    unsafe extern "C" fn destroy_io_channel(_io_device: *mut c_void, ctx_buf: *mut c_void) {
         let ctx = ctx_buf as *mut T::IoChannel;
-
-        this.cleanup_io_channel(&mut *ctx);
 
         drop_in_place(ctx);
     }
@@ -745,7 +737,7 @@ where
 
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
-        let io_channel: BDevIoChannel<T::IoChannel> = io_channel.into();
+        let io_channel = BDevIoChannel::<T::IoChannel>::from_raw(io_channel);
         let mut io = BDevIo::new(io);
 
         thread::spawn_local(async move {
@@ -759,7 +751,8 @@ where
     unsafe extern "C" fn get_io_channel(ctx: *mut c_void) -> *mut spdk_io_channel {
         let this = ctx.cast::<T>();
 
-        (*this).get_io_channel().into()
+        (*this).get_io_channel()
+            .map_or(ptr::null_mut(), |channel| channel.into_raw())
     }
 
     fn vtable() -> &'static spdk_bdev_fn_table {

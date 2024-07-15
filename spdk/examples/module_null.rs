@@ -30,7 +30,7 @@ impl ModuleOps for NullRsModule {
 
 /// Implements the NullRs block device I/O channel. It ignores write requests
 /// and returns zeroed buffers for read requests.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct NullRsChannel;
 
 #[async_trait]
@@ -79,6 +79,10 @@ impl BDevOps for NullRs {
 
     fn io_type_supported(&self, io_type: IoType) -> bool {
         matches!(io_type, IoType::Read | IoType::Write)
+    }
+
+    fn new_io_channel(&mut self) -> Result<NullRsChannel, Errno> {
+        Ok(NullRsChannel)
     }
 }
 
