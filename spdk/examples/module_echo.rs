@@ -75,7 +75,6 @@ struct EchoInner {
 /// Implements the Echo block device I/O channel. Each read request is paired
 /// with a write request. The read request is completed with the data from the
 /// write request and the write request completed when read.
-#[derive(Default)]
 struct EchoChannel {
     device: Arc<EchoInner>
 }
@@ -182,8 +181,10 @@ impl BDevOps for Echo {
         }
     }
 
-    fn prepare_io_channel(&mut self, channel: &mut EchoChannel) {
-        channel.device = self.inner.clone();
+    fn new_io_channel(&mut self) -> Result<EchoChannel, Errno> {
+        let device = self.inner.clone();
+
+        Ok(EchoChannel{ device })
     }
 }
 

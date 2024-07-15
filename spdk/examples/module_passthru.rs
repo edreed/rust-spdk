@@ -7,7 +7,6 @@ use std::{
         Read,
         Write,
     },
-    option::Option,
     slice::{self},
 };
 
@@ -49,15 +48,9 @@ impl ModuleOps for PassthruRsModule {
     type IoContext = ();
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct PassthruRsChannel {
-    ch: Option<IoChannel>
-}
-
-impl PassthruRsChannel {
-    fn channel(&self) -> &IoChannel {
-        &self.ch.as_ref().unwrap()
-    }
+    ch: IoChannel
 }
 
 #[async_trait]
@@ -68,25 +61,25 @@ impl BDevIoChannelOps for PassthruRsChannel {
         match io.io_type() {
             spdk::bdev::IoType::Read => {
                 io.allocate_buffers(io.num_blocks() * io.device().logical_block_size() as u64).await?;
-                self.channel().read_vectored_blocks_at(io.buffers_mut(), io.offset_blocks(), io.num_blocks()).await
+                self.ch.read_vectored_blocks_at(io.buffers_mut(), io.offset_blocks(), io.num_blocks()).await
             },
             spdk::bdev::IoType::Write => {
-                self.channel().write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks()).await
+                self.ch.write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks()).await
             },
             spdk::bdev::IoType::Unmap => {
-                self.channel().unmap_blocks(io.offset_blocks(), io.num_blocks()).await
+                self.ch.unmap_blocks(io.offset_blocks(), io.num_blocks()).await
             },
             spdk::bdev::IoType::Flush => {
-                self.channel().flush(io.offset_blocks(), io.num_blocks()).await
+                self.ch.flush(io.offset_blocks(), io.num_blocks()).await
             },
             spdk::bdev::IoType::Reset => {
-                self.channel().reset().await
+                self.ch.reset().await
             },
             spdk::bdev::IoType::WriteZeros => {
-                self.channel().write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks()).await
+                self.ch.write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks()).await
             },
             spdk::bdev::IoType::Copy => {
-                self.channel().copy_blocks(io.copy_source_offset_blocks(), io.offset_blocks(), io.num_blocks()).await
+                self.ch.copy_blocks(io.copy_source_offset_blocks(), io.offset_blocks(), io.num_blocks()).await
             },
             _ => Err(ENOTSUP),
         }
@@ -113,10 +106,10 @@ impl BDevOps for PassthruRs {
         self.base.io_type_supported(io_type)
     }
 
-    fn prepare_io_channel(&mut self, channel: &mut Self::IoChannel) {
-        let ch = self.desc.io_channel().unwrap();
+    fn new_io_channel(&mut self) -> Result<PassthruRsChannel, Errno> {
+        let ch = self.desc.io_channel()?;
 
-        channel.ch = Some(ch);
+        Ok(PassthruRsChannel{ ch })
     }
 }
 
