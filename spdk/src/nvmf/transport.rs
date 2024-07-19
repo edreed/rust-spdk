@@ -94,15 +94,13 @@ pub enum TransportType {
 
 impl From<TransportType> for &'static CStr {
     fn from(transport_type: TransportType) -> Self {
-        unsafe {
-            match transport_type {
-                TransportType::CUSTOM => CStr::from_bytes_with_nul_unchecked(SPDK_NVME_TRANSPORT_NAME_CUSTOM),
-                TransportType::FC => CStr::from_bytes_with_nul_unchecked(SPDK_NVME_TRANSPORT_NAME_FC),
-                TransportType::PCIE => CStr::from_bytes_with_nul_unchecked(SPDK_NVME_TRANSPORT_NAME_PCIE),
-                TransportType::RDMA => CStr::from_bytes_with_nul_unchecked(SPDK_NVME_TRANSPORT_NAME_RDMA),
-                TransportType::TCP => CStr::from_bytes_with_nul_unchecked(SPDK_NVME_TRANSPORT_NAME_TCP),
-                TransportType::VFIOUSER => CStr::from_bytes_with_nul_unchecked(SPDK_NVME_TRANSPORT_NAME_VFIOUSER),
-            }
+        match transport_type {
+            TransportType::CUSTOM => SPDK_NVME_TRANSPORT_NAME_CUSTOM,
+            TransportType::FC => SPDK_NVME_TRANSPORT_NAME_FC,
+            TransportType::PCIE => SPDK_NVME_TRANSPORT_NAME_PCIE,
+            TransportType::RDMA => SPDK_NVME_TRANSPORT_NAME_RDMA,
+            TransportType::TCP => SPDK_NVME_TRANSPORT_NAME_TCP,
+            TransportType::VFIOUSER => SPDK_NVME_TRANSPORT_NAME_VFIOUSER,
         }
     }
 }

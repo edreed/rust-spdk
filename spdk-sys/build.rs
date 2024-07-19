@@ -178,6 +178,7 @@ fn main() {
         .wrap_static_fns_path(&spdk_wrappers)
         .wrap_unsafe_ops(true)
         .prepend_enum_name(false)
+        .generate_cstr(true)
         .layout_tests(false);
 
     if include_bdev_module {

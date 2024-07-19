@@ -31,12 +31,3 @@ pub use transport::{
     Transport,
     TransportType,
 };
-
-use std::ffi::CStr;
-
-pub const SPDK_NVMF_DISCOVERY_NQN: &CStr = unsafe {
-    CStr::from_bytes_with_nul_unchecked(spdk_sys::SPDK_NVMF_DISCOVERY_NQN)
-};
-pub const SPDK_NVMF_NQN_UUID_PRE: &CStr = unsafe {
-    CStr::from_bytes_with_nul_unchecked(spdk_sys::SPDK_NVMF_NQN_UUID_PRE)
-};
