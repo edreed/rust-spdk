@@ -7,12 +7,12 @@ use spdk::{
         BDevIo,
         BDevIoChannelOps,
         BDevOps,
-        IoType,
         ModuleInstance,
         ModuleOps,
     },
     block::{
         Device,
+        IoType,
         Owned,
     },
     dma,
