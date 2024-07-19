@@ -10,6 +10,8 @@ pub use descriptor::Descriptor;
 pub use device::{
     Device,
     Devices,
+    IoType,
+
     devices
 };
 pub use io_channel::IoChannel;

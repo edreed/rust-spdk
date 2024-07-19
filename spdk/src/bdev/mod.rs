@@ -23,7 +23,6 @@ pub use bdev::{
     BDevIoChannelOps,
     BDevOps,
     IoStatus,
-    IoType,
 };
 #[cfg(feature = "bdev-module")]
 pub(crate) use bdev::BDevIoCtx;

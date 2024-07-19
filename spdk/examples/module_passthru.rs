@@ -17,7 +17,6 @@ use spdk::{
         BDevIo,
         BDevIoChannelOps,
         BDevOps,
-        IoType,
         malloc,
         ModuleInstance,
         ModuleOps
@@ -27,6 +26,7 @@ use spdk::{
         Descriptor,
         Device,
         IoChannel,
+        IoType,
         Owned,
     },
     dma::{
@@ -59,26 +59,26 @@ impl BDevIoChannelOps for PassthruRsChannel {
 
     async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
         match io.io_type() {
-            spdk::bdev::IoType::Read => {
+            IoType::Read => {
                 io.allocate_buffers(io.num_blocks() * io.device().logical_block_size() as u64).await?;
                 self.ch.read_vectored_blocks_at(io.buffers_mut(), io.offset_blocks(), io.num_blocks()).await
             },
-            spdk::bdev::IoType::Write => {
+            IoType::Write => {
                 self.ch.write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks()).await
             },
-            spdk::bdev::IoType::Unmap => {
+            IoType::Unmap => {
                 self.ch.unmap_blocks(io.offset_blocks(), io.num_blocks()).await
             },
-            spdk::bdev::IoType::Flush => {
+            IoType::Flush => {
                 self.ch.flush(io.offset_blocks(), io.num_blocks()).await
             },
-            spdk::bdev::IoType::Reset => {
+            IoType::Reset => {
                 self.ch.reset().await
             },
-            spdk::bdev::IoType::WriteZeros => {
+            IoType::WriteZeros => {
                 self.ch.write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks()).await
             },
-            spdk::bdev::IoType::Copy => {
+            IoType::Copy => {
                 self.ch.copy_blocks(io.copy_source_offset_blocks(), io.offset_blocks(), io.num_blocks()).await
             },
             _ => Err(ENOTSUP),

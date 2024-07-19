@@ -16,6 +16,28 @@ use std::{
 
 use spdk_sys::{
     spdk_bdev,
+    spdk_bdev_io_type,
+
+    SPDK_BDEV_IO_TYPE_ABORT,
+    SPDK_BDEV_IO_TYPE_COMPARE,
+    SPDK_BDEV_IO_TYPE_COMPARE_AND_WRITE,
+    SPDK_BDEV_IO_TYPE_COPY,
+    SPDK_BDEV_IO_TYPE_FLUSH,
+    SPDK_BDEV_IO_TYPE_GET_ZONE_INFO,
+    SPDK_BDEV_IO_TYPE_INVALID,
+    SPDK_BDEV_IO_TYPE_NVME_ADMIN,
+    SPDK_BDEV_IO_TYPE_NVME_IO,
+    SPDK_BDEV_IO_TYPE_NVME_IO_MD,
+    SPDK_BDEV_IO_TYPE_READ,
+    SPDK_BDEV_IO_TYPE_RESET,
+    SPDK_BDEV_IO_TYPE_SEEK_DATA,
+    SPDK_BDEV_IO_TYPE_SEEK_HOLE,
+    SPDK_BDEV_IO_TYPE_UNMAP,
+    SPDK_BDEV_IO_TYPE_WRITE,
+    SPDK_BDEV_IO_TYPE_WRITE_ZEROES,
+    SPDK_BDEV_IO_TYPE_ZCOPY,
+    SPDK_BDEV_IO_TYPE_ZONE_APPEND,
+    SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT,
 
     spdk_bdev_first,
     spdk_bdev_get_block_size,
@@ -34,7 +56,6 @@ use spdk_sys::{
 };
 
 use crate::{
-    bdev::IoType,
     block::{
         Any,
         Owned,
@@ -50,6 +71,63 @@ use crate::{
 };
 
 use super::Descriptor;
+
+/// The type of an I/O operation.
+/// 
+/// # Notes
+/// 
+/// These are mapped directly to the corresponding [`spdk_bdev_io_type`] values.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum IoType {
+    Invalid,
+    Read,
+    Write,
+    Unmap,
+    Flush,
+    Reset,
+    NvmeAdmin,
+    NvmeIo,
+    NvmeIoMd,
+    WriteZeros,
+    ZeroCopy,
+    GetZoneInfo,
+    ZoneManagement,
+    ZoneAppend,
+    Compare,
+    CompareAndWrite,
+    Abort,
+    SeekHole,
+    SeekData,
+    Copy,
+}
+
+impl From<spdk_bdev_io_type> for IoType {
+    fn from(value: spdk_bdev_io_type) -> Self {
+        match value {
+            SPDK_BDEV_IO_TYPE_INVALID => IoType::Invalid,
+            SPDK_BDEV_IO_TYPE_READ => IoType::Read,
+            SPDK_BDEV_IO_TYPE_WRITE => IoType::Write,
+            SPDK_BDEV_IO_TYPE_UNMAP => IoType::Unmap,
+            SPDK_BDEV_IO_TYPE_FLUSH => IoType::Flush,
+            SPDK_BDEV_IO_TYPE_RESET => IoType::Reset,
+            SPDK_BDEV_IO_TYPE_NVME_ADMIN => IoType::NvmeAdmin,
+            SPDK_BDEV_IO_TYPE_NVME_IO => IoType::NvmeIo,
+            SPDK_BDEV_IO_TYPE_NVME_IO_MD => IoType::NvmeIoMd,
+            SPDK_BDEV_IO_TYPE_WRITE_ZEROES => IoType::WriteZeros,
+            SPDK_BDEV_IO_TYPE_ZCOPY => IoType::ZeroCopy,
+            SPDK_BDEV_IO_TYPE_GET_ZONE_INFO => IoType::GetZoneInfo,
+            SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT => IoType::ZoneManagement,
+            SPDK_BDEV_IO_TYPE_ZONE_APPEND => IoType::ZoneAppend,
+            SPDK_BDEV_IO_TYPE_COMPARE => IoType::Compare,
+            SPDK_BDEV_IO_TYPE_COMPARE_AND_WRITE => IoType::CompareAndWrite,
+            SPDK_BDEV_IO_TYPE_ABORT => IoType::Abort,
+            SPDK_BDEV_IO_TYPE_SEEK_HOLE => IoType::SeekHole,
+            SPDK_BDEV_IO_TYPE_SEEK_DATA => IoType::SeekData,
+            SPDK_BDEV_IO_TYPE_COPY => IoType::Copy,
+            _ => unreachable!("unexpected spdk_bdev_io_type value")
+        }
+    }
+}
 
 /// Represents the ownership state of a [`Device`].
 enum OwnershipState<T: OwnedOps> {
