@@ -71,7 +71,8 @@ use crate::{
     },
     thread::Thread,
 
-    to_poll_pending_on_ok
+    to_poll_pending_on_ok,
+    to_result,
 };
 
 use super::{
@@ -134,7 +135,7 @@ impl IoChannel {
     }
 
     /// A callback invoked when a block device I/O operation completes.
-    unsafe extern "C" fn complete_io(
+    unsafe extern "C" fn io_complete(
         io: *mut spdk_bdev_io,
         success: bool,
         cx: *mut c_void
@@ -144,6 +145,51 @@ impl IoChannel {
         let status: i32 = EIO.into();
 
         complete_with_status(cx, if_else!(success, 0, -status))
+    }
+
+    /// A callback invoked when an I/O buffer becomes available.
+    unsafe extern "C" fn io_available(ctx: *mut c_void) {
+        let wait = Box::from_raw(ctx.cast::<(spdk_bdev_io_wait_entry, *mut c_void)>());
+        let cx = wait.1;
+
+        complete_with_ok(cx);
+    }
+
+    /// Waits for an I/O to become available.
+    /// 
+    /// When an I/O submission function returns `ENOMEM`, it means the I/O
+    /// buffer pool has no available buffers on this thread. This function waits
+    /// for an I/O buffer to become available.
+    /// 
+    /// This function must only be called after one of the I/O submission
+    /// functions returns `ENOMEM`.
+    /// 
+    /// This function returns `Err(EINVAL)` if the I/O channel an I/O buffer is
+    /// available on the current thread..
+    async fn wait_io_available(&self) -> Result<(), Errno> {
+        Promise::new(|cx| {
+            unsafe {
+                let mut wait: Box::<(spdk_bdev_io_wait_entry, *mut c_void)> = Box::new((MaybeUninit::zeroed().assume_init(), cx));
+
+                wait.0.bdev = self.bdev();
+                wait.0.cb_fn = Some(Self::io_available);
+                wait.0.cb_arg = &mut *wait as *mut _ as *mut c_void;
+
+                let wait_ptr = Box::into_raw(wait);
+
+                match to_result!(spdk_bdev_queue_io_wait(
+                    self.bdev(),
+                    self.channel.as_ptr(),
+                    wait_ptr.cast()))
+                {
+                    Ok(()) => Poll::Pending,
+                    Err(e) => {
+                        _ = Box::from_raw(wait_ptr);
+                        Poll::Ready(Err(e))
+                    }
+                }
+            }
+        }).await
     }
 
     /// Executes an I/O operation, queuing the I/O for later execution if there
@@ -156,22 +202,7 @@ impl IoChannel {
             match Promise::new(|cx| (&mut start_fn)(cx)).await {
                 Ok(()) => return Ok(()),
                 Err(e) if e != ENOMEM => return Err(e),
-                Err(_) => {
-                    Promise::new(|cx| {
-                        unsafe {
-                            let mut wait: spdk_bdev_io_wait_entry = MaybeUninit::zeroed().assume_init();
-
-                            wait.bdev = self.bdev();
-                            wait.cb_fn = Some(complete_with_ok);
-                            wait.cb_arg = cx;
-
-                            to_poll_pending_on_ok!(spdk_bdev_queue_io_wait(
-                                wait.bdev,
-                                self.channel.as_ptr(),
-                                &wait as *const _ as *mut _))
-                        }
-                    }).await?
-                }
+                Err(_) => self.wait_io_available().await?
             }
         }
     }
@@ -185,7 +216,7 @@ impl IoChannel {
                     self.as_ptr(),
                     zone_id,
                     SPDK_BDEV_ZONE_RESET,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -204,7 +235,7 @@ impl IoChannel {
                     addr_of!(*buf) as *mut c_void,
                     offset,
                     buf.len() as u64,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -226,7 +257,7 @@ impl IoChannel {
                     bufs.len() as i32,
                     offset,
                     length,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -252,7 +283,7 @@ impl IoChannel {
                     addr_of!(*buf) as *mut c_void,
                     offset_blocks,
                     (buf.len() / logical_block_size) as u64,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -274,7 +305,7 @@ impl IoChannel {
                     bufs.len() as i32,
                     offset_blocks,
                     num_blocks,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -289,7 +320,7 @@ impl IoChannel {
                     self.as_ptr(),
                     offset,
                     len,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -304,7 +335,7 @@ impl IoChannel {
                     self.as_ptr(),
                     offset_blocks,
                     num_blocks,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -321,7 +352,7 @@ impl IoChannel {
                     addr_of_mut!(*buf.as_mut()) as *mut c_void,
                     offset,
                     buf.as_mut().len() as u64,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -343,7 +374,7 @@ impl IoChannel {
                     bufs.len() as i32,
                     offset,
                     length,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -369,7 +400,7 @@ impl IoChannel {
                     addr_of_mut!(*buf) as *mut c_void,
                     offset_blocks,
                     (buf.len() / logical_block_size) as u64,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -391,7 +422,7 @@ impl IoChannel {
                     bufs.len() as i32,
                     offset_blocks,
                     num_blocks,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -407,7 +438,7 @@ impl IoChannel {
                     src_offset_blocks,
                     dst_offset_blocks,
                     num_blocks,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -423,7 +454,7 @@ impl IoChannel {
                     self.as_ptr(),
                     offset,
                     len,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -439,7 +470,7 @@ impl IoChannel {
                     self.as_ptr(),
                     offset_blocks,
                     num_blocks,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -458,7 +489,7 @@ impl IoChannel {
                     self.as_ptr(),
                     offset,
                     len,
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
@@ -471,7 +502,7 @@ impl IoChannel {
                 to_poll_pending_on_ok!(spdk_bdev_reset(
                     self.descriptor(),
                     self.as_ptr(),
-                    Some(Self::complete_io),
+                    Some(Self::io_complete),
                     cx))
             }
         }).await
