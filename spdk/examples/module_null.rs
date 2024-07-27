@@ -1,7 +1,6 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use byte_strings::c_str;
 use spdk::{
     bdev::{
         BDevIo,
@@ -58,7 +57,7 @@ unsafe impl Sync for NullRs {}
 impl NullRs {
     /// Creates a new NullRs block device.
     pub fn try_new() -> Result<Device<Owned>, Errno> {
-        let mut null = NullRsModule::new_bdev(c_str!("null-rs"), NullRs::default());
+        let mut null = NullRsModule::new_bdev(c"null-rs", NullRs::default());
 
         null.bdev.blocklen = 4096;
         null.bdev.blockcnt = 1;

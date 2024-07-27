@@ -14,7 +14,6 @@ use async_std::sync::{
     Mutex,
 };
 use async_trait::async_trait;
-use byte_strings::c_str;
 use futures::future::join;
 use spdk::{
     bdev::{
@@ -198,7 +197,7 @@ async fn main() {
         panic!("ERROR: At least two cores must be specified.")
     }
 
-    let echo = Echo::try_new(c_str!("echo")).unwrap();
+    let echo = Echo::try_new(c"echo").unwrap();
 
     let echo_writer = echo.borrow();
 
