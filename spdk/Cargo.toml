@@ -10,9 +10,9 @@ all-features = true
 aquamarine = "0.5.0"
 async-trait = "0.1.74"
 byte-strings = "0.3.1"
-errno = "0.3.1"
-futures = "0.3.28"
-libc = "0.2.146"
+errno = "0.3.9"
+futures = "0.3.30"
+libc = "0.2.155"
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
 spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
 static_init = "1.0.3"

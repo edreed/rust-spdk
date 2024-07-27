@@ -11,9 +11,9 @@ proc-macro = true
 [dependencies]
 byte-strings = "0.3.1"
 convert_case = "0.6.0"
-proc-macro2 = "1.0.70"
-quote = "1.0.33"
-syn = { version = "2.0.39", features = ["full", "visit"] }
+proc-macro2 = "1.0.86"
+quote = "1.0.36"
+syn = { version = "2.0.72", features = ["full", "visit"] }
 ternary-rs = "1.0.0"
 
 [features]
