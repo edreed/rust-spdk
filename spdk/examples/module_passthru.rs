@@ -11,7 +11,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use byte_strings::c_str;
 use spdk::{
     bdev::{
         BDevIo,
@@ -138,7 +137,7 @@ impl PassthruRs {
     }
 }
 
-const BDEV_NAME: &CStr = c_str!("Malloc0");
+const BDEV_NAME: &CStr = c"Malloc0";
 const NUM_BLOCKS: u64 = 32768;
 const BLOCK_SIZE: u32 = 512;
 

@@ -176,11 +176,10 @@ impl Builder {
     /// # Examples
     /// 
     /// ```no_run
-    /// use byte_strings::c_str;
     /// use spdk::runtime::Builder;
     /// use std::ffi::CStr;
     /// 
-    /// const MY_APP_NAME: &CStr = c_str!("my_app");
+    /// const MY_APP_NAME: &CStr = c"my_app";
     /// 
     /// fn main() {
     ///     let rt = Builder::new()
@@ -278,11 +277,10 @@ impl Runtime {
     /// # Examples
     /// 
     /// ```no_run
-    /// use byte_strings::c_str;
     /// use spdk::runtime::Runtime;
     /// use std::ffi::CStr;
     /// 
-    /// const MY_APP_NAME: &CStr = c_str!("my_app");
+    /// const MY_APP_NAME: &CStr = c"my_app";
     /// 
     /// fn main() {
     ///     let rt = Runtime::new();

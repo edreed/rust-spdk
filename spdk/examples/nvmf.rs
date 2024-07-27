@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use byte_strings::c_str;
 use spdk::{
     bdev::malloc,
     cli::Parser,
@@ -20,11 +19,11 @@ use spdk::{
 };
 use ternary_rs::if_else;
 
-const BDEV_NAME: &CStr = c_str!("Malloc0");
+const BDEV_NAME: &CStr = c"Malloc0";
 const NUM_BLOCKS: u64 = 32768;
 const BLOCK_SIZE: u32 = 512;
 
-const NQN: &CStr = c_str!("nqn.2016-06.io.spdk:cnode1");
+const NQN: &CStr = c"nqn.2016-06.io.spdk:cnode1";
 
 #[derive(Parser)]
 struct Args {

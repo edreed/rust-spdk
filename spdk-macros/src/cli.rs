@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    ffi::CString,
     os::raw::c_int,
 };
 
@@ -20,6 +21,7 @@ use syn::{
         Char,
         Str,
     },
+    LitCStr,
     spanned::Spanned,
     Type,
     visit::{
@@ -108,15 +110,16 @@ impl Arg {
     /// [`option`]: ../../spdk_sys/struct.option.html
     fn long_opt(&self) -> TokenStream {
         let ident = self.ident.as_ref().unwrap();
-        let long_opt = self.long_opt.clone().unwrap_or_else(|| {
+        let long_opt = CString::new(self.long_opt.clone().unwrap_or_else(|| {
             ident.to_string().replace("_", "-")
-        });
+        })).unwrap();
+        let long_opt_lit = LitCStr::new(&long_opt, ident.span());
         let has_arg = self.has_arg;
         let opt_val = self.opt_val();
 
         quote!{
             spdk_sys::option {
-                name: byte_strings::c_str!(#long_opt).as_ptr(),
+                name: #long_opt_lit.as_ptr(),
                 has_arg: #has_arg,
                 flag: std::ptr::null_mut(),
                 val: #opt_val as std::os::raw::c_int,
@@ -342,14 +345,15 @@ impl DeriveParser {
         let parse_opts = args.iter().map(Arg::parse_option);
         let long_opt = args.iter().map(Arg::long_opt);
         let long_opts_count = long_opt.len();
-        let getopts_str = args
+        let getopts_str = CString::new(args
             .iter()
             .map(Arg::getopts_str)
             .fold(String::new(), |mut acc, s| {
                 acc.push_str(&s);
 
                 acc
-            });
+            })).unwrap();
+        let getopts_str_lit = LitCStr::new(&getopts_str, type_ident.span());
         let help = args.iter().flat_map(Arg::help);
         let errors = args.iter().flat_map(Arg::errors);
 
@@ -422,7 +426,7 @@ impl DeriveParser {
                             argv.len() as std::os::raw::c_int,
                             argv.as_ptr() as *mut *mut std::os::raw::c_char,
                             app_opts.as_mut_ptr(),
-                            byte_strings::c_str!(#getopts_str).as_ptr(),
+                            #getopts_str_lit.as_ptr(),
                             &custom_opts as *const _ as *mut spdk_sys::option,
                             Some(Self::parse_option),
                             Some(Self::app_usage)
