@@ -24,9 +24,10 @@ byte-strings= "0.3.1"
 
 [features]
 default = []
-bdev-malloc = ["spdk-sys/bdev-malloc"]
-bdev-module = ["spdk-macros/bdev-module", "spdk-sys/bdev-module"]
-nvmf = ["spdk-sys/nvmf"]
+bdev = ["spdk-sys/bdev"]
+bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
+bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
+nvmf = ["bdev","spdk-sys/nvmf"]
 
 [[example]]
 name = "bdev_hello_world"
