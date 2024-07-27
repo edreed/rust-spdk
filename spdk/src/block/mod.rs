@@ -1,4 +1,5 @@
 //! Support for Storage Performance Development Kit block devices.
+#![cfg(feature = "bdev")]
 mod any;
 mod descriptor;
 mod device;
