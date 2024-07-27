@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use std::{
+    cell::UnsafeCell,
     fmt::Debug,
     mem,
     pin::Pin,
@@ -90,7 +91,7 @@ impl <T: Debug + Send + 'static> PromiseState<T> {
     }
 
     /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
-    fn set_result(arc_self: Arc<Mutex<Self>>, res: Result<T, Errno>) {
+    fn set_result(arc_self: &Mutex<Self>, res: Result<T, Errno>) {
         let prev_state = match arc_self.try_lock() {
             Ok(mut state) => {
                 Ok(state.replace(Self::Kept(res)))
@@ -124,6 +125,33 @@ impl <T: Debug + Send + 'static> PromiseState<T> {
     }
 }
 
+#[derive(PartialEq, Copy, Clone, Debug)]
+struct RawPromiseVtable<T>
+where
+    T: Debug + Send + 'static
+{
+    poll: unsafe fn (*const (), &mut Context<'_>) -> Poll<Result<T, Errno>>,
+    set_result: unsafe fn (*const (), Result<T, Errno>),
+    drop: unsafe fn (*const ()),
+}
+
+struct RawPromise<T>
+where
+    T: Debug + Send + 'static
+{
+    data: *const (),
+    vtable: &'static RawPromiseVtable<T>,
+}
+
+impl <T> RawPromise<T>
+where
+    T: Debug + Send + 'static
+{
+    fn new(data: *const (), vtable: &'static RawPromiseVtable<T>) -> Self {
+        Self { data, vtable }
+    }
+}
+
 /// A callback invoked to set the result of a [`Promise`].
 /// 
 /// This callback receives a raw pointer to an SPDK object of type `R` and
@@ -133,9 +161,7 @@ pub unsafe extern "C" fn complete_with_object<T, R>(cx: *mut c_void, obj: *mut R
 where
     T: Debug + Send + TryFrom<*mut R, Error = Errno> + 'static,
 {
-    let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<T>>>());
-
-    PromiseState::<T>::set_result(arc_self, obj.try_into());
+    Promise::<T>::set_result(cx.cast(), obj.try_into());
 }
 
 /// A callback invoked to set the result of a [`Promise`].
@@ -159,61 +185,41 @@ pub unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
     PromiseState::set_result(arc_self, Ok(()));
 }
 
-/// Orchestrates the execution of an asynchronous operation and provides access
-/// to its result.
-pub struct Promise<F, T>
+struct Promissory<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
     T: Debug + Send + 'static
 {
-    start_fn: F,
-    state: Arc<Mutex<PromiseState<T>>>,
+    state: Mutex<PromiseState<T>>,
+    start_fn: UnsafeCell<F>,
 }
 
-unsafe impl<F, T> Send for Promise<F, T>
-where
-    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: Debug + Send + 'static
-{}
-
-impl<F, T> Promise<F, T>
+impl <F, T> Promissory<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
     T: Debug + Send + 'static
 {
-    /// Returns a new `Promise` instance.
-    /// 
-    /// The caller provides a function that starts the asynchronous operation
-    /// passing one of the `complete_with_*` callbacks and the provided context
-    /// pointer to the SPDK API.
-    pub fn new(start_fn: F) -> Self {
-        Self {
-            start_fn,
-            state: PromiseState::new(),
-        }
+    fn new(start_fn: F) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(PromiseState::Empty),
+            start_fn: UnsafeCell::new(start_fn),
+        })
     }
-}
-
-impl<F, T> Future for Promise<F, T>
-where
-    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>> + Unpin,
-    T: Debug + Send + 'static
-{
-    type Output = Result<T, Errno>;
 
     fn poll(
-        mut self: Pin<&mut Self>,
+        arc_self: Arc<Self>,
         cx: &mut Context<'_>
-    ) -> Poll<Self::Output> {
-        let state = self.state.lock().unwrap().poll(cx);
+    ) -> Poll<Result<T, Errno>> {
+        let state = arc_self.state.lock().unwrap().poll(cx);
 
         match state {
             PromiseState::Empty =>  {
-                let promise_cx = Arc::into_raw(self.state.clone());
+                let promise_cx = Arc::into_raw(arc_self.clone());
+                let start_fn = unsafe { &mut *arc_self.start_fn.get() };
 
-                match (self.as_mut().start_fn)(promise_cx as *mut c_void) {
+                match start_fn(promise_cx as *mut c_void) {
                     Poll::Pending => {
-                        let state = self.state.lock().unwrap().poll(cx);
+                        let state = arc_self.state.lock().unwrap().poll(cx);
 
                         if let PromiseState::Kept(res) = state {
                             return Poll::Ready(res);
@@ -232,5 +238,105 @@ where
             PromiseState::Kept(res) => Poll::Ready(res),
             _ => unreachable!("promise already fulfilled"),
         }
+    }
+}
+
+unsafe fn promissory_poll<F, T>(data: *const (), cx: &mut Context<'_>) -> Poll<Result<T, Errno>>
+where
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
+    T: Debug + Send + 'static
+{
+    Promissory::poll(Arc::<Promissory<F, T>>::from_raw(data.cast()), cx)
+}
+
+unsafe fn promissory_set_result<F, T>(data: *const (), res: Result<T, Errno>)
+where
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
+    T: Debug + Send + 'static
+{
+    let arc_self = Arc::<Promissory<F, T>>::from_raw(data.cast());
+
+    PromiseState::<T>::set_result(&arc_self.state, res);
+}
+
+unsafe fn promissory_drop<F, T>(data: *const ())
+where
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
+    T: Debug + Send + 'static
+{
+    Arc::<Promissory<F, T>>::from_raw(data.cast());
+}
+
+const fn promissory_vtable<F, T>() -> &'static RawPromiseVtable<T>
+where
+    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
+    T: Debug + Send + 'static
+{
+    &RawPromiseVtable::<T> {
+        poll: promissory_poll::<F, T>,
+        set_result: promissory_set_result::<F, T>,
+        drop: promissory_drop::<F, T>,
+    }
+}
+
+/// Orchestrates the execution of an asynchronous operation and provides access
+/// to its result.
+pub struct Promise<T>
+where
+    T: Debug + Send + 'static
+{
+    promise: RawPromise<T>,
+}
+
+unsafe impl<T> Send for Promise<T>
+where
+    T: Debug + Send + 'static
+{}
+
+impl<T> Promise<T>
+where
+    T: Debug + Send + 'static
+{
+    /// Returns a new `Promise` instance.
+    /// 
+    /// The caller provides a function that starts the asynchronous operation
+    /// passing one of the `complete_with_*` callbacks and the provided context
+    /// pointer to the SPDK API.
+    pub fn new<F>(start_fn: F) -> Self
+    where
+        F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>
+    {
+        let promissory = Promissory::new(start_fn);
+
+        Self {
+            promise: RawPromise::new(
+                Arc::into_raw(promissory).cast(),
+                promissory_vtable::<F, T>(),
+            ),
+        }
+    }
+
+    fn set_result(&self, res: Result<T, Errno>) {
+        let set_result = self.promise.vtable.set_result;
+        let data = self.promise.data;
+
+        unsafe { set_result(data, res) }
+    }
+}
+
+impl<T> Future for Promise<T>
+where
+    T: Debug + Send + 'static
+{
+    type Output = Result<T, Errno>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>
+    ) -> Poll<Self::Output> {
+        let poll = self.promise.vtable.poll;
+        let data = self.promise.data;
+
+        unsafe { poll(data, cx) }
     }
 }

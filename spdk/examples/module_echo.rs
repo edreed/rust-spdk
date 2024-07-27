@@ -208,8 +208,8 @@ async fn main() {
         let layout = writer.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 
-        for i in 0..10 {
-            println!("Writing \"Hello {}\"...", i);
+        for i in 0..100000 {
+            // println!("Writing \"Hello {}\"...", i);
 
             write!(buf.cursor_mut(), "Hello {}", i).unwrap();
 
@@ -227,14 +227,14 @@ async fn main() {
         let layout = reader.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 
-        for _ in 0..10 {
+        for _ in 0..100000 {
             reader_ch.read_blocks_at(&mut buf, 1).await.unwrap();
 
             let mut read_data: Vec<u8> = Vec::new();
 
             let _ = buf.cursor().read_until(b'\0', &mut read_data).unwrap();
 
-            println!("Read \"{}\"", String::from_utf8(read_data).unwrap())
+            // println!("Read \"{}\"", String::from_utf8(read_data).unwrap())
         }
 
         println!("Read complete.");
