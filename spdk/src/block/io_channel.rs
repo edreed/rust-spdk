@@ -87,9 +87,6 @@ pub struct IoChannel {
     channel: NonNull<spdk_io_channel>,
 }
 
-unsafe impl Send for IoChannel {}
-unsafe impl Sync for IoChannel {}
-
 impl IoChannel {
     /// Creates a new [`IoChannel`].
     pub(crate) fn new(desc: &Descriptor) -> Result<Self, Errno> {
