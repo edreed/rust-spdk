@@ -32,7 +32,7 @@ impl ModuleOps for NullRsModule {
 #[derive(Debug)]
 struct NullRsChannel;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl BDevIoChannelOps for NullRsChannel {
     type IoContext = ();
 

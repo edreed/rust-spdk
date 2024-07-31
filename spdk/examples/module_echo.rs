@@ -125,7 +125,7 @@ impl EchoChannel {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl BDevIoChannelOps for EchoChannel {
     type IoContext = ();
 

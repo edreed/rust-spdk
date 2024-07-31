@@ -52,7 +52,7 @@ struct PassthruRsChannel {
     ch: IoChannel
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl BDevIoChannelOps for PassthruRsChannel {
     type IoContext = ();
 
