@@ -41,14 +41,9 @@ use spdk::{
 /// Implements the Echo block device module.
 #[spdk::module]
 #[derive(Debug, Default)]
-struct EchoModule {
+struct EchoModule;
 
-}
-
-unsafe impl Send for EchoModule {}
-unsafe impl Sync for EchoModule {}
-
-#[async_trait]
+#[async_trait(?Send)]
 impl ModuleOps for EchoModule {
     type IoContext = ();
 

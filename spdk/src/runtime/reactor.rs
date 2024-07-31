@@ -192,6 +192,20 @@ impl Reactor {
     }
 }
 
+/// Spawns a new asynchronous task to be executed on the current SPDK reactor and
+/// returns a [`JoinHandle`] to await results.
+pub fn spawn_local<F, T>(fut: F) -> JoinHandle<T>
+where
+    F: Future<Output = T> + 'static,
+    T: 'static
+{
+    let (task, join_handle) = ReactorTask::with_future(Reactor::current(), fut);
+
+    Task::schedule(task);
+
+    join_handle
+}
+
 /// An iterator over the reactors for this runtime.
 pub type Reactors = Map<CpuCores, fn(CpuCore) -> Reactor>;
 

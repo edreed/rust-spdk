@@ -87,7 +87,6 @@ use crate::{
         EINPROGRESS,
         ENOMEM
     },
-    runtime::Reactor,
     task::{
         self,
 
@@ -605,7 +604,7 @@ where
 
     /// Destroys the BDev instance.
     unsafe extern "C" fn destruct(ctx: *mut c_void) -> i32 {
-        Reactor::current().spawn(async move {
+        thread::spawn_local(async move {
             let mut this = Self::from_ctx_ptr(ctx as *mut T);
 
             let rc = match this.ctx.destruct().await {
