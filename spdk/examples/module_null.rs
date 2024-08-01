@@ -23,16 +23,16 @@ use spdk::{
 #[derive(Debug, Default)]
 struct NullRsModule;
 
+#[async_trait(?Send)]
 impl ModuleOps for NullRsModule {
     type IoContext = ();
 }
 
 /// Implements the NullRs block device I/O channel. It ignores write requests
 /// and returns zeroed buffers for read requests.
-#[derive(Debug)]
 struct NullRsChannel;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl BDevIoChannelOps for NullRsChannel {
     type IoContext = ();
 

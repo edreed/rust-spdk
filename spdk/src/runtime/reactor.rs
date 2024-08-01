@@ -15,13 +15,9 @@ use futures::{
 };
 
 use spdk_sys::{
-    spdk_cpuset,
-
     spdk_event_allocate,
     spdk_event_call,
     spdk_set_thread,
-    spdk_thread_bind,
-    spdk_thread_create,
     spdk_thread_exit,
 };
 
@@ -33,8 +29,10 @@ use crate::{
     },
     task::{
         JoinHandle,
-        Task, ReactorTask,
+        ReactorTask,
+        Task,
     },
+    thread::Thread,
 };
 
 use super::{
@@ -71,36 +69,30 @@ impl Reactor {
         }
 
         // Spawn an asynchronous task to initialize the reactor.
-        let join_handle = self.spawn(async move {
-            unsafe {
-                // Create a new SPDK thread for this reactor and bind it to the
-                // reactor's core.
-                let name = CString::new(format!("reactor_thread_{}", self.core().id())).unwrap();
-                let cpu_mask: CpuSet = self.core().into();
+        let join_handle = self.spawn(move || async move {
+            // Create a new SPDK thread for this reactor and bind it to the
+            // reactor's core.
+            let name = CString::new(format!("reactor_thread_{}", self.core().id())).unwrap();
+            let cpu_mask: CpuSet = self.core().into();
 
-                let sthread = spdk_thread_create(
-                    name.as_ptr(),
-                    cpu_mask.as_ptr() as *mut spdk_cpuset);
+            let mut new_thread = Thread::new(&name, &cpu_mask).expect("thread created");
 
-                if sthread.is_null() {
-                    panic!("failed to create reactor thread on core {}", self.core().id());
+            new_thread.bind(true);
+
+            // Spawn an asynchronous task to wait for the reactor to exit.
+            let (exit_sx, exit_rx) = oneshot::channel::<()>();
+
+            spawn_local(async move {
+                let _ = exit_rx.await;
+
+                unsafe {
+                    spdk_set_thread(new_thread.as_mut_ptr());
+                    spdk_thread_exit(new_thread.as_mut_ptr());
                 }
+            });
 
-                spdk_thread_bind(sthread, true);
-
-                // Spawn an asynchronous task to wait for the reactor to exit.
-                let (exit_sx, exit_rx) = oneshot::channel::<()>();
-
-                self.spawn(async move {
-                    let _ = exit_rx.await;
-
-                    spdk_set_thread(sthread);
-                    spdk_thread_exit(sthread);
-                });
-
-                // Return the `Sender` used to signal the reactor to exit.
-                exit_sx
-            }
+            // Return the `Sender` used to signal the reactor to exit.
+            exit_sx
         });
 
         Some(join_handle)
@@ -180,16 +172,35 @@ impl Reactor {
 
     /// Spawns a new asynchronous task to be executed on this reactor and
     /// returns a [`JoinHandle`] to await results.
-    pub fn spawn<T>(&self, fut: impl Future<Output = T> + 'static) -> JoinHandle<T>
+    /// 
+    /// The indirection of `fut_gen` instead of receiving a `Future` directly
+    /// allows for futures that may not be `Send` once started.
+    pub fn spawn<G, F, T>(&self, fut_gen: G ) -> JoinHandle<T>
     where
-        T: 'static
+        G: FnOnce() -> F + Send + 'static,
+        F: Future<Output = T> + 'static,
+        T: Send + 'static
     {
-        let (task, join_handle) = ReactorTask::with_future(self.clone(), fut);
+        let (task, join_handle) = ReactorTask::with_future(self.clone(), fut_gen());
 
         Task::schedule(task);
 
         join_handle
     }
+}
+
+/// Spawns a new asynchronous task to be executed on the current SPDK reactor and
+/// returns a [`JoinHandle`] to await results.
+pub fn spawn_local<F, T>(fut: F) -> JoinHandle<T>
+where
+    F: Future<Output = T> + 'static,
+    T: 'static
+{
+    let (task, join_handle) = ReactorTask::with_future(Reactor::current(), fut);
+
+    Task::schedule(task);
+
+    join_handle
 }
 
 /// An iterator over the reactors for this runtime.

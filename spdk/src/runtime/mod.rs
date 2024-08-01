@@ -15,6 +15,7 @@ pub use cpu_set::CpuSet;
 
 pub use reactor::Reactor;
 pub use reactor::reactors;
+pub use reactor::spawn_local;
 
 pub use runtime::Builder;
 pub use runtime::Runtime;

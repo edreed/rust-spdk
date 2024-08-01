@@ -43,16 +43,16 @@ use spdk::{
 #[derive(Debug, Default)]
 struct PassthruRsModule;
 
+#[async_trait(?Send)]
 impl ModuleOps for PassthruRsModule {
     type IoContext = ();
 }
 
-#[derive(Debug)]
 struct PassthruRsChannel {
     ch: IoChannel
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl BDevIoChannelOps for PassthruRsChannel {
     type IoContext = ();
 

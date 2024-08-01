@@ -341,12 +341,16 @@ impl Thread {
 
     /// Spawns a new asynchronous task to be executed on this thread and returns a
     /// [`JoinHandle`] to await results.
-    pub fn spawn<F, T>(&self, fut: F) -> JoinHandle<T>
+    /// 
+    /// The indirection of `fut_gen` instead of receiving a `Future` directly
+    /// allows for futures that may not be `Send` once started.
+    pub fn spawn<G, F, T>(&self, fut_gen: G ) -> JoinHandle<T>
     where
-        F: Future<Output = T> + Send + 'static,
+        G: FnOnce() -> F + Send + 'static,
+        F: Future<Output = T> + 'static,
         T: Send + 'static
     {
-        let (task, join_handle) = ThreadTask::with_future(Some(self.borrow()), fut);
+        let (task, join_handle) = ThreadTask::with_future(Some(self.borrow()), fut_gen());
 
         Task::schedule(task);
 

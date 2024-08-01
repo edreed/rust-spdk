@@ -20,7 +20,9 @@ use crate::{
         Any,
         Device,
     },
-    runtime::Reactor
+    runtime::{
+        self,
+    },
 };
 
 use super::{
@@ -31,7 +33,7 @@ use super::{
 
 
 /// A trait defining BDev module operations.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait ModuleOps {
     /// A per-I/O context type accessed through the [`BDevIo::ctx()`] and
     /// [`BDevIo::ctx_mut()`] methods.
@@ -86,7 +88,7 @@ pub trait ModuleOps {
 /// [`Module`]: struct@super::Module
 pub trait ModuleInstance<T>
 where
-    T: Debug + Default + ModuleOps + Send + Sync + 'static
+    T: Default + ModuleOps + 'static
 {
     /// Returns a reference to the singleton instance of the module.
     fn instance() -> &'static T;
@@ -110,7 +112,7 @@ where
 #[derive(Debug)]
 pub struct Module<T>
 where
-    T: ModuleInstance<T> + Debug + Default + ModuleOps + Send + Sync + 'static
+    T: ModuleInstance<T> + Default + ModuleOps + 'static
 {
     pub module: spdk_bdev_module,
     pub instance: T
@@ -118,19 +120,19 @@ where
 
 unsafe impl <T> Send for Module<T>
 where
-    T: ModuleInstance<T> + Debug + Default + ModuleOps + Send + Sync + 'static
+    T: ModuleInstance<T> + Default + ModuleOps + Send + 'static
 {
 }
 
 unsafe impl <T> Sync for Module<T>
 where
-    T: ModuleInstance<T> + Debug + Default + ModuleOps + Send + Sync + 'static
+    T: ModuleInstance<T> + Default + ModuleOps + Sync + 'static
 {
 }
 
 impl <T> Module<T>
 where
-    T: ModuleInstance<T> + Debug + Default + ModuleOps + Send + Sync + 'static
+    T: ModuleInstance<T> + Default + ModuleOps + 'static
 {
     /// Creates a new BDev module instance with the specified name.
     /// 
@@ -169,7 +171,7 @@ where
 
     /// Initializes the module.
     unsafe extern "C" fn init() -> i32 {
-        Reactor::current().spawn(async {
+        runtime::spawn_local(async {
             T::instance().init().await;
 
             unsafe { spdk_bdev_module_init_done(T::module() as *mut _); }
@@ -180,7 +182,7 @@ where
 
     /// Finalizes the module.
     unsafe extern "C" fn fini() {
-        Reactor::current().spawn(async {
+        runtime::spawn_local(async {
             T::instance().fini().await;
 
             unsafe { spdk_bdev_module_fini_done(); }
@@ -220,7 +222,7 @@ where
     unsafe extern "C" fn examine_disk(bdev: *mut spdk_bdev) {
         let bdev = bdev.into();
 
-        Reactor::current().spawn(async move {
+        runtime::spawn_local(async move {
             T::instance().examine_disk(bdev).await;
 
             unsafe { spdk_bdev_module_examine_done(T::module() as *mut _) }

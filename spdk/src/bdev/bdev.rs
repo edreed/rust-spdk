@@ -87,7 +87,6 @@ use crate::{
         EINPROGRESS,
         ENOMEM
     },
-    runtime::Reactor,
     task::{
         self,
 
@@ -179,7 +178,7 @@ impl Into<spdk_bdev_io_status> for IoStatus {
 }
 
 /// A trait for implementing the I/O channel operations for a BDev.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait BDevIoChannelOps: 'static {
     /// The I/O context type for the BDev.
     type IoContext: Default + 'static;
@@ -286,8 +285,6 @@ where
     io: NonNull<spdk_bdev_io>,
     _ctx: PhantomData<T>
 }
-
-unsafe impl <T: Default + 'static> Send for BDevIo<T> {}
 
 impl <T> BDevIo<T>
 where
@@ -607,7 +604,7 @@ where
 
     /// Destroys the BDev instance.
     unsafe extern "C" fn destruct(ctx: *mut c_void) -> i32 {
-        Reactor::current().spawn(async move {
+        thread::spawn_local(async move {
             let mut this = Self::from_ctx_ptr(ctx as *mut T);
 
             let rc = match this.ctx.destruct().await {

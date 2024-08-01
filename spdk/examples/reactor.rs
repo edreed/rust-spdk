@@ -16,7 +16,7 @@ async fn main() {
     let tasks = reactors()
         .map(
             |r| {
-                r.spawn(async {
+                r.spawn(|| async {
                     let core_id = Reactor::current().core().id();
 
                     time::sleep(Duration::from_secs(1 * core_id as u64)).await;
