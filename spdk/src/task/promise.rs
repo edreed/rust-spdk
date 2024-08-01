@@ -38,7 +38,10 @@ use crate::{
 /// Kept --> Fulfilled : poll(cx)
 /// ```
 #[derive(Debug, Default)]
-enum PromiseState<T: Debug + Send + 'static> {
+enum PromiseState<T>
+where
+    T: Debug + 'static
+{
     /// The initial state of a promise.
     #[default]
     Empty,
@@ -74,9 +77,16 @@ enum PromiseState<T: Debug + Send + 'static> {
     Fulfilled,
 }
 
-unsafe impl<T: Debug + Send + 'static> Send for PromiseState<T> {}
+unsafe impl<T> Send for PromiseState<T>
+where
+    T: Debug + Send + 'static
+{
+}
 
-impl <T: Debug + Send + 'static> PromiseState<T> {
+impl <T> PromiseState<T>
+where
+    T: Debug + 'static
+{
     /// Returns a new `PromiseState` instance in the [`Empty`] state.
     /// 
     /// [`Empty`]: type@PromiseState::Empty
@@ -131,7 +141,7 @@ impl <T: Debug + Send + 'static> PromiseState<T> {
 /// null, the result is a suitable `Err(Errno)` value.
 pub unsafe extern "C" fn complete_with_object<T, R>(cx: *mut c_void, obj: *mut R)
 where
-    T: Debug + Send + TryFrom<*mut R, Error = Errno> + 'static,
+    T: Debug + TryFrom<*mut R, Error = Errno> + 'static,
 {
     let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<T>>>());
 
@@ -164,7 +174,7 @@ pub unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
 pub struct Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: Debug + Send + 'static
+    T: Debug + 'static
 {
     start_fn: F,
     state: Arc<Mutex<PromiseState<T>>>,
@@ -179,7 +189,7 @@ where
 impl<F, T> Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: Debug + Send + 'static
+    T: Debug + 'static
 {
     /// Returns a new `Promise` instance.
     /// 
@@ -197,7 +207,7 @@ where
 impl<F, T> Future for Promise<F, T>
 where
     F: FnMut(*mut c_void) -> Poll<Result<T, Errno>> + Unpin,
-    T: Debug + Send + 'static
+    T: Debug + 'static
 {
     type Output = Result<T, Errno>;
 

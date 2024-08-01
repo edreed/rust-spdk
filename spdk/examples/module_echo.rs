@@ -196,7 +196,7 @@ async fn main() {
 
     let echo_writer = echo.borrow();
 
-    let write_task = reactors[0].spawn(async move {
+    let write_task = reactors[0].spawn(move || async move {
         let writer = echo_writer.open(true).await.unwrap();
         let writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
@@ -215,7 +215,7 @@ async fn main() {
 
     let echo_reader = echo.borrow();
 
-    let read_task = reactors[1].spawn(async move {
+    let read_task = reactors[1].spawn(move || async move {
         let reader = echo_reader.open(true).await.unwrap();
         let reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
