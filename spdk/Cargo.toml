@@ -13,6 +13,7 @@ async-trait = "0.1.74"
 errno = "0.3.9"
 futures = "0.3.30"
 libc = "0.2.155"
+serde = { version = "1.0.210", features = ["derive"] }
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
 spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
 static_init = "1.0.3"
@@ -21,12 +22,14 @@ ternary-rs = "1.0.0"
 [dev-dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
 byte-strings= "0.3.1"
+laboratory = "2.0.0"
 
 [features]
 default = []
 bdev = ["spdk-sys/bdev"]
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
+json = ["spdk-sys/json"]
 nvmf = ["bdev","spdk-sys/nvmf"]
 
 [[example]]
