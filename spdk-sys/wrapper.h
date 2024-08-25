@@ -1,6 +1,7 @@
 #include "spdk/cpuset.h"
 #include "spdk/env.h"
 #include "spdk/event.h"
+#include "spdk/json.h"
 #include "spdk/thread.h"
 
 #if defined(CARGO_FEATURE_BDEV)
