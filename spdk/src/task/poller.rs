@@ -1,21 +1,15 @@
 use std::{
     ffi::c_void,
-    marker::PhantomData,
-    mem::MaybeUninit,
-    ops::Deref,
-    ptr::{
-        NonNull,
-
-        addr_of_mut,
-    },
+    ptr::null_mut,
     time::Duration,
 };
 
 use spdk_sys::{
+    spdk_poller,
+
     SPDK_POLLER_BUSY,
     SPDK_POLLER_IDLE,
 
-    spdk_poller,
     spdk_poller_pause,
     spdk_poller_register,
     spdk_poller_resume,
@@ -32,22 +26,29 @@ pub trait Polled {
 
 /// A poller that can be registered with the SPDK event framework to poll a type
 /// implemented the [`Polled`] trait.
-pub struct Poller<'a, T>
+struct PollerInner<T>
 where
     T: Polled
 {
-    poller: NonNull<spdk_poller>,
-    polled: PhantomData<&'a mut T>,
+    poller: *mut spdk_poller,
+    polled: T,
 }
 
-impl<'a, T> Poller<'a, T>
+pub struct Poller<T>
+where
+    T: Polled
+{
+    inner: Box<PollerInner<T>>,
+}
+
+impl<T> Poller<T>
 where
     T: Polled
 {
     /// Creates a new poller that will repeatedly poll `polled` as fast as
     /// possible on the current SPDK thread.
     #[inline]
-    pub fn new(polled: &'a mut T) -> Self {
+    pub fn new(polled: T) -> Self {
         Self::with_period(polled, Duration::ZERO)
     }
 
@@ -63,26 +64,41 @@ where
     /// 
     /// This function panics if the duration cannot be represented as a unsigned
     /// 64-bit integer.
-    pub fn with_period(polled: &'a mut T, period: Duration) -> Self {
-        let poller = NonNull::new(unsafe {
+    pub fn with_period(polled: T, period: Duration) -> Self {
+        let mut inner = Box::new(PollerInner {
+            poller: null_mut(),
+            polled,
+        });
+
+        inner.poller = unsafe {
             spdk_poller_register(
                 Some(Self::poll),
-                polled as *mut T as *mut _,
+                Box::as_mut(&mut inner) as *mut _ as *mut c_void,
                 period.as_micros().try_into().expect("period in range 0..2^64"))
-        })
-        .expect("poller created");
+        };
+
+        assert!(!inner.poller.is_null());
 
         Self {
-            poller,
-            polled: PhantomData,
+            inner,
         }
+    }
+
+    /// Returns a reference to the polled type.
+    pub fn polled(&self) -> &T {
+        &self.inner.polled
+    }
+
+    /// Returns a mutable reference to the polled type.
+    pub fn polled_mut(&mut self) -> &mut T {
+        &mut self.inner.polled
     }
 
     /// A callback function invoked to poll the `polled` type.
     unsafe extern "C" fn poll(arg: *mut c_void) -> i32 {
-        let polled = unsafe { &mut *(arg as *mut T) };
+        let this = unsafe { &mut *(arg as *mut PollerInner<T>) };
 
-        if polled.poll() {
+        if this.polled.poll() {
             return SPDK_POLLER_BUSY as i32;
         }
 
@@ -95,7 +111,7 @@ where
     /// [`resume`]: method@Poller::resume
     #[inline]
     pub fn pause(&self) {
-        unsafe { spdk_poller_pause(self.poller.as_ptr()) }
+        unsafe { spdk_poller_pause(self.inner.poller) }
     }
 
     /// Resumes a poller paused by the [`pause`] method.
@@ -103,90 +119,41 @@ where
     /// [`pause`]: method@Poller::pause
     #[inline]
     pub fn resume(&self) {
-        unsafe { spdk_poller_resume(self.poller.as_ptr()) }
+        unsafe { spdk_poller_resume(self.inner.poller) }
     }
 }
 
-impl<'a, T> Drop for Poller<'a, T>
+impl<T> Drop for Poller<T>
 where
     T: Polled
 {
     fn drop(&mut self) {
-        unsafe { spdk_poller_unregister(&mut self.poller.as_ptr()) }
+        unsafe { spdk_poller_unregister(&mut self.inner.poller) }
     }
 }
 
-/// A poller that polls a function.
-pub struct PolledFn<'a, T: FnMut() -> bool>{
-    fun: T,
-    poller: Poller<'a, Self>,
-}
-
-impl <'a, T> PolledFn<'a, T>
+/// A Newtype that enables a function to be called by the poller.
+pub struct PolledFn<T>(T)
 where
-    T: FnMut() -> bool
-{
-    /// Creates a new poller that will repeatedly poll `fun` as fast as possible
-    /// on the current SPDK thread.
-    #[inline]
-    pub fn new(fun: T) -> Box<Self> {
-        Self::with_period(fun, Duration::ZERO)
-    }
+    T: FnMut() -> bool;
 
-    /// Creates a new poller that will periodically poll `fun` with the
-    /// specified period on the current SPDK thread.
-    /// 
-    /// # Notes
-    /// 
-    /// The granularity of `period` is microseconds. If the period is zero or
-    /// less than 1μs, the `polled` will be polled as fast as possible.
-    /// 
-    /// # Panics
-    /// 
-    /// This function panics if the duration cannot be represented as a unsigned
-    /// 64-bit integer.
-    pub fn with_period(fun: T, period: Duration) -> Box<Self> {
-        let this = Box::new(MaybeUninit::<Self>::uninit());
-        let this = Box::into_raw(this) as *mut Self;
-
-        unsafe {
-            addr_of_mut!((*this).fun).write(fun);
-            addr_of_mut!((*this).poller).write(Poller::with_period(&mut *this, period));
-
-            Box::from_raw(this)
-        }
-    }
-}
-
-impl<'a, T> Polled for PolledFn<'a, T>
+impl<T> Polled for PolledFn<T>
 where
     T: FnMut() -> bool
 {
     #[inline]
     fn poll(&mut self) -> bool {
-        (self.fun)()
-    }
-}
-
-impl<'a, T> Deref for PolledFn<'a, T>
-where
-    T: FnMut() -> bool
-{
-    type Target = Poller<'a, Self>;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.poller
+        (self.0)()
     }
 }
 
 /// Creates a new poller that will repeatedly poll `fun` as fast as possible on
 /// the current SPDK thread.
-pub fn polled_fn<T>(fun: T) -> Box<PolledFn<'static, T>>
+pub fn polled_fn<T>(fun: T) -> Poller<PolledFn<T>>
 where
     T: FnMut() -> bool + 'static
 {
-    PolledFn::new(fun)
+    Poller::new(PolledFn(fun))
 }
 
 /// Creates a new poller that will periodically poll `fun` with the specified
@@ -201,9 +168,9 @@ where
 /// 
 /// This function panics if the duration cannot be represented as a unsigned
 /// 64-bit integer.
-pub fn polled_fn_with_period<T>(fun: T, period: Duration) -> Box<PolledFn<'static, T>>
+pub fn polled_fn_with_period<T>(fun: T, period: Duration) -> Poller<PolledFn<T>>
 where
     T: FnMut() -> bool + 'static
 {
-    PolledFn::with_period(fun, period)
+    Poller::with_period(PolledFn(fun), period)
 }
