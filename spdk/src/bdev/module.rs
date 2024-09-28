@@ -20,9 +20,7 @@ use crate::{
         Any,
         Device,
     },
-    runtime::{
-        self,
-    },
+    thread::{self},
 };
 
 use super::{
@@ -171,7 +169,7 @@ where
 
     /// Initializes the module.
     unsafe extern "C" fn init() -> i32 {
-        runtime::spawn_local(async {
+        thread::spawn_local(async {
             T::instance().init().await;
 
             unsafe { spdk_bdev_module_init_done(T::module() as *mut _); }
@@ -182,7 +180,7 @@ where
 
     /// Finalizes the module.
     unsafe extern "C" fn fini() {
-        runtime::spawn_local(async {
+        thread::spawn_local(async {
             T::instance().fini().await;
 
             unsafe { spdk_bdev_module_fini_done(); }
@@ -222,7 +220,7 @@ where
     unsafe extern "C" fn examine_disk(bdev: *mut spdk_bdev) {
         let bdev = bdev.into();
 
-        runtime::spawn_local(async move {
+        thread::spawn_local(async move {
             T::instance().examine_disk(bdev).await;
 
             unsafe { spdk_bdev_module_examine_done(T::module() as *mut _) }

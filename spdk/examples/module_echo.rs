@@ -36,6 +36,7 @@ use spdk::{
     },
     runtime::reactors,
     task::{self},
+    thread::Thread,
 };
 
 /// Implements the Echo block device module.
@@ -196,7 +197,8 @@ async fn main() {
 
     let echo_writer = echo.borrow();
 
-    let write_task = reactors[0].spawn(move || async move {
+    let write_thread = Thread::new(c"write", &reactors[0].core().into()).unwrap();
+    let write_task = write_thread.spawn(move || async move {
         let writer = echo_writer.open(true).await.unwrap();
         let writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
@@ -215,7 +217,8 @@ async fn main() {
 
     let echo_reader = echo.borrow();
 
-    let read_task = reactors[1].spawn(move || async move {
+    let read_thread = Thread::new(c"read", &reactors[1].core().into()).unwrap();
+    let read_task = read_thread.spawn(move || async move {
         let reader = echo_reader.open(true).await.unwrap();
         let reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
