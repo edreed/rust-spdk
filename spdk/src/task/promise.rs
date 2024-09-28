@@ -1,16 +1,12 @@
 #![allow(dead_code)]
 use std::{
     fmt::Debug,
-    mem::{
-        self,
-
-        MaybeUninit,
-    },
+    mem::{self},
     pin::Pin,
-    ptr::addr_of_mut,
     sync::{
         Arc,
         Mutex,
+        Weak,
     },
     task::{
         Context,
@@ -135,22 +131,21 @@ where
         })
     }
 
-    /// Returns a new `Arc<Promise>` instance, initializing the context in-place
-    /// using the specified function.
-    pub fn with_context_in_place<F>(ctx_init_fn: F) -> Arc<Self>
+    /// Constructs a new `Arc<Promissory>` instance giving you a
+    /// `Weak<Promissory>` to the allocation allowing you to construct the
+    /// context, C, holding a weak pointer to itself.
+    /// 
+    /// See [`Arc::new_cyclic`] for more information.
+    pub fn with_context_cyclic<F>(data_fn: F) -> Arc<Self>
     where
-        F: FnOnce(*mut C)
+        F: FnOnce(&Weak<Self>) -> C
     {
-        let arc_ctx = Arc::new(MaybeUninit::<Self>::uninit());
-
-        unsafe {
-            let ctx = (*(Arc::into_raw(arc_ctx) as *mut MaybeUninit<Self>)).as_mut_ptr();
-
-            addr_of_mut!((*ctx).state).write(Default::default());
-            ctx_init_fn(addr_of_mut!((*ctx).ctx));
-
-            Arc::from_raw(ctx)
-        }
+        Arc::new_cyclic(|weak_self| {
+            Self {
+                state: Default::default(),
+                ctx: data_fn(weak_self),
+            }
+        })
     }
 
     /// Polls the state of the operation, advancing to the next state if possible.
@@ -158,9 +153,8 @@ where
         self.state.lock().unwrap().poll(cx)
     }
 
-    /// Returns a reference to the user context initialized using either the
-    /// [`Promise::with_context`] or [`Promise::with_context_in_place`]
-    /// functions.
+    /// Returns a reference to the user context initialized using the
+    /// [`Promise::with_context`] or [`Promise::with_context_cyclic`] functions.
     pub fn user_context(arc_self: &Arc<Self>) -> &C {
         &arc_self.ctx
     }
@@ -171,9 +165,8 @@ where
     /// Returns [`None`] otherwise because it is not safe to mutate the context
     /// of a shared valued.
     /// 
-    /// The user context is initialized using either the
-    /// [`Promise::with_context`] or [`Promise::with_context_in_place`]
-    /// functions.
+    /// The user context is initialized using the [`Promise::with_context`]
+    ///  or [`Promise::with_context_cyclic`] functions.
     pub fn user_context_mut(arc_self: &mut Arc<Self>) -> Option<&mut C> {
         Arc::get_mut(arc_self).map(|p| &mut p.ctx)
     }
@@ -358,19 +351,19 @@ where
         }
     }
 
-    /// Returns a new `Promise` instance with the user context of the related
-    /// `Promissory` initialized in-place using the specified function.
+    /// Constructs a new `Arc<Promissory>` instance giving you a
+    /// `Weak<Promissory>` to the allocation allowing you to construct the
+    /// context, C, holding a weak pointer to itself.
     /// 
-    /// The pointer provided to the initialization function points to
-    /// uninitialized memory. Reading from this pointer is undefined behavior.
-    pub fn with_context_in_place<F, S>(ctx_init_fn: F, start_fn: S) -> Self
+    /// See [`Arc::new_cyclic`] for more information.
+    pub fn with_context_cyclic<F, S>(data_fn: F, start_fn: S) -> Self
     where
-        S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a,
-        F: FnOnce(*mut C)
+        F: FnOnce(&Weak<Promissory<R, C>>) -> C,
+        S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a
     {
         Self {
             start_fn: Some(Box::new(start_fn)),
-            promissory: Promissory::with_context_in_place(ctx_init_fn),
+            promissory: Promissory::with_context_cyclic(data_fn),
         }
     }
 }

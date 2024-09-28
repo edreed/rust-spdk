@@ -55,9 +55,7 @@
 //! ```
 //! 
 use std::{
-    mem::MaybeUninit,
     option::Option,
-    ptr::addr_of_mut,
     task::{
         Context,
         Poll,
@@ -77,29 +75,22 @@ use crate::task::{
 };
 
 /// Encapsulates the execution state of an [`Interval`].
-struct IntervalInner<'a> {
-    poller: Poller<'a, Self>,
+struct IntervalInner {
     ticker: u32,
     waker: Option<Waker>
 }
 
-impl<'a> IntervalInner<'a> {
+impl IntervalInner {
     /// Creates a new [`IntervalInner`] with a period of `period`.
-    fn new(period: Duration) -> Box<Self> {
-        let this = Box::new(MaybeUninit::<Self>::uninit());
-        let this = Box::into_raw(this) as *mut Self;
-
-        unsafe {
-            addr_of_mut!((*this).poller).write(Poller::with_period(&mut *this, period));
-            addr_of_mut!((*this).ticker).write(0);
-            addr_of_mut!((*this).waker).write(None);
-
-            Box::from_raw(this)
+    fn new() -> Self {
+        Self {
+            ticker: 0,
+            waker: None,
         }
     }
 }
 
-impl Polled for IntervalInner<'_> {
+impl Polled for IntervalInner {
     fn poll(&mut self) -> bool {
         self.ticker += 1;
         
@@ -117,7 +108,7 @@ impl Polled for IntervalInner<'_> {
 /// [`Interval`] enables you to wait asynchronously on a sequence of instants
 /// with a fixed period.
 pub struct Interval {
-    inner: Box<IntervalInner<'static>>
+    inner: Poller<IntervalInner>
 }
 
 impl Interval {
@@ -130,12 +121,14 @@ impl Interval {
 
     /// Polls for the next instant in the interval to be reached.
     fn poll_tick(&mut self, ctx: &mut Context<'_>) -> Poll<Instant> {
-        if self.inner.ticker == 0 {
-            self.inner.waker = Some(ctx.waker().clone());
+        let inner = self.inner.polled_mut();
+
+        if inner.ticker == 0 {
+            inner.waker = Some(ctx.waker().clone());
             return Poll::Pending;
         }
 
-        self.inner.ticker = 0;
+        inner.ticker = 0;
 
         Poll::Ready(Instant::now())
     }
@@ -152,7 +145,7 @@ impl Interval {
 /// TODO: Document drift behavior.
 pub fn interval(period: Duration) -> Interval {
     Interval {
-        inner: IntervalInner::new(period),
+        inner: Poller::with_period(IntervalInner::new(), period),
     }
 }
 

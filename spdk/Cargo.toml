@@ -8,11 +8,12 @@ rust-version = "1.77.0"
 all-features = true
 
 [dependencies]
-aquamarine = "0.5.0"
+aquamarine = "0.6.0"
 async-trait = "0.1.74"
 errno = "0.3.9"
-futures = "0.3.30"
-libc = "0.2.155"
+futures = "0.3.31"
+lazy-regex = "3.3.0"
+libc = "0.2.164"
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
 spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
 static_init = "1.0.3"
@@ -21,12 +22,14 @@ ternary-rs = "1.0.0"
 [dev-dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
 byte-strings= "0.3.1"
+itertools = "0.13.0"
 
 [features]
 default = []
 bdev = ["spdk-sys/bdev"]
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
+net = ["spdk-sys/net"]
 nvmf = ["bdev","spdk-sys/nvmf"]
 
 [[example]]
@@ -48,3 +51,7 @@ required-features = ["bdev-module"]
 [[example]]
 name = "module_passthru"
 required-features = ["bdev-malloc", "bdev-module"]
+
+[[example]]
+name = "net_hello_world"
+required-features = ["net"]

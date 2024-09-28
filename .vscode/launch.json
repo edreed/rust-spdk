@@ -201,6 +201,29 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'net_hello_world'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=net_hello_world",
+                    "--package=spdk",
+                    "--features=net"
+                ],
+                "filter": {
+                    "name": "net_hello_world",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
         }
-    ]
+   ]
 }
