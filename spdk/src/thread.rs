@@ -360,8 +360,16 @@ impl Thread {
 
 impl Drop for Thread {
     fn drop(&mut self) {
-        if let OwnershipState::Owned(t) = self.0 {
-            unsafe { spdk_thread_exit(t.as_ptr()); }
+        if let OwnershipState::Owned(_) = self.0 {
+            // SAFETY: The borrow here extends the lifetime of the underlying
+            // `spdk_thread` object until the sent message calls `spdk_thread_exit`.
+            let mut t = self.borrow();
+
+            // SAFTEY: The `spdk_thread_exit` function must be called from a
+            // poller or thread message. We dispatch the call via thread message
+            // to ensure this invariant is satisfied.
+            self.send_msg(move || unsafe { _ = spdk_thread_exit(t.as_mut_ptr()) })
+                .expect("thread exit sent");
         }
     }
 }

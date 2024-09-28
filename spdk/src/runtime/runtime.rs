@@ -25,7 +25,6 @@ use std::{
     },
 };
 
-use futures::future::join_all;
 use spdk_sys::{
     SPDK_APP_PARSE_ARGS_SUCCESS,
 
@@ -308,7 +307,7 @@ impl Runtime {
 
             // Ensure each reactor has an spdk_thread associated with it and
             // collect their exit signals.
-            let exits = join_all(reactors().filter_map(Reactor::init)).await;
+            let exits: Vec<_> = reactors().filter_map(Reactor::init).collect();
 
             fut.await;
 

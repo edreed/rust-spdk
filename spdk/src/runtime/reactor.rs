@@ -17,8 +17,6 @@ use futures::{
 use spdk_sys::{
     spdk_event_allocate,
     spdk_event_call,
-    spdk_set_thread,
-    spdk_thread_exit,
 };
 
 use crate::{
@@ -61,41 +59,36 @@ impl Reactor {
     /// # Panics
     /// 
     /// This function panics if not called from the main CPU core.
-    pub(crate) fn init(self) -> Option<JoinHandle<Sender<()>>> {
+    pub(crate) fn init(self) -> Option<Sender<()>> {
         assert!(CpuCore::current() == CpuCore::main());
 
         if self.is_current() {
             return None;
         }
 
-        // Spawn an asynchronous task to initialize the reactor.
-        let join_handle = self.spawn(move || async move {
-            // Create a new SPDK thread for this reactor and bind it to the
-            // reactor's core.
-            let name = CString::new(format!("reactor_thread_{}", self.core().id())).unwrap();
-            let cpu_mask: CpuSet = self.core().into();
+        // Create a new SPDK thread for this reactor and bind it to the
+        // reactor's core.
+        let name = CString::new(format!("reactor_thread_{}", self.core().id())).unwrap();
+        let cpu_mask: CpuSet = self.core().into();
 
-            let mut new_thread = Thread::new(&name, &cpu_mask).expect("thread created");
+        let mut owned_thread = Thread::new(&name, &cpu_mask).expect("thread created");
 
-            new_thread.bind(true);
+        owned_thread.bind(true);
 
-            // Spawn an asynchronous task to wait for the reactor to exit.
-            let (exit_sx, exit_rx) = oneshot::channel::<()>();
+        // Spawn an asynchronous task to wait for the reactor to exit. We borrow
+        // the reactor thread so that we can transfer ownership to the
+        // asynchronous task and exit the thread when it is dropped.
+        let (exit_sx, exit_rx) = oneshot::channel::<()>();
+        let borrowed_thread = owned_thread.borrow();
 
-            spawn_local(async move {
-                let _ = exit_rx.await;
+        borrowed_thread.spawn(move || async move {
+            let _ = exit_rx.await;
 
-                unsafe {
-                    spdk_set_thread(new_thread.as_mut_ptr());
-                    spdk_thread_exit(new_thread.as_mut_ptr());
-                }
-            });
-
-            // Return the `Sender` used to signal the reactor to exit.
-            exit_sx
+            drop(owned_thread)
         });
 
-        Some(join_handle)
+        // Return the `Sender` used to signal the reactor to exit.
+        Some(exit_sx)
     }
 
     /// Tries to return the current reactor.
