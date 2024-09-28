@@ -8,6 +8,8 @@ pub mod cli;
 pub mod dma;
 pub mod errors;
 pub mod macros;
+#[cfg(feature = "net")]
+pub mod net;
 pub mod nvme;
 pub mod nvmf;
 pub mod runtime;
