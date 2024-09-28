@@ -27,6 +27,7 @@ default = []
 bdev = ["spdk-sys/bdev"]
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
+net = ["spdk-sys/net"]
 nvmf = ["bdev","spdk-sys/nvmf"]
 
 [[example]]

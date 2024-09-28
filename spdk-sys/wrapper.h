@@ -16,6 +16,10 @@
 #include "bdev/malloc/bdev_malloc.h"
 #endif
 
+#if defined(CARGO_FEATURE_NET)
+#include "spdk/sock.h"
+#endif
+
 #if defined(CARGO_FEATURE_NVMF)
 #include "spdk/nvme.h"
 #include "spdk/nvmf.h"

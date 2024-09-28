@@ -119,6 +119,14 @@ fn main() {
         defines.push("CARGO_FEATURE_BDEV_MALLOC=1");
     }
 
+    let include_target_net = env::var_os("CARGO_FEATURE_NET").is_some();
+
+    if include_target_net {
+        pkg_configs.push(pkg_config.probe("spdk_sock").expect("spdk_sock package config exists"));
+        pkg_configs.push(pkg_config.probe("spdk_event_sock").expect("spdk_event_sock package config exists"));
+        defines.push("CARGO_FEATURE_NET=1");
+    }
+
     let include_target_nvmf = env::var_os("CARGO_FEATURE_NVMF").is_some();
 
     if include_target_nvmf {
