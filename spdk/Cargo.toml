@@ -12,6 +12,7 @@ aquamarine = "0.6.0"
 async-trait = "0.1.89"
 futures = "0.3.32"
 libc = "0.2.186"
+lazy-regex = "3.6.0"
 parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
@@ -23,6 +24,7 @@ ternary-rs = "1.0.0"
 async-condvar-fair = { version = "1.0.1", features = ["parking_lot_0_12"] }
 laboratory = "2.0.0"
 parking_lot = { version = "0.12.5", features = ["send_guard"] }
+itertools = "0.15.0"
 
 [features]
 default = []
@@ -30,15 +32,12 @@ bdev = ["spdk-sys/bdev"]
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
 json = ["spdk-sys/json"]
+net = ["spdk-sys/net"]
 nvmf = ["bdev","spdk-sys/nvmf"]
 
 [[example]]
 name = "bdev_hello_world"
 required-features = ["bdev-malloc"]
-
-[[example]]
-name = "nvmf"
-required-features = ["bdev-malloc", "nvmf"]
 
 [[example]]
 name = "module_echo"
@@ -51,3 +50,15 @@ required-features = ["bdev-module"]
 [[example]]
 name = "module_passthru"
 required-features = ["bdev-malloc", "bdev-module"]
+
+[[example]]
+name = "net_hello_world"
+required-features = ["net"]
+
+[[example]]
+name = "net_resolve"
+required-features = ["net"]
+
+[[example]]
+name = "nvmf"
+required-features = ["bdev-malloc", "nvmf"]

@@ -186,6 +186,27 @@ impl From<i32> for Errno {
     }
 }
 
+#[cfg(feature = "net")]
+impl From<crate::net::libanl::Error> for Errno {
+    fn from(e: crate::net::libanl::Error) -> Self {
+        match e {
+            crate::net::libanl::EAI_BADFLAGS => EINVAL,
+            crate::net::libanl::EAI_NONAME => ENOENT,
+            crate::net::libanl::EAI_AGAIN => EAGAIN,
+            crate::net::libanl::EAI_FAIL => EIO,
+            crate::net::libanl::EAI_NODATA => ENODATA,
+            crate::net::libanl::EAI_FAMILY => EAFNOSUPPORT,
+            crate::net::libanl::EAI_SOCKTYPE => EPROTOTYPE,
+            crate::net::libanl::EAI_SERVICE => ESOCKTNOSUPPORT,
+            crate::net::libanl::EAI_ADDRFAMILY => EAFNOSUPPORT,
+            crate::net::libanl::EAI_MEMORY => ENOMEM,
+            crate::net::libanl::EAI_SYSTEM => errno(),
+            crate::net::libanl::EAI_INPROGRESS => EINPROGRESS,
+            _ => EINVAL,
+        }
+    }
+}
+
 impl From<std::io::Error> for Errno {
     fn from(e: std::io::Error) -> Self {
         if let Some(e) = e.raw_os_error() {
