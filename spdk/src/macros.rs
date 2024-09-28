@@ -9,7 +9,7 @@ macro_rules! to_result {
         match $r {
             0 => Ok(()),
             e if e < 0 => Err($crate::errors::Errno::new(-e)),
-            _ => unreachable!(
+            _ => panic!(
                 "unexpected postive error value; perhaps you meant to use to_result_size here"
             ),
         }

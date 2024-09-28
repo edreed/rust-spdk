@@ -4,7 +4,6 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
         {
             "type": "lldb",
             "request": "launch",
@@ -200,6 +199,80 @@
                 }
             },
             "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'net_hello_world (Server)'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=net_hello_world",
+                    "--package=spdk",
+                    "--features=net"
+                ],
+                "filter": {
+                    "name": "net_hello_world",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all",
+                "--no-rpc-server",
+                "--lcores=0",
+                "--server-mode"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'net_hello_world (Client)'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=net_hello_world",
+                    "--package=spdk",
+                    "--features=net"
+                ],
+                "filter": {
+                    "name": "net_hello_world",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all",
+                "--lcores=1",
+                "--no-rpc-server"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'net_resolve'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=net_resolve",
+                    "--package=spdk",
+                    "--features=net"
+                ],
+                "filter": {
+                    "name": "net_resolve",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all",
+            ],
             "cwd": "${workspaceFolder}"
         }
     ]

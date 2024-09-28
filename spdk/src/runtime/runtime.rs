@@ -15,13 +15,13 @@ use spdk_sys::{
     spdk_app_stop, SPDK_APP_PARSE_ARGS_SUCCESS,
 };
 use static_init::dynamic;
+use ternary_rs::if_else;
 
 use crate::{
     errors::{Errno, EINVAL},
     runtime::{reactors, Reactor},
     task::{LocalTask, RcTask},
     thread::Thread,
-    to_result,
 };
 
 /// Builds a runtime using the Application Framework component of the
@@ -226,13 +226,15 @@ impl Runtime {
         let task = LocalTask::<Thread, F, ()>::with_future(fut);
         let ctx = Rc::into_raw(task).cast_mut();
 
-        unsafe {
-            to_result!(spdk_app_start(
-                self.0.as_ptr(),
-                Some(Self::handle_start::<F>),
-                ctx.cast()
-            ))
-            .expect("app started");
+        let res =
+            unsafe { spdk_app_start(self.0.as_ptr(), Some(Self::handle_start::<F>), ctx.cast()) };
+
+        if res != 0 {
+            // TODO: Use spdk logging to log error.
+            println!(
+                "*ERROR*: Failed to start app: {}",
+                if_else!(res < 0, Errno::new(-res), EINVAL)
+            );
         }
     }
 

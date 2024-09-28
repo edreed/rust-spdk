@@ -1,9 +1,8 @@
 use std::{
+    future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
-
-use futures::Future;
 
 /// Yield execution back to the SPDK Event Framework.
 pub async fn yield_now() {
