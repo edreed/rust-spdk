@@ -2,9 +2,13 @@
 //! plug-in.
 use std::{
     default::Default,
-    ffi::CStr,
+    ffi::{
+        CStr,
+        c_char,
+    },
+    future::Future,
     mem::{self},
-    os::raw:: c_char,
+    pin::Pin,
     ptr::{
         NonNull,
 
@@ -13,7 +17,6 @@ use std::{
     task::Poll,
 };
 
-use async_trait::async_trait;
 use spdk_sys::{
     malloc_bdev_opts,
     spdk_bdev,
@@ -106,14 +109,13 @@ pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}
 
-#[async_trait]
 impl OwnedOps for Malloc {
     fn as_ptr(&self) -> *mut spdk_bdev {
         self.0.as_ptr()
     }
 
-    async fn destroy(self) -> Result<(), Errno> {
-        Promise::new(move |cx| {
+    fn destroy(self) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>> {
+        Promise::new_pinned(move |cx| {
             unsafe {
                 delete_malloc_disk(
                     spdk_bdev_get_name(self.as_ptr()),
@@ -122,7 +124,7 @@ impl OwnedOps for Malloc {
             }
 
             Poll::Pending
-        }).await
+        })
     }
 }
 

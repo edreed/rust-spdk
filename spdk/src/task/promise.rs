@@ -202,6 +202,15 @@ where
             state: PromiseState::new(),
         }
     }
+
+    /// Returns a new `Promise` instance pinned to the heap.
+    /// 
+    /// The caller provides a function that starts the asynchronous operation
+    /// passing one of the `complete_with_*` callbacks and the provided context
+    /// pointer to the SPDK API.
+    pub fn new_pinned(start_fn: F) -> Pin<Box<Self>> {
+        Box::pin(Self::new(start_fn))
+    }
 }
 
 impl<F, T> Future for Promise<F, T>

@@ -4,7 +4,6 @@ use std::{
     ptr::NonNull,
 };
 
-use async_trait::async_trait;
 use futures::Future;
 use spdk_sys::spdk_bdev;
 
@@ -14,13 +13,12 @@ use crate::{
 };
 
 /// A trait for owned block devices.
-#[async_trait]
 pub trait OwnedOps: From<Owned> + Send + 'static {
     /// Returns a pointer to the underlying `spdk_bdev` structure.
     fn as_ptr(&self) -> *mut spdk_bdev;
 
     /// Destroy the block device asynchronously.
-    async fn destroy(self) -> Result<(), Errno>;
+    fn destroy(self) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>>;
 }
 
 type DestroyFn = fn(Owned) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>>;
@@ -32,9 +30,7 @@ where
 {
     let device: T = owned.into();
 
-    Box::pin(async move {
-        device.destroy().await
-    })
+    device.destroy()
 }
 
 /// Represents a type-erased owned block device.
@@ -75,13 +71,12 @@ impl Owned {
     }
 }
 
-#[async_trait]
 impl OwnedOps for Owned {
     fn as_ptr(&self) ->  *mut spdk_bdev {
         self.bdev.as_ptr()
     }
 
-    async fn destroy(self) -> Result<(), Errno> {
-        (self.destroy_fn)(self).await
+    fn destroy(self) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>> {
+        (self.destroy_fn)(self)
     }
 }

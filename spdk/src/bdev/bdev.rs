@@ -1,9 +1,9 @@
 use std::{
-    cell::Cell,
-    ffi::{
+    cell::Cell, ffi::{
         CStr,
         CString,
     },
+    future::Future,
     io::{
         IoSlice,
         IoSliceMut,
@@ -22,6 +22,7 @@ use std::{
         c_int,
         c_void,
     },
+    pin::Pin,
     ptr::{
         self,
 
@@ -726,19 +727,18 @@ impl <T: BDevOps> OwnedImpl<T> {
     }
 }
 
-#[async_trait]
 impl <T: BDevOps> OwnedOps for OwnedImpl<T> {
     fn as_ptr(&self) -> *mut spdk_bdev {
         addr_of!(self.0.bdev) as *mut _
     }
 
-    async fn destroy(self) -> Result<(), Errno> {
+    fn destroy(self) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>> {
         // The BDev implementation's `destruct` method is invoked by the called
         // to unregister the device and will take care of dropping the box. We
         // avoid dropping the box here to prevent double-free.
         let bdev = ManuallyDrop::new(self);
 
-        Promise::new(move |cx| {
+        Promise::new_pinned(move |cx| {
             unsafe {
                 spdk_bdev_unregister(
                     bdev.as_ptr(),
@@ -747,7 +747,7 @@ impl <T: BDevOps> OwnedOps for OwnedImpl<T> {
             }
 
             Poll::Pending
-        }).await
+        })
     }
 }
 

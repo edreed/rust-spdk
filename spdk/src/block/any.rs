@@ -1,4 +1,12 @@
-use async_trait::async_trait;
+use std::{
+    future::{
+        Future,
+
+        ready,
+    },
+    pin::Pin,
+};
+
 use spdk_sys::spdk_bdev;
 
 use crate::errors::{
@@ -17,14 +25,13 @@ pub struct Any;
 
 unsafe impl Send for Any {}
 
-#[async_trait]
 impl OwnedOps for Any {
     fn as_ptr(&self) -> *mut spdk_bdev {
         unreachable!("Any::as_ptr() should never be called")
     }
     
-    async fn destroy(self) -> Result<(), Errno> {
-        Err(EPERM)
+    fn destroy(self) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>> {
+        Box::pin(ready(Err(EPERM)))
     }
 }
 
