@@ -111,7 +111,7 @@
             },
             "args": [
                 "--iova-mode=va",
-                "--huge-dir=/mnt/spdk_hugetlbfs",
+                "--huge-dir=/mnt/hugepages",
                 "--logflag=all",
                 "--lcores=0,1"
             ],
@@ -134,7 +134,7 @@
             },
             "args": [
                 "--iova-mode=va",
-                "--huge-dir=/mnt/spdk_hugetlbfs",
+                "--huge-dir=/mnt/hugepages",
                 "--logflag=all"
             ],
             "cwd": "${workspaceFolder}"
@@ -154,7 +154,11 @@
                     "kind": "example"
                 }
             },
-            "args": [],
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -172,7 +176,11 @@
                     "kind": "example"
                 }
             },
-            "args": [],
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
             "cwd": "${workspaceFolder}"
         },
         {

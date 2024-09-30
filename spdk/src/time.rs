@@ -55,10 +55,9 @@
 //! ```
 //! 
 use std::{
-    cell::UnsafeCell,
+    mem::MaybeUninit,
     option::Option,
-    os::raw::c_void,
-    ptr::NonNull,
+    ptr::addr_of_mut,
     task::{
         Context,
         Poll,
@@ -67,24 +66,50 @@ use std::{
     time::{
         Duration,
         Instant,
-    },
+    }
 };
 
 use futures::future::poll_fn;
-use spdk_sys::{
-    SPDK_POLLER_BUSY,
-    SPDK_POLLER_IDLE,
 
-    spdk_poller,
-
-    spdk_poller_register,
-    spdk_poller_unregister,
+use crate::task::{
+    Polled,
+    Poller,
 };
 
 /// Encapsulates the execution state of an [`Interval`].
-struct IntervalState {
+struct IntervalInner<'a> {
+    poller: Poller<'a, Self>,
     ticker: u32,
     waker: Option<Waker>
+}
+
+impl<'a> IntervalInner<'a> {
+    /// Creates a new [`IntervalInner`] with a period of `period`.
+    fn new(period: Duration) -> Box<Self> {
+        let this = Box::new(MaybeUninit::<Self>::uninit());
+        let this = Box::into_raw(this) as *mut Self;
+
+        unsafe {
+            addr_of_mut!((*this).poller).write(Poller::with_period(&mut *this, period));
+            addr_of_mut!((*this).ticker).write(0);
+            addr_of_mut!((*this).waker).write(None);
+
+            Box::from_raw(this)
+        }
+    }
+}
+
+impl Polled for IntervalInner<'_> {
+    fn poll(&mut self) -> bool {
+        self.ticker += 1;
+        
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
+            return true;
+        }
+
+        false
+    }
 }
 
 /// A time interval returned by [`interval`].
@@ -92,8 +117,7 @@ struct IntervalState {
 /// [`Interval`] enables you to wait asynchronously on a sequence of instants
 /// with a fixed period.
 pub struct Interval {
-    poller: NonNull<spdk_poller>,
-    state: Box<UnsafeCell<IntervalState>>
+    inner: Box<IntervalInner<'static>>
 }
 
 impl Interval {
@@ -106,26 +130,16 @@ impl Interval {
 
     /// Polls for the next instant in the interval to be reached.
     fn poll_tick(&mut self, ctx: &mut Context<'_>) -> Poll<Instant> {
-        let inner = self.state.get_mut();
-
-        if inner.ticker == 0 {
-            inner.waker = Some(ctx.waker().clone());
+        if self.inner.ticker == 0 {
+            self.inner.waker = Some(ctx.waker().clone());
             return Poll::Pending;
         }
 
-        inner.ticker = 0;
+        self.inner.ticker = 0;
 
         Poll::Ready(Instant::now())
     }
 }
-
-impl Drop for Interval {
-    fn drop(&mut self) {
-        unsafe { spdk_poller_unregister(&mut self.poller.as_ptr()) }
-    }
-}
-
-unsafe impl Send for Interval {}
 
 /// Creates a new [`Interval`] that yields with an interval of `period`.
 /// 
@@ -137,33 +151,9 @@ unsafe impl Send for Interval {}
 /// 
 /// TODO: Document drift behavior.
 pub fn interval(period: Duration) -> Interval {
-    unsafe extern "C" fn poll(ctx: *mut c_void) -> i32 {
-        let inner = &mut *(ctx as *mut IntervalState);
-
-        inner.ticker += 1;
-        
-        if let Some(waker) = inner.waker.take() {
-            waker.wake();
-            return SPDK_POLLER_BUSY.try_into().unwrap();
-        }
-
-        SPDK_POLLER_IDLE.try_into().unwrap()
+    Interval {
+        inner: IntervalInner::new(period),
     }
-
-    let period_us = period.as_micros().try_into().unwrap();
-    let state = Box::new(UnsafeCell::new(IntervalState {
-            ticker: 0,
-            waker: None,
-        }));
-    let poller = NonNull::new(unsafe {
-        spdk_poller_register(
-            Some(poll),
-            state.get() as *mut c_void,
-            period_us
-        )
-    }).unwrap();
-
-    Interval { poller, state }
 }
 
 /// Waits until `duration` has elapsed.
