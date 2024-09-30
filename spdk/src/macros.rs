@@ -46,6 +46,17 @@ macro_rules! to_poll_pending_on_ok {
             Err(e) => std::task::Poll::Ready(Err(e))
         }
     };
+    {$r:expr $(=> on ready $b:block)?} => {
+        {
+            let res = to_poll_pending_on_ok!($r);
+
+            $(if res.is_ready() {
+                $b;
+            })?
+
+            res
+        }
+    };
 }
 
 /// Convert an SPDK integer return value to a [`Poll`] value indicating whether
@@ -69,6 +80,17 @@ macro_rules! to_poll_pending_on_err {
             Ok(()) => std::task::Poll::Ready(Ok(())),
             Err(e) if e == $e => std::task::Poll::Pending,
             Err(e) => std::task::Poll::Ready(Err(e))
+        }
+    };
+    {$e:expr, $r:expr $(=> on ready $b:block)?} => {
+        {
+            let res = to_poll_pending_on_err!($e, $r);
+
+            $(if res.is_ready() {
+                $b;
+            })?
+
+            res
         }
     };
 }

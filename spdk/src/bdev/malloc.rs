@@ -4,7 +4,7 @@ use std::{
     default::Default,
     ffi::CStr,
     mem::{self},
-    os::raw:: c_char,
+    os::raw::c_char,
     ptr::{
         NonNull,
 
@@ -32,8 +32,7 @@ use crate::{
     errors::Errno,
     task::{
         Promise,
-
-        complete_with_status,
+        Promissory,
     },
     to_result,
 };
@@ -113,12 +112,15 @@ impl OwnedOps for Malloc {
     }
 
     async fn destroy(self) -> Result<(), Errno> {
-        Promise::new(move |cx| {
+        Promise::new(move |p| {
+            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+
             unsafe {
                 delete_malloc_disk(
                     spdk_bdev_get_name(self.as_ptr()),
-                    Some(complete_with_status),
-                    cx);
+                    Some(cb_fn),
+                    cb_arg.cast_mut() as *mut _
+                );
             }
 
             Poll::Pending

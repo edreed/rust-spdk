@@ -51,9 +51,7 @@ use crate::{
     },
     task::{
         Promise,
-
-        complete_with_object,
-        complete_with_ok,
+        Promissory,
     },
     thread,
     to_poll_pending_on_ok,
@@ -155,13 +153,21 @@ impl Builder {
 
     /// Creates the configured `Transport`.
     pub async fn build(self) -> Result<Transport, Errno> {
-        Promise::new(move |cx| {
-            unsafe {
-                to_poll_pending_on_ok!(spdk_nvmf_transport_create_async(
-                    self.transport_name.as_ptr(),
-                    self.opts.as_ref() as *const _ as *mut _,
-                    Some(complete_with_object::<Transport, spdk_nvmf_transport>),
-                    cx))
+        Promise::new(move |p| {
+            let (cb_fn, cb_arg) = Promissory::callback_with_object(p);
+
+            to_poll_pending_on_ok!{
+                unsafe {
+                    spdk_nvmf_transport_create_async(
+                        self.transport_name.as_ptr(),
+                        self.opts.as_ref() as *const _ as *mut _,
+                        Some(cb_fn),
+                        cb_arg.cast_mut() as *mut _,
+                    )
+                }
+                => on ready {
+                    unsafe { drop(Promissory::from_raw(cb_arg)) };
+                }
             }
         }).await
     }
@@ -378,18 +384,25 @@ impl Transport {
             OwnershipState::Borrowed(_) => Err(EPERM),
             OwnershipState::None => Err(ENODEV),
             OwnershipState::Owned(_) => {
-                Promise::new(move |cx| {
-                    unsafe {
-                        let res = to_poll_pending_on_ok!(
+                Promise::new(move |p| {
+                    let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
+
+                    let res = to_poll_pending_on_ok!{
+                        unsafe {
                             spdk_nvmf_transport_destroy(
                                 self.as_ptr(),
-                                Some(complete_with_ok),
-                                cx));
+                                Some(cb_fn),
+                                cb_arg.cast_mut() as *mut _,
+                            )
+                        }
+                        => on ready {
+                            unsafe { drop(Promissory::from_raw(cb_arg)) };
+                        }
+                    };
 
-                        mem::forget(self.take());
+                    mem::forget(self.take());
 
-                        res
-                    }
+                    res
                 }).await
             },
         }

@@ -1,8 +1,12 @@
 #![allow(dead_code)]
 use std::{
-    fmt::Debug,
-    mem,
+    fmt::Debug, mem::{
+        self,
+
+        MaybeUninit,
+    },
     pin::Pin,
+    ptr::addr_of_mut,
     sync::{
         Arc,
         Mutex,
@@ -16,11 +20,14 @@ use std::{
 
 use futures::Future;
 use libc::c_void;
-use ternary_rs::if_else;
 
 use crate::{
-    errors::Errno,
+    errors::{
+        Errno,
+        EINVAL,
+    },
     thread::Thread,
+    to_result,
 };
 
 #[cfg_attr(doc, aquamarine::aquamarine)]
@@ -87,39 +94,9 @@ impl <T> PromiseState<T>
 where
     T: Debug + 'static
 {
-    /// Returns a new `PromiseState` instance in the [`Empty`] state.
-    /// 
-    /// [`Empty`]: type@PromiseState::Empty
-    fn new() -> Arc<Mutex<Self>> {
-        Default::default()
-    }
-
     /// Replaces the current state with the specified value and returns the old state.
     fn replace(&mut self, value: Self) -> Self {
         mem::replace(&mut *self, value)
-    }
-
-    /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
-    fn set_result(arc_self: Arc<Mutex<Self>>, res: Result<T, Errno>) {
-        let prev_state = match arc_self.try_lock() {
-            Ok(mut state) => {
-                Ok(state.replace(Self::Kept(res)))
-            },
-            Err(_) => Err(res),
-        };
-
-        match prev_state {
-            Ok(prev_state) => match prev_state {
-                Self::Requesting => (),
-                Self::Waiting(waker) => waker.wake(),
-                _ => panic!("promise kept in unexpected state: {:?}", prev_state),
-            }
-            Err(res) => {
-                Thread::current().send_msg(move || {
-                    Self::set_result(arc_self, res);
-                }).expect("send result");
-            },
-        }
     }
 
     /// Polls the state of the operation, advancing to the next state if possible.
@@ -134,96 +111,287 @@ where
     }
 }
 
-/// A callback invoked to set the result of a [`Promise`].
-/// 
-/// This callback receives a raw pointer to an SPDK object of type `R` and
-/// converts it to the appropriate Rust type `T`. If the received pointer is
-/// null, the result is a suitable `Err(Errno)` value.
-pub unsafe extern "C" fn complete_with_object<T, R>(cx: *mut c_void, obj: *mut R)
+/// Receives the result of an asynchronous operation.
+pub struct Promissory<R, C = ()>
 where
-    T: Debug + TryFrom<*mut R, Error = Errno> + 'static,
+    R: Debug + 'static,
+    C: 'static,
 {
-    let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<T>>>());
-
-    PromiseState::<T>::set_result(arc_self, obj.try_into());
+    state: Mutex<PromiseState<R>>,
+    ctx: C,
 }
 
-/// A callback invoked to set the result of a [`Promise`].
-/// 
-/// This callback receives a status code. If the status code is 0, the result is
-/// `Ok(())`. Otherwise, the status is converted to a suitable `Err(Errno)`
-/// value.
-pub unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i32) {
-    let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<()>>>());
-    let res = if_else!(status == 0, Ok(()), Err(Errno(-status)));
+impl<R, C> Promissory<R, C>
+where
+    R: Debug + 'static,
+    C: 'static,
+{
+    /// Returns a new `Arc<Promise>` instance with the provided context.
+    pub fn with_context(ctx: C) -> Arc<Self> {
+        Arc::new(Self {
+            state: Default::default(),
+            ctx,
+        })
+    }
 
-    PromiseState::set_result(arc_self, res);
+    /// Returns a new `Arc<Promise>` instance, initializing the context in-place
+    /// using the specified function.
+    pub fn with_context_in_place<F>(ctx_init_fn: F) -> Arc<Self>
+    where
+        F: FnOnce(*mut C)
+    {
+        let arc_ctx = Arc::new(MaybeUninit::<Self>::uninit());
+
+        unsafe {
+            let ctx = (*(Arc::into_raw(arc_ctx) as *mut MaybeUninit<Self>)).as_mut_ptr();
+
+            addr_of_mut!((*ctx).state).write(Default::default());
+            ctx_init_fn(addr_of_mut!((*ctx).ctx));
+
+            Arc::from_raw(ctx)
+        }
+    }
+
+    /// Polls the state of the operation, advancing to the next state if possible.
+    fn poll(&self, cx: &Context<'_>) -> PromiseState<R> {
+        self.state.lock().unwrap().poll(cx)
+    }
+
+    /// Returns a reference to the user context initialized using either the
+    /// [`Promise::with_context`] or [`Promise::with_context_in_place`]
+    /// functions.
+    pub fn user_context(arc_self: &Arc<Self>) -> &C {
+        &arc_self.ctx
+    }
+
+    /// Returns a mutable reference to the user context if there are no other
+    /// `Arc` or [`Weak`] pointers to the same allocation.
+    /// 
+    /// Returns [`None`] otherwise because it is not safe to mutate the context
+    /// of a shared valued.
+    /// 
+    /// The user context is initialized using either the
+    /// [`Promise::with_context`] or [`Promise::with_context_in_place`]
+    /// functions.
+    pub fn user_context_mut(arc_self: &mut Arc<Self>) -> Option<&mut C> {
+        Arc::get_mut(arc_self).map(|p| &mut p.ctx)
+    }
+
+    /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
+    pub fn set_result(arc_self: Arc<Self>, res: Result<R, Errno>) {
+        let prev_state = match arc_self.state.try_lock() {
+            Ok(mut state) => {
+                Ok(state.replace(PromiseState::Kept(res)))
+            },
+            Err(_) => Err(res),
+        };
+
+        match prev_state {
+            Ok(prev_state) => match prev_state {
+                PromiseState::Requesting => (),
+                PromiseState::Waiting(waker) => waker.wake(),
+                _ => panic!("promise kept in unexpected state: {:?}", prev_state),
+            }
+            Err(res) => {
+                Thread::current().send_msg(move || {
+                    Self::set_result(arc_self, res);
+                }).expect("send result");
+            },
+        }
+    }
+
+    /// A callback invoked to set the result of a [`Promise`].
+    /// 
+    /// This callback receives a raw pointer to an SPDK object of type `R` and
+    /// converts it to the appropriate Rust type `T`. If the received pointer is
+    /// null, the result is a suitable `Err(Errno)` value.
+    unsafe extern "C" fn complete_with_object<T>(cx: *mut c_void, obj: *mut T)
+    where
+        R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
+        C: 'static,
+    {
+        let arc_self = Self::from_raw(cx.cast());
+
+        Self::set_result(arc_self, obj.try_into().map_err(|_| EINVAL));
+    }
+
+    /// Returns a pointer to a callback function and a context pointer suitable
+    /// for passing to an asynchronous function call. The callback is invoked to
+    /// set the result of a [`Promise`].
+    /// 
+    /// This callback receives a raw pointer to an SPDK object of type `R` and
+    /// converts it to the appropriate Rust type `T`. If the received pointer is
+    /// null, the result is a suitable `Err(Errno)` value.
+    pub fn callback_with_object<T>(arc_self: &Arc<Self>) -> (unsafe extern "C" fn(*mut c_void, *mut T), *const Self)
+    where
+        R: Debug + TryFrom<*mut T, Error = Errno> + 'static
+    {
+        (Self::complete_with_object, Self::into_raw(arc_self.clone()))
+    }
+
+    /// Consumes an `Arc<Promissory>` instance and returns the wrapped pointer.
+    /// 
+    /// To avoid a memory leak, the pointer must be converted back to an
+    /// `Arc<Promissory>` using the [`Promissory::from_raw`] function.
+    pub fn into_raw(arc_self: Arc<Self>) -> *const Self {
+        Arc::into_raw(arc_self)
+    }
+
+    /// Constructs an `Arc<Promissory>` instance from a raw pointer.
+    /// 
+    /// The raw pointer must have been previously returned by a call to
+    /// `Promissory<R, C>::into_raw`.
+    /// 
+    /// See [`Arc<T>::from_raw`] for safety requirements.
+    pub unsafe fn from_raw(raw: *const Self) -> Arc<Self> {
+        Arc::from_raw(raw)
+    }
 }
 
-/// A callback invoked to set the result of a [`Promise`].
-/// 
-/// This callback always sets the result to `Ok(())`.
-pub unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
-    let arc_self = Arc::from_raw(cx.cast::<Mutex<PromiseState<()>>>());
+impl<C> Promissory<(), C> {
+    /// A callback invoked to set the result of a [`Promise`].
+    /// 
+    /// This callback receives a status code. If the status code is 0, the result is
+    /// `Ok(())`. Otherwise, the status is converted to a suitable `Err(Errno)`
+    /// value.
+    unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i32) {
+        let arc_self = Self::from_raw(cx.cast());
 
-    PromiseState::set_result(arc_self, Ok(()));
+        Self::set_result(arc_self, to_result!(status));
+    }
+
+    /// Returns a pointer to a callback function and a context pointer suitable
+    /// for passing to an asynchronous function call. The callback is invoked to
+    /// set the result of a [`Promise`].
+    /// 
+    /// This callback receives a status code. If the status code is 0, the result is
+    /// `Ok(())`. Otherwise, the status is converted to a suitable `Err(Errno)`
+    /// value.
+    pub fn callback_with_status(arc_self: &Arc<Self>) -> (unsafe extern "C" fn(*mut c_void, i32), *const Self) {
+        (Self::complete_with_status, Self::into_raw(arc_self.clone()))
+    }
+
+    /// A callback invoked to set the result of a [`Promise`].
+    /// 
+    /// This callback always sets the result to `Ok(())`.
+    unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
+        let arc_self = Self::from_raw(cx.cast());
+
+        Self::set_result(arc_self, Ok(()));
+    }
+
+    /// Returns a pointer to a callback function and a context pointer suitable
+    /// for passing to an asynchronous function call. The callback is invoked to
+    /// set the result of a [`Promise`].
+    /// 
+    /// This callback always sets the result to `Ok(())`.
+    pub fn callback_with_ok(arc_self: &Arc<Self>) -> (unsafe extern "C" fn(*mut c_void), *const Self) {
+        (Self::complete_with_ok, Self::into_raw(arc_self.clone()))
+    }
+}
+
+impl<R, C> Default for Promissory<R, C>
+where
+    R: Debug + 'static,
+    C: Default + 'static
+{
+    fn default() -> Self {
+        Self {
+            state: Default::default(),
+            ctx: Default::default(),
+        }
+    }
 }
 
 /// Orchestrates the execution of an asynchronous operation and provides access
 /// to its result.
-pub struct Promise<F, T>
+pub struct Promise<S, R, C = ()>
 where
-    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: Debug + 'static
+    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>>,
+    R: Debug + 'static,
+    C: 'static,
 {
-    start_fn: F,
-    state: Arc<Mutex<PromiseState<T>>>,
+    start_fn: Option<S>,
+    ctx: Arc<Promissory<R, C>>,
 }
 
-unsafe impl<F, T> Send for Promise<F, T>
+unsafe impl<S, R, C> Send for Promise<S, R, C>
 where
-    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: Debug + Send + 'static
+    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>>,
+    R: Debug + Send + 'static,
+    C: 'static,
 {}
 
-impl<F, T> Promise<F, T>
+impl<S, R> Promise<S, R>
 where
-    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>>,
-    T: Debug + 'static
+    S: FnOnce(&mut Arc<Promissory<R, ()>>) -> Poll<Result<R, Errno>>,
+    R: Debug + 'static,
 {
     /// Returns a new `Promise` instance.
     /// 
     /// The caller provides a function that starts the asynchronous operation
     /// passing one of the `complete_with_*` callbacks and the provided context
     /// pointer to the SPDK API.
-    pub fn new(start_fn: F) -> Self {
+    pub fn new(start_fn: S) -> Self {
         Self {
-            start_fn,
-            state: PromiseState::new(),
+            start_fn: Some(start_fn),
+            ctx: Default::default(),
         }
     }
 }
 
-impl<F, T> Future for Promise<F, T>
+impl<S, R, C> Promise<S, R, C>
 where
-    F: FnMut(*mut c_void) -> Poll<Result<T, Errno>> + Unpin,
-    T: Debug + 'static
+    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>>,
+    R: Debug + 'static,
+    C: 'static,
 {
-    type Output = Result<T, Errno>;
+    /// Returns a new `Promise` instance the user context of the related
+    /// `Promissory` initialized to the specified value.
+    pub fn with_context(ctx: C, start_fn: S) -> Self {
+        Self {
+            start_fn: Some(start_fn),
+            ctx: Promissory::with_context(ctx),
+        }
+    }
+
+    /// Returns a new `Promise` instance with the user context of the related
+    /// `Promissory` initialized in-place using the specified function.
+    /// 
+    /// The pointer provided to the initialization function points to
+    /// uninitialized memory. Reading from this pointer is undefined behavior.
+    pub fn with_context_in_place<F>(ctx_init_fn: F, start_fn: S) -> Self
+    where
+        F: FnOnce(*mut C)
+    {
+        Self {
+            start_fn: Some(start_fn),
+            ctx: Promissory::with_context_in_place(ctx_init_fn),
+        }
+    }
+}
+
+impl<S, R, C> Future for Promise<S, R, C>
+where
+    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + Unpin,
+    R: Debug + 'static,
+    C: 'static,
+{
+    type Output = Result<R, Errno>;
 
     fn poll(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>
     ) -> Poll<Self::Output> {
-        let state = self.state.lock().unwrap().poll(cx);
+        let state = self.ctx.poll(cx);
 
         match state {
             PromiseState::Empty =>  {
-                let promise_cx = Arc::into_raw(self.state.clone());
+                let start_fn = self.as_mut().start_fn.take().expect("called in empty state");
 
-                match (self.as_mut().start_fn)(promise_cx as *mut c_void) {
+                match (start_fn)(&mut self.ctx) {
                     Poll::Pending => {
-                        let state = self.state.lock().unwrap().poll(cx);
+                        let state = self.ctx.poll(cx);
 
                         if let PromiseState::Kept(res) = state {
                             return Poll::Ready(res);
@@ -231,11 +399,7 @@ where
 
                         Poll::Pending
                     },
-                    Poll::Ready(res) => {
-                        unsafe { Arc::from_raw(promise_cx) };
-
-                        Poll::Ready(res)
-                    }
+                    Poll::Ready(res) => Poll::Ready(res),
                 }
             },
             PromiseState::Waiting(_) => Poll::Pending,

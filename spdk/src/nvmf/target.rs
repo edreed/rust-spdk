@@ -51,9 +51,7 @@ use crate::{
     },
     task::{
         Promise,
-
-        complete_with_ok,
-        complete_with_status,
+        Promissory,
     },
     thread,
     to_poll_pending_on_err,
@@ -245,12 +243,15 @@ impl Target {
     pub async fn destroy(mut self) -> Result<(), Errno> {
         match self.0 {
             OwnershipState::Owned(_) => {
-                Promise::new(move |cx| {
+                Promise::new(move |p| {
+                    let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+
                     unsafe {
                         spdk_nvmf_tgt_destroy(
                             self.as_ptr(),
-                            Some(complete_with_status),
-                            cx);
+                            Some(cb_fn),
+                            cb_arg.cast_mut() as *mut _,
+                        );
                     }
 
                     mem::forget(self.take());
@@ -265,13 +266,15 @@ impl Target {
 
     /// Adds a transport to the target.
     pub async fn add_transport(&mut self, transport: Transport) -> Result<(), Errno> {
-        let res = Promise::new(|cx| {
+        let res = Promise::new(|p| {
+            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+
             unsafe {
                 spdk_nvmf_tgt_add_transport(
                     self.as_ptr(),
                     transport.as_ptr(),
-                    Some(complete_with_status),
-                    cx,
+                    Some(cb_fn),
+                    cb_arg.cast_mut() as *mut _,
                 );
             }
 
@@ -338,14 +341,21 @@ impl Target {
 
     /// Removes a subsystem from the target.
     pub async fn remove_subsystem(&mut self, subsys: Subsystem) -> Result<(), Errno> {
-        Promise::new(|cx| {
-            unsafe {
-                to_poll_pending_on_err!(
-                    EINPROGRESS,
+        Promise::new(|p| {
+            let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
+
+            to_poll_pending_on_err!{
+                EINPROGRESS,
+                unsafe {
                     spdk_nvmf_subsystem_destroy(
                         subsys.as_ptr(),
-                        Some(complete_with_ok),
-                        cx))
+                        Some(cb_fn),
+                        cb_arg.cast_mut() as *mut _,
+                    )
+                }
+                => on ready {
+                    unsafe { drop(Promissory::from_raw(cb_arg)) };
+                }
             }
         }).await
     }
