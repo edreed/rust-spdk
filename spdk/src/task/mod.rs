@@ -3,6 +3,7 @@
 //! 
 //! [SPEF]: https://spdk.io/doc/event.html
 mod join_handle;
+mod poller;
 mod promise;
 mod task;
 mod yield_now;
@@ -14,6 +15,14 @@ pub(crate) use task::{
 };
 
 pub use join_handle::JoinHandle;
+pub use poller::{
+    Polled,
+    PolledFn,
+    Poller,
+
+    polled_fn,
+    polled_fn_with_period,
+};
 pub use promise::{
     Promise,
 
