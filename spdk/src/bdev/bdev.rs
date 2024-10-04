@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     ffi::{
         CStr,
         CString,
@@ -33,6 +32,7 @@ use std::{
         drop_in_place,
     },
     slice,
+    sync::Arc,
     task::Poll,
 };
 
@@ -85,14 +85,12 @@ use crate::{
 
         ECANCELED,
         EINPROGRESS,
-        ENOMEM
+        EINVAL,
+        ENOMEM,
     },
     task::{
-        self,
-
         Promise,
-
-        complete_with_status,
+        Promissory,
     },
     thread::{
         self,
@@ -255,24 +253,13 @@ where
 /// Represents driver-specific context for an I/O request.
 /// 
 /// The type parameter `T` is the I/O context type for the BDev implementation.
+#[derive(Default)]
 pub(crate) struct BDevIoCtx<T>
 where
     T: Default + 'static
 {
-    promise_cx: Cell<*mut c_void>,
+    buf_promissory: Option<Arc<Promissory<()>>>,
     inner: T
-}
-
-impl <T> Default for BDevIoCtx<T>
-where
-    T: Default + 'static
-{
-    fn default() -> Self {
-        Self {
-            promise_cx: Cell::new(ptr::null_mut()),
-            inner: Default::default()
-        }
-    }
 }
 
 /// A BDev I/O request.
@@ -398,10 +385,10 @@ where
     /// 
     /// [`BDevIo<T>::allocate_buffers`]: method@BDevIo::allocate_buffers
     unsafe extern "C" fn buffers_allocated(_ch: *mut spdk_io_channel, io: *mut spdk_bdev_io, success: bool) {
-        let io: Self = BDevIo::from(io);
-        let cx = io.internal_ctx().promise_cx.replace(ptr::null_mut());
+        let mut io: Self = BDevIo::from(io);
+        let p = io.internal_ctx_mut().buf_promissory.take().expect("promissory present");
 
-        task::complete_with_status(cx, if_else!(success, 0, -libc::EINVAL));
+        Promissory::set_result(p, if_else!(success, Ok(()), Err(EINVAL)));
     }
 
     /// Allocates buffers aligned to the BDev's requirement for the I/O request.
@@ -418,8 +405,8 @@ where
     /// Any buffers allocated by this method will automatically be freed on
     /// completion of this I/O request.
     pub async fn allocate_buffers(&mut self, length: u64) -> Result<(), Errno> {
-        Promise::new(move |cx| {
-            self.internal_ctx().promise_cx.set(cx);
+        Promise::new(move |p| {
+            self.internal_ctx_mut().buf_promissory.replace(p.clone());
 
             unsafe {
                 spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length)
@@ -558,9 +545,15 @@ where
         let bdev_ptr = self.into_bdev_ptr();
 
         Promise::new(
-            move |cx: *mut c_void| {
+            move |p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+
                 unsafe {
-                    spdk_bdev_unregister(bdev_ptr, Some(complete_with_status), cx)
+                    spdk_bdev_unregister(
+                        bdev_ptr,
+                        Some(cb_fn),
+                        cb_arg.cast_mut() as *mut _
+                    );
                 }
 
                 Poll::Pending
@@ -738,12 +731,15 @@ impl <T: BDevOps> OwnedOps for OwnedImpl<T> {
         // avoid dropping the box here to prevent double-free.
         let bdev = ManuallyDrop::new(self);
 
-        Promise::new(move |cx| {
+        Promise::new(move |p| {
+            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+
             unsafe {
                 spdk_bdev_unregister(
                     bdev.as_ptr(),
-                    Some(complete_with_status),
-                    cx);
+                    Some(cb_fn),
+                    cb_arg.cast_mut() as *mut _
+                );
             }
 
             Poll::Pending

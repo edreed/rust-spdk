@@ -25,9 +25,6 @@ pub use poller::{
 };
 pub use promise::{
     Promise,
-
-    complete_with_object,
-    complete_with_status,
-    complete_with_ok,
+    Promissory,
 };
 pub use yield_now::yield_now;
