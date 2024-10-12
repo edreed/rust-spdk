@@ -59,25 +59,27 @@ fn main() {
         dir::copy(spdk_src_dir, out_dir.clone(), &copy_options).expect("$OUT_DIR is writeable");
     }
 
-    let mut config = autotools::Config::new(spdk_dir);
-    config
-        .forbid("--disable-shared")
-        .forbid("--enable-static")
-        .disable("apps", None)
-        .disable("examples", None)
-        .disable("tests", None)
-        .disable("unit-tests", None)
-        .config_option("prefix", Some(""))
-        .insource(true)
-        .make_target("all");
+    if !spdk_pkgconfig_dir.exists() {
+        let mut config = autotools::Config::new(spdk_dir);
+        config
+            .forbid("--disable-shared")
+            .forbid("--enable-static")
+            .disable("apps", None)
+            .disable("examples", None)
+            .disable("tests", None)
+            .disable("unit-tests", None)
+            .config_option("prefix", Some(""))
+            .insource(true)
+            .make_target("all");
 
-    if env::var("DEBUG").unwrap_or("false".into()).parse().unwrap() {
-        config.enable("debug", None);
-    } else {
-        config.disable("debug", None);
+        if env::var("DEBUG").unwrap_or("false".into()).parse().unwrap() {
+            config.enable("debug", None);
+        } else {
+            config.disable("debug", None);
+        }
+
+        let _dst = config.build();
     }
-
-    let _dst = config.build();
 
     let old_pkg_config_path = env::var("PKG_CONFIG_PATH").unwrap_or("".into());
 
