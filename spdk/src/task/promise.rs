@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::{
-    fmt::Debug, mem::{
+    fmt::Debug,
+    mem::{
         self,
 
         MaybeUninit,
@@ -305,26 +306,23 @@ where
 
 /// Orchestrates the execution of an asynchronous operation and provides access
 /// to its result.
-pub struct Promise<S, R, C = ()>
+pub struct Promise<'a, R, C = ()>
 where
-    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>>,
     R: Debug + 'static,
     C: 'static,
 {
-    start_fn: Option<S>,
-    ctx: Arc<Promissory<R, C>>,
+    start_fn: Option<Box<dyn FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a>>,
+    promissory: Arc<Promissory<R, C>>,
 }
 
-unsafe impl<S, R, C> Send for Promise<S, R, C>
+unsafe impl<'a, R, C> Send for Promise<'a, R, C>
 where
-    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>>,
     R: Debug + Send + 'static,
     C: 'static,
 {}
 
-impl<S, R> Promise<S, R>
+impl<'a, R> Promise<'a, R>
 where
-    S: FnOnce(&mut Arc<Promissory<R, ()>>) -> Poll<Result<R, Errno>>,
     R: Debug + 'static,
 {
     /// Returns a new `Promise` instance.
@@ -332,26 +330,31 @@ where
     /// The caller provides a function that starts the asynchronous operation
     /// passing one of the `complete_with_*` callbacks and the provided context
     /// pointer to the SPDK API.
-    pub fn new(start_fn: S) -> Self {
+    pub fn new<S>(start_fn: S) -> Self
+    where
+        S: FnOnce(&mut Arc<Promissory<R>>) -> Poll<Result<R, Errno>> + 'a
+    {
         Self {
-            start_fn: Some(start_fn),
-            ctx: Default::default(),
+            start_fn: Some(Box::new(start_fn)),
+            promissory: Default::default(),
         }
     }
 }
 
-impl<S, R, C> Promise<S, R, C>
+impl<'a, R, C> Promise<'a, R, C>
 where
-    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>>,
     R: Debug + 'static,
     C: 'static,
 {
     /// Returns a new `Promise` instance the user context of the related
     /// `Promissory` initialized to the specified value.
-    pub fn with_context(ctx: C, start_fn: S) -> Self {
+    pub fn with_context<S>(ctx: C, start_fn: S) -> Self
+    where
+        S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a
+    {
         Self {
-            start_fn: Some(start_fn),
-            ctx: Promissory::with_context(ctx),
+            start_fn: Some(Box::new(start_fn)),
+            promissory: Promissory::with_context(ctx),
         }
     }
 
@@ -360,20 +363,20 @@ where
     /// 
     /// The pointer provided to the initialization function points to
     /// uninitialized memory. Reading from this pointer is undefined behavior.
-    pub fn with_context_in_place<F>(ctx_init_fn: F, start_fn: S) -> Self
+    pub fn with_context_in_place<F, S>(ctx_init_fn: F, start_fn: S) -> Self
     where
+        S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a,
         F: FnOnce(*mut C)
     {
         Self {
-            start_fn: Some(start_fn),
-            ctx: Promissory::with_context_in_place(ctx_init_fn),
+            start_fn: Some(Box::new(start_fn)),
+            promissory: Promissory::with_context_in_place(ctx_init_fn),
         }
     }
 }
 
-impl<S, R, C> Future for Promise<S, R, C>
+impl<'a, R, C> Future for Promise<'a, R, C>
 where
-    S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + Unpin,
     R: Debug + 'static,
     C: 'static,
 {
@@ -383,15 +386,15 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>
     ) -> Poll<Self::Output> {
-        let state = self.ctx.poll(cx);
+        let state = self.promissory.poll(cx);
 
         match state {
             PromiseState::Empty =>  {
                 let start_fn = self.as_mut().start_fn.take().expect("called in empty state");
 
-                match (start_fn)(&mut self.ctx) {
+                match (start_fn)(&mut self.promissory) {
                     Poll::Pending => {
-                        let state = self.ctx.poll(cx);
+                        let state = self.promissory.poll(cx);
 
                         if let PromiseState::Kept(res) = state {
                             return Poll::Ready(res);
