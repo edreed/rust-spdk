@@ -24,6 +24,9 @@ pub const ENODEV: Errno = Errno(libc::ENODEV);
 /// Invalid argument
 pub const EINVAL: Errno = Errno(libc::EINVAL);
 
+/// Out of range
+pub const ERANGE: Errno = Errno(libc::ERANGE);
+
 /// Operation not supported
 pub const ENOTSUP: Errno = Errno(libc::ENOTSUP);
 

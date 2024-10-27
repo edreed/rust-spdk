@@ -119,6 +119,13 @@ fn main() {
         defines.push("CARGO_FEATURE_BDEV_MALLOC=1");
     }
 
+    let include_json = env::var_os("CARGO_FEATURE_JSON").is_some();
+
+    if include_json {
+        pkg_configs.push(pkg_config.probe("spdk_json").expect("spdk_json package config exists"));
+        defines.push("CARGO_FEATURE_JSON=1");
+    }
+
     let include_target_nvmf = env::var_os("CARGO_FEATURE_NVMF").is_some();
 
     if include_target_nvmf {

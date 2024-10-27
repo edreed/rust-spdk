@@ -7,6 +7,7 @@ pub mod block;
 pub mod cli;
 pub mod dma;
 pub mod errors;
+pub mod json;
 pub mod macros;
 pub mod nvme;
 pub mod nvmf;

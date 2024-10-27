@@ -166,7 +166,7 @@ where
     }
 
     /// Returns a mutable reference to the user context if there are no other
-    /// `Arc` or [`Weak`] pointers to the same allocation.
+    /// `Arc` or `Weak` pointers to the same allocation.
     /// 
     /// Returns [`None`] otherwise because it is not safe to mutate the context
     /// of a shared valued.
