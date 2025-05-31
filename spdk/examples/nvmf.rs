@@ -1,19 +1,10 @@
-use std::{
-    ffi::CStr,
-    net::IpAddr,
-    time::Duration,
-};
+use std::{ffi::CStr, net::IpAddr, time::Duration};
 
 use spdk::{
     bdev::malloc,
     cli::Parser,
     nvme::TransportId,
-    nvmf::{
-        self,
-
-        SubsystemType,
-        TransportType,
-    },
+    nvmf::{self, SubsystemType, TransportType},
     runtime::Runtime,
     time::interval,
 };
@@ -51,13 +42,14 @@ async fn main() {
     let args = Args::get();
 
     let transport_id = format!(
-            "trtype=TCP adrfam={} traddr={} trsvcid={} subnqn={}",
-            if_else!(args.listen_addr.is_ipv4(), "IPv4", "IPv6"),
-            args.listen_addr,
-            args.listen_port,
-            NQN.to_string_lossy().to_string())
-        .parse::<TransportId>()
-        .unwrap();
+        "trtype=TCP adrfam={} traddr={} trsvcid={} subnqn={}",
+        if_else!(args.listen_addr.is_ipv4(), "IPv4", "IPv6"),
+        args.listen_addr,
+        args.listen_port,
+        NQN.to_string_lossy().to_string()
+    )
+    .parse::<TransportId>()
+    .unwrap();
 
     target.listen(&transport_id).unwrap();
 

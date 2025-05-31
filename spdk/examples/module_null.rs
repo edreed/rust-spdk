@@ -2,20 +2,10 @@ use std::io::Write;
 
 use async_trait::async_trait;
 use spdk::{
-    bdev::{
-        BDevIo,
-        BDevIoChannelOps,
-        BDevOps,
-        ModuleInstance,
-        ModuleOps,
-    },
-    block::{
-        Device,
-        IoType,
-        Owned,
-    },
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
+    block::{Device, IoType, Owned},
     dma,
-    errors::Errno
+    errors::Errno,
 };
 
 /// Implements the NullRs block device module.

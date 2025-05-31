@@ -1,9 +1,6 @@
 use std::{
     pin::Pin,
-    task::{
-        Context,
-        Poll,
-    },
+    task::{Context, Poll},
 };
 
 use futures::Future;
@@ -30,5 +27,5 @@ pub async fn yield_now() {
         }
     }
 
-    YieldNow{ yielded: false }.await
+    YieldNow { yielded: false }.await
 }

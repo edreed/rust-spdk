@@ -1,26 +1,21 @@
 use std::{
     pin::Pin,
-    task::{
-        Context, Poll
-    },
+    task::{Context, Poll},
 };
 
-use futures::{
-    channel::oneshot,
-    Future
-};
+use futures::{channel::oneshot, Future};
 
 /// A handle that awaits the result of a task.
-/// 
+///
 /// Dropping a [`JoinHandle`] will detach the task leaving no way to join on
 /// it or obtain its result.
-/// 
+///
 /// A [`JoinHandle`] is created when task is spawned.
 pub struct JoinHandle<T> {
     rx: oneshot::Receiver<T>,
 }
 
-impl <T> JoinHandle<T> {
+impl<T> JoinHandle<T> {
     /// Create a new [`JoinHandle`] from a [`oneshot::Receiver`].
     pub(crate) fn new(rx: oneshot::Receiver<T>) -> Self {
         Self { rx }
@@ -33,7 +28,7 @@ impl <T> JoinHandle<T> {
     }
 }
 
-impl <T> Future for JoinHandle<T> {
+impl<T> Future for JoinHandle<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

@@ -1,6 +1,6 @@
 //! Rust programming language abstractions for the Storage Performance
 //! Development Kit ([SPDK]).
-//! 
+//!
 //! [SPDK]: https://www.spdk.io
 pub mod bdev;
 pub mod block;

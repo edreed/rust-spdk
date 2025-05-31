@@ -1,25 +1,11 @@
 use std::{
     mem::MaybeUninit,
-    ops::{
-        BitAndAssign,
-        BitOrAssign,
-        BitXorAssign,
-        Not,
-    },
+    ops::{BitAndAssign, BitOrAssign, BitXorAssign, Not},
 };
 
 use spdk_sys::{
-    spdk_cpuset,
-    
-    spdk_cpuset_and,
-    spdk_cpuset_copy,
-    spdk_cpuset_count,
-    spdk_cpuset_equal,
-    spdk_cpuset_negate,
-    spdk_cpuset_or,
-    spdk_cpuset_set_cpu,
-    spdk_cpuset_xor,
-    spdk_cpuset_zero,
+    spdk_cpuset, spdk_cpuset_and, spdk_cpuset_copy, spdk_cpuset_count, spdk_cpuset_equal,
+    spdk_cpuset_negate, spdk_cpuset_or, spdk_cpuset_set_cpu, spdk_cpuset_xor, spdk_cpuset_zero,
 };
 
 pub struct CpuSet(spdk_cpuset);
@@ -56,9 +42,7 @@ impl CpuSet {
 
     /// Returns the number of CPUs in the set.
     pub fn count(&self) -> u32 {
-        unsafe {
-            spdk_cpuset_count(self.as_ptr())
-        }
+        unsafe { spdk_cpuset_count(self.as_ptr()) }
     }
 }
 
@@ -76,9 +60,7 @@ impl Default for CpuSet {
 
 impl PartialEq for CpuSet {
     fn eq(&self, other: &Self) -> bool {
-        unsafe {
-            spdk_cpuset_equal(self.as_ptr(), other.as_ptr())
-        }
+        unsafe { spdk_cpuset_equal(self.as_ptr(), other.as_ptr()) }
     }
 }
 
@@ -138,7 +120,7 @@ impl Not for CpuSet {
 }
 
 impl From<spdk_cpuset> for CpuSet {
-   fn from(cpu_set: spdk_cpuset) -> Self {
+    fn from(cpu_set: spdk_cpuset) -> Self {
         Self(cpu_set)
     }
 }

@@ -5,8 +5,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::LitCStr;
 
-pub(crate) struct GenerateModule {
-}
+pub(crate) struct GenerateModule {}
 
 impl GenerateModule {
     /// Creates a new instance of the `GenerateModule` struct.
@@ -18,7 +17,8 @@ impl GenerateModule {
     pub(crate) fn generate(&mut self, _attr: TokenStream, item: TokenStream) -> TokenStream {
         let input = syn::parse_macro_input!(item as syn::ItemStruct);
         let module_ident = input.ident.clone();
-        let module_name = input.ident
+        let module_name = input
+            .ident
             .to_string()
             .trim_end_matches("Module")
             .from_case(Case::UpperCamel)
@@ -29,7 +29,7 @@ impl GenerateModule {
         let module_name_cstr = CString::new(module_name).unwrap();
         let module_name_lit = LitCStr::new(&module_name_cstr, module_ident.span());
 
-        let output = quote!{
+        let output = quote! {
             #input
 
             static #reg_var_ident: ::std::sync::OnceLock<::spdk::bdev::Module<#module_ident>> = ::std::sync::OnceLock::new();

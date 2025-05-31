@@ -6,28 +6,8 @@ mod subsystem;
 mod target;
 mod transport;
 
-pub use host::{
-    Host,
-    AllowedHosts,
-};
-pub use namespace::{
-    Namespace,
-    Namespaces,
-};
-pub use subsystem::{
-    Subsystem,
-    Subsystems,
-    SubsystemType,
-};
-pub use target::{
-    Builder as TargetBuilder,
-    Target,
-    Targets,
-
-    targets,
-};
-pub use transport::{
-    Builder as TransportBuilder,
-    Transport,
-    TransportType,
-};
+pub use host::{AllowedHosts, Host};
+pub use namespace::{Namespace, Namespaces};
+pub use subsystem::{Subsystem, SubsystemType, Subsystems};
+pub use target::{targets, Builder as TargetBuilder, Target, Targets};
+pub use transport::{Builder as TransportBuilder, Transport, TransportType};

@@ -8,15 +8,6 @@ mod owned;
 
 pub use any::Any;
 pub use descriptor::Descriptor;
-pub use device::{
-    Device,
-    Devices,
-    IoType,
-
-    devices
-};
+pub use device::{devices, Device, Devices, IoType};
 pub use io_channel::IoChannel;
-pub use owned::{
-    Owned,
-    OwnedOps,
-};
+pub use owned::{Owned, OwnedOps};

@@ -3,29 +3,19 @@ use std::{
     marker::PhantomData,
     mem::MaybeUninit,
     ops::Deref,
-    ptr::{
-        NonNull,
-
-        addr_of_mut,
-    },
+    ptr::{addr_of_mut, NonNull},
     time::Duration,
 };
 
 use spdk_sys::{
-    SPDK_POLLER_BUSY,
-    SPDK_POLLER_IDLE,
-
-    spdk_poller,
-    spdk_poller_pause,
-    spdk_poller_register,
-    spdk_poller_resume,
-    spdk_poller_unregister,
+    spdk_poller, spdk_poller_pause, spdk_poller_register, spdk_poller_resume,
+    spdk_poller_unregister, SPDK_POLLER_BUSY, SPDK_POLLER_IDLE,
 };
 
 /// A trait for types that can be polled.
 pub trait Polled {
     /// Polls the type.
-    /// 
+    ///
     /// Returns `true` if work was done on this invocation, `false` otherwise.
     fn poll(&mut self) -> bool;
 }
@@ -34,7 +24,7 @@ pub trait Polled {
 /// implemented the [`Polled`] trait.
 pub struct Poller<'a, T>
 where
-    T: Polled
+    T: Polled,
 {
     poller: NonNull<spdk_poller>,
     polled: PhantomData<&'a mut T>,
@@ -42,7 +32,7 @@ where
 
 impl<'a, T> Poller<'a, T>
 where
-    T: Polled
+    T: Polled,
 {
     /// Creates a new poller that will repeatedly poll `polled` as fast as
     /// possible on the current SPDK thread.
@@ -53,14 +43,14 @@ where
 
     /// Creates a new poller that will periodically poll `polled` with the
     /// specified period on the current SPDK thread.
-    /// 
+    ///
     /// # Notes
-    /// 
+    ///
     /// The granularity of `period` is microseconds. If the period is zero or
     /// less than 1μs, the `polled` will be polled as fast as possible.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function panics if the duration cannot be represented as a unsigned
     /// 64-bit integer.
     pub fn with_period(polled: &'a mut T, period: Duration) -> Self {
@@ -68,7 +58,11 @@ where
             spdk_poller_register(
                 Some(Self::poll),
                 polled as *mut T as *mut _,
-                period.as_micros().try_into().expect("period in range 0..2^64"))
+                period
+                    .as_micros()
+                    .try_into()
+                    .expect("period in range 0..2^64"),
+            )
         })
         .expect("poller created");
 
@@ -91,7 +85,7 @@ where
 
     /// Pauses the poller. The polled object with not be polled until the poller
     /// is resumed by a call to the [`resume`] method.
-    /// 
+    ///
     /// [`resume`]: method@Poller::resume
     #[inline]
     pub fn pause(&self) {
@@ -99,7 +93,7 @@ where
     }
 
     /// Resumes a poller paused by the [`pause`] method.
-    /// 
+    ///
     /// [`pause`]: method@Poller::pause
     #[inline]
     pub fn resume(&self) {
@@ -109,7 +103,7 @@ where
 
 impl<'a, T> Drop for Poller<'a, T>
 where
-    T: Polled
+    T: Polled,
 {
     fn drop(&mut self) {
         unsafe { spdk_poller_unregister(&mut self.poller.as_ptr()) }
@@ -117,14 +111,14 @@ where
 }
 
 /// A poller that polls a function.
-pub struct PolledFn<'a, T: FnMut() -> bool>{
+pub struct PolledFn<'a, T: FnMut() -> bool> {
     fun: T,
     poller: Poller<'a, Self>,
 }
 
-impl <'a, T> PolledFn<'a, T>
+impl<'a, T> PolledFn<'a, T>
 where
-    T: FnMut() -> bool
+    T: FnMut() -> bool,
 {
     /// Creates a new poller that will repeatedly poll `fun` as fast as possible
     /// on the current SPDK thread.
@@ -135,14 +129,14 @@ where
 
     /// Creates a new poller that will periodically poll `fun` with the
     /// specified period on the current SPDK thread.
-    /// 
+    ///
     /// # Notes
-    /// 
+    ///
     /// The granularity of `period` is microseconds. If the period is zero or
     /// less than 1μs, the `polled` will be polled as fast as possible.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function panics if the duration cannot be represented as a unsigned
     /// 64-bit integer.
     pub fn with_period(fun: T, period: Duration) -> Box<Self> {
@@ -160,7 +154,7 @@ where
 
 impl<'a, T> Polled for PolledFn<'a, T>
 where
-    T: FnMut() -> bool
+    T: FnMut() -> bool,
 {
     #[inline]
     fn poll(&mut self) -> bool {
@@ -170,7 +164,7 @@ where
 
 impl<'a, T> Deref for PolledFn<'a, T>
 where
-    T: FnMut() -> bool
+    T: FnMut() -> bool,
 {
     type Target = Poller<'a, Self>;
 
@@ -184,26 +178,26 @@ where
 /// the current SPDK thread.
 pub fn polled_fn<T>(fun: T) -> Box<PolledFn<'static, T>>
 where
-    T: FnMut() -> bool + 'static
+    T: FnMut() -> bool + 'static,
 {
     PolledFn::new(fun)
 }
 
 /// Creates a new poller that will periodically poll `fun` with the specified
 /// period on the current SPDK thread.
-/// 
+///
 /// # Notes
-/// 
+///
 /// The granularity of `period` is microseconds. If the period is zero or
 /// less than 1μs, the `polled` will be polled as fast as possible.
-/// 
+///
 /// # Panics
-/// 
+///
 /// This function panics if the duration cannot be represented as a unsigned
 /// 64-bit integer.
 pub fn polled_fn_with_period<T>(fun: T, period: Duration) -> Box<PolledFn<'static, T>>
 where
-    T: FnMut() -> bool + 'static
+    T: FnMut() -> bool + 'static,
 {
     PolledFn::with_period(fun, period)
 }

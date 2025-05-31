@@ -1,4 +1,7 @@
-use std::{time::Duration, io::{self, Write}};
+use std::{
+    io::{self, Write},
+    time::Duration,
+};
 
 use spdk::time;
 
@@ -8,6 +11,6 @@ async fn main() {
     io::stdout().flush().unwrap();
 
     time::sleep(Duration::from_secs(1)).await;
-    
+
     println!("World!");
 }

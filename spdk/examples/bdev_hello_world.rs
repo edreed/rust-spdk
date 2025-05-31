@@ -1,16 +1,9 @@
 use std::{
     ffi::CStr,
-    io::{
-        Read,
-        Write,
-    },
+    io::{Read, Write},
 };
 
-use spdk::{
-    bdev::malloc,
-    dma,
-    thread,
-};
+use spdk::{bdev::malloc, dma, thread};
 
 const BDEV_NAME: &CStr = c"Malloc0";
 const NUM_BLOCKS: u64 = 32768;
@@ -53,12 +46,16 @@ async fn main() {
 
         let mut read_data = String::new();
 
-        buf.cursor().take(DATA.len() as u64).read_to_string(&mut read_data).unwrap();
+        buf.cursor()
+            .take(DATA.len() as u64)
+            .read_to_string(&mut read_data)
+            .unwrap();
 
         assert_eq!(read_data.as_str(), DATA);
 
         println!("Read \"{}\" from {}.", read_data, devname);
-    }).await;
+    })
+    .await;
 
     // Destroy the Malloc block device.
     malloc.destroy().await.unwrap();

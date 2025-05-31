@@ -1,6 +1,6 @@
 //! Storage Performance Development Kit ([SPDK]) FFI bindings for the Rust
 //! programming language.
-//! 
+//!
 //! [SPDK]: https://www.spdk.io
 mod ffi {
     #![allow(non_upper_case_globals)]

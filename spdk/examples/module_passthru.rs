@@ -1,41 +1,15 @@
 use std::{
-    ffi::{
-        CStr,
-        CString,
-    },
-    io::{
-        Read,
-        Write,
-    },
+    ffi::{CStr, CString},
+    io::{Read, Write},
     slice::{self},
 };
 
 use async_trait::async_trait;
 use spdk::{
-    bdev::{
-        BDevIo,
-        BDevIoChannelOps,
-        BDevOps,
-        malloc,
-        ModuleInstance,
-        ModuleOps
-    },
-    block::{
-        Any,
-        Descriptor,
-        Device,
-        IoChannel,
-        IoType,
-        Owned,
-    },
-    dma::{
-        self,
-    },
-    errors::{
-        Errno,
-
-        ENOTSUP,
-    },
+    bdev::{malloc, BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
+    block::{Any, Descriptor, Device, IoChannel, IoType, Owned},
+    dma::{self},
+    errors::{Errno, ENOTSUP},
     thread,
 };
 
@@ -49,7 +23,7 @@ impl ModuleOps for PassthruRsModule {
 }
 
 struct PassthruRsChannel {
-    ch: IoChannel
+    ch: IoChannel,
 }
 
 #[async_trait(?Send)]
@@ -59,27 +33,38 @@ impl BDevIoChannelOps for PassthruRsChannel {
     async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
         match io.io_type() {
             IoType::Read => {
-                io.allocate_buffers(io.num_blocks() * io.device().logical_block_size() as u64).await?;
-                self.ch.read_vectored_blocks_at(io.buffers_mut(), io.offset_blocks(), io.num_blocks()).await
-            },
+                io.allocate_buffers(io.num_blocks() * io.device().logical_block_size() as u64)
+                    .await?;
+                self.ch
+                    .read_vectored_blocks_at(io.buffers_mut(), io.offset_blocks(), io.num_blocks())
+                    .await
+            }
             IoType::Write => {
-                self.ch.write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks()).await
-            },
+                self.ch
+                    .write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks())
+                    .await
+            }
             IoType::Unmap => {
-                self.ch.unmap_blocks(io.offset_blocks(), io.num_blocks()).await
-            },
-            IoType::Flush => {
-                self.ch.flush(io.offset_blocks(), io.num_blocks()).await
-            },
-            IoType::Reset => {
-                self.ch.reset().await
-            },
+                self.ch
+                    .unmap_blocks(io.offset_blocks(), io.num_blocks())
+                    .await
+            }
+            IoType::Flush => self.ch.flush(io.offset_blocks(), io.num_blocks()).await,
+            IoType::Reset => self.ch.reset().await,
             IoType::WriteZeros => {
-                self.ch.write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks()).await
-            },
+                self.ch
+                    .write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks())
+                    .await
+            }
             IoType::Copy => {
-                self.ch.copy_blocks(io.copy_source_offset_blocks(), io.offset_blocks(), io.num_blocks()).await
-            },
+                self.ch
+                    .copy_blocks(
+                        io.copy_source_offset_blocks(),
+                        io.offset_blocks(),
+                        io.num_blocks(),
+                    )
+                    .await
+            }
             _ => Err(ENOTSUP),
         }
     }
@@ -87,7 +72,7 @@ impl BDevIoChannelOps for PassthruRsChannel {
 
 struct PassthruRs {
     base: Device<Any>,
-    desc: Descriptor
+    desc: Descriptor,
 }
 
 unsafe impl Send for PassthruRs {}
@@ -96,11 +81,11 @@ unsafe impl Sync for PassthruRs {}
 #[async_trait]
 impl BDevOps for PassthruRs {
     type IoChannel = PassthruRsChannel;
-    
-    async fn destruct(&mut self) ->  Result<(), Errno> {
+
+    async fn destruct(&mut self) -> Result<(), Errno> {
         Ok(())
     }
-    
+
     fn io_type_supported(&self, io_type: IoType) -> bool {
         self.base.io_type_supported(io_type)
     }
@@ -108,7 +93,7 @@ impl BDevOps for PassthruRs {
     fn new_io_channel(&mut self) -> Result<PassthruRsChannel, Errno> {
         let ch = self.desc.io_channel()?;
 
-        Ok(PassthruRsChannel{ ch })
+        Ok(PassthruRsChannel { ch })
     }
 }
 
@@ -117,7 +102,7 @@ impl PassthruRs {
         let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy())).unwrap();
         let mut passthru = PassthruRsModule::new_bdev(name.as_c_str(), PassthruRs { base, desc });
 
-        let base = unsafe{ &mut *passthru.ctx().base.as_ptr() };
+        let base = unsafe { &mut *passthru.ctx().base.as_ptr() };
 
         passthru.bdev.write_cache = base.write_cache;
         passthru.bdev.required_alignment = base.required_alignment;
@@ -159,7 +144,7 @@ async fn main() {
     // Create the Passthru block device.
     let passthru = PassthruRs::try_new(malloc.borrow(), malloc_desc).unwrap();
     let passthru_desc = passthru.open(true).await.unwrap();
-    
+
     let devname = passthru.name().to_string_lossy().to_string();
 
     thread::spawn_local(async move {
@@ -171,21 +156,31 @@ async fn main() {
 
         write!(buf.cursor_mut(), "{}", DATA).unwrap();
 
-        io_chan.write_vectored_at(slice::from_ref(buf.as_ref()), 0, buf.size() as u64).await.unwrap();
+        io_chan
+            .write_vectored_at(slice::from_ref(buf.as_ref()), 0, buf.size() as u64)
+            .await
+            .unwrap();
 
         buf.clear();
 
         let size = buf.size();
-        io_chan.read_vectored_at(slice::from_mut(buf.as_mut()), 0, size as u64).await.unwrap();
+        io_chan
+            .read_vectored_at(slice::from_mut(buf.as_mut()), 0, size as u64)
+            .await
+            .unwrap();
 
         let mut read_data = String::new();
 
-        buf.cursor().take(DATA.len() as u64).read_to_string(&mut read_data).unwrap();
+        buf.cursor()
+            .take(DATA.len() as u64)
+            .read_to_string(&mut read_data)
+            .unwrap();
 
         assert_eq!(read_data.as_str(), DATA);
 
         println!("Read \"{}\" from {}.", read_data, devname);
-    }).await;
+    })
+    .await;
 
     // Destroy the Passthru block device.
     passthru.destroy().await.unwrap();

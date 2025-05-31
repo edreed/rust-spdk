@@ -1,36 +1,10 @@
 use std::{
-    ffi::{
-        CStr,
-        CString,
-    },
-    io::{
-        IoSlice,
-        IoSliceMut,
-    },
+    ffi::{CStr, CString},
+    io::{IoSlice, IoSliceMut},
     marker::PhantomData,
-    mem::{
-        self,
-
-        ManuallyDrop,
-
-        offset_of,
-
-        size_of,
-    },
-    os::raw::{
-        c_int,
-        c_void,
-    },
-    ptr::{
-        self,
-
-        NonNull,
-
-        addr_of,
-        addr_of_mut,
-
-        drop_in_place,
-    },
+    mem::{self, offset_of, size_of, ManuallyDrop},
+    os::raw::{c_int, c_void},
+    ptr::{self, addr_of, addr_of_mut, drop_in_place, NonNull},
     slice,
     sync::Arc,
     task::Poll,
@@ -38,73 +12,30 @@ use std::{
 
 use async_trait::async_trait;
 use spdk_sys::{
-    spdk_bdev,
-    spdk_bdev_fn_table,
-    spdk_bdev_io,
-    spdk_bdev_io_status,
-    spdk_bdev_io_type,
-    spdk_bdev_module,
-    spdk_io_channel,
-
-    SPDK_BDEV_IO_STATUS_ABORTED,
-    SPDK_BDEV_IO_STATUS_AIO_ERROR,
-    SPDK_BDEV_IO_STATUS_FAILED,
-    SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED,
-    SPDK_BDEV_IO_STATUS_MISCOMPARE,
-    SPDK_BDEV_IO_STATUS_NOMEM,
-    SPDK_BDEV_IO_STATUS_NVME_ERROR,
-    SPDK_BDEV_IO_STATUS_PENDING,
-    SPDK_BDEV_IO_STATUS_SCSI_ERROR,
-    SPDK_BDEV_IO_STATUS_SUCCESS,
-
-    spdk_bdev_destruct_done,
-    spdk_bdev_io_complete,
-    spdk_bdev_io_get_buf,
-    spdk_bdev_io_get_iovec,
-    spdk_bdev_io_get_thread,
-    spdk_bdev_register,
-    spdk_bdev_unregister,
-    spdk_get_io_channel,
-    spdk_io_channel_get_ctx,
-    spdk_io_channel_get_thread,
-    spdk_io_device_register,
-    spdk_io_device_unregister,
+    spdk_bdev, spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
+    spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread, spdk_bdev_io_status,
+    spdk_bdev_io_type, spdk_bdev_module, spdk_bdev_register, spdk_bdev_unregister,
+    spdk_get_io_channel, spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread,
+    spdk_io_device_register, spdk_io_device_unregister, SPDK_BDEV_IO_STATUS_ABORTED,
+    SPDK_BDEV_IO_STATUS_AIO_ERROR, SPDK_BDEV_IO_STATUS_FAILED,
+    SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED, SPDK_BDEV_IO_STATUS_MISCOMPARE,
+    SPDK_BDEV_IO_STATUS_NOMEM, SPDK_BDEV_IO_STATUS_NVME_ERROR, SPDK_BDEV_IO_STATUS_PENDING,
+    SPDK_BDEV_IO_STATUS_SCSI_ERROR, SPDK_BDEV_IO_STATUS_SUCCESS,
 };
 use ternary_rs::if_else;
 
 use crate::{
-    block::{
-        Any,
-        Device,
-        IoType,
-        Owned,
-        OwnedOps,
-    },
-    errors::{
-        Errno,
-
-        ECANCELED,
-        EINPROGRESS,
-        EINVAL,
-        ENOMEM,
-    },
-    task::{
-        Promise,
-        Promissory,
-    },
-    thread::{
-        self,
-
-        Thread,
-    },
-
+    block::{Any, Device, IoType, Owned, OwnedOps},
+    errors::{Errno, ECANCELED, EINPROGRESS, EINVAL, ENOMEM},
+    task::{Promise, Promissory},
+    thread::{self, Thread},
     to_result,
 };
 
 /// The status of an I/O operation.
-/// 
+///
 /// # Notes
-/// 
+///
 /// These are mapped directly to the corresponding [`spdk_bdev_io_status`] values.
 #[derive(Copy, Clone)]
 pub enum IoStatus {
@@ -133,7 +64,7 @@ impl From<spdk_bdev_io_status> for IoStatus {
             SPDK_BDEV_IO_STATUS_FAILED => IoStatus::Failed,
             SPDK_BDEV_IO_STATUS_PENDING => IoStatus::Pending,
             SPDK_BDEV_IO_STATUS_SUCCESS => IoStatus::Success,
-            _ => unreachable!("unexpected spdk_bdev_io_status value")
+            _ => unreachable!("unexpected spdk_bdev_io_status value"),
         }
     }
 }
@@ -186,19 +117,19 @@ pub trait BDevIoChannelOps: 'static {
 }
 
 /// A BDev I/O channel implementation.
-/// 
+///
 /// The type parameter `T` is the I/O channel context type for the BDev implementation.
 pub struct BDevIoChannel<T>
 where
-    T: BDevIoChannelOps
+    T: BDevIoChannelOps,
 {
     channel: NonNull<spdk_io_channel>,
-    _ctx: PhantomData<T>
+    _ctx: PhantomData<T>,
 }
 
-impl <T> BDevIoChannel<T>
+impl<T> BDevIoChannel<T>
 where
-    T: BDevIoChannelOps
+    T: BDevIoChannelOps,
 {
     /// Converts the I/O channel into a raw pointer.
     fn into_raw(self) -> *mut spdk_io_channel {
@@ -206,14 +137,14 @@ where
     }
 
     /// Constructs a new I/O channel from a raw pointer.
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The caller must guarantee that the raw pointer is non-null and valid.
     unsafe fn from_raw(channel: *mut spdk_io_channel) -> Self {
         Self {
             channel: NonNull::new_unchecked(channel),
-            _ctx: PhantomData
+            _ctx: PhantomData,
         }
     }
 
@@ -233,9 +164,9 @@ where
     }
 }
 
-impl <T> TryFrom<*mut spdk_io_channel> for BDevIoChannel<T>
+impl<T> TryFrom<*mut spdk_io_channel> for BDevIoChannel<T>
 where
-    T: BDevIoChannelOps
+    T: BDevIoChannelOps,
 {
     type Error = Errno;
 
@@ -251,45 +182,49 @@ where
 }
 
 /// Represents driver-specific context for an I/O request.
-/// 
+///
 /// The type parameter `T` is the I/O context type for the BDev implementation.
 #[derive(Default)]
 pub(crate) struct BDevIoCtx<T>
 where
-    T: Default + 'static
+    T: Default + 'static,
 {
     buf_promissory: Option<Arc<Promissory<()>>>,
-    inner: T
+    inner: T,
 }
 
 /// A BDev I/O request.
-/// 
+///
 /// The type parameter `T` is the I/O context type for the BDev implementation.
 pub struct BDevIo<T>
 where
-    T: Default + 'static
+    T: Default + 'static,
 {
     io: NonNull<spdk_bdev_io>,
-    _ctx: PhantomData<T>
+    _ctx: PhantomData<T>,
 }
 
-impl <T> BDevIo<T>
+impl<T> BDevIo<T>
 where
-    T: Default + 'static
+    T: Default + 'static,
 {
     /// Initializes a newly submitted I/O request.
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// This function must only be called from the I/O submission callback to
     /// initialize a newly submitted I/O request. It initializes the driver
     /// context to a default value.
     unsafe fn new(io: *mut spdk_bdev_io) -> Self {
-        (*io).driver_ctx.as_mut_ptr().cast::<BDevIoCtx<T>>().write(Default::default());
+        (*io)
+            .driver_ctx
+            .as_mut_ptr()
+            .cast::<BDevIoCtx<T>>()
+            .write(Default::default());
 
         Self {
             io: NonNull::new(io).unwrap(),
-            _ctx: PhantomData
+            _ctx: PhantomData,
         }
     }
     /// Returns the raw pointer to the I/O request.
@@ -369,57 +304,64 @@ where
     }
 
     /// Returns a reference to the implementation-defined context associated
-    /// with the I/O request. 
+    /// with the I/O request.
     pub fn ctx(&self) -> &T {
         &self.internal_ctx().inner
     }
 
     /// Returns a mutable reference to the implementation-defined context
-    /// associated with the I/O request. 
+    /// associated with the I/O request.
     pub fn ctx_mut(&mut self) -> &mut T {
         &mut self.internal_ctx_mut().inner
     }
 
     /// Invoked when buffers requested by [`BDevIo<T>::allocate_buffers`] have
     /// been allocated for the I/O request.
-    /// 
+    ///
     /// [`BDevIo<T>::allocate_buffers`]: method@BDevIo::allocate_buffers
-    unsafe extern "C" fn buffers_allocated(_ch: *mut spdk_io_channel, io: *mut spdk_bdev_io, success: bool) {
+    unsafe extern "C" fn buffers_allocated(
+        _ch: *mut spdk_io_channel,
+        io: *mut spdk_bdev_io,
+        success: bool,
+    ) {
         let mut io: Self = BDevIo::from(io);
-        let p = io.internal_ctx_mut().buf_promissory.take().expect("promissory present");
+        let p = io
+            .internal_ctx_mut()
+            .buf_promissory
+            .take()
+            .expect("promissory present");
 
         Promissory::set_result(p, if_else!(success, Ok(()), Err(EINVAL)));
     }
 
     /// Allocates buffers aligned to the BDev's requirement for the I/O request.
-    /// 
+    ///
     /// Allocation will only occur if no buffers are assigned or the buffers are
     /// not aligned to the BDev's requirement. If the buffers are not aligned,
     /// this call will cause a copy from the current buffers to a bounce buffer
     /// on write or a copy from the bounce buffer to the current buffers on read.
-    /// 
+    ///
     /// If no buffers are currently assigned to this I/O request, the `length`
     /// parameter specifies the size of the buffers to allocate in bytes. This
     /// value must be no larger than `SPDK_BDEV_LARGE_BUF_MAX_SIZE`.
-    /// 
+    ///
     /// Any buffers allocated by this method will automatically be freed on
     /// completion of this I/O request.
     pub async fn allocate_buffers(&mut self, length: u64) -> Result<(), Errno> {
         Promise::new(move |p| {
             self.internal_ctx_mut().buf_promissory.replace(p.clone());
 
-            unsafe {
-                spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length)
-            };
+            unsafe { spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length) };
 
             Poll::Pending
-        }).await
+        })
+        .await
     }
 
     /// Completes the I/O request with the specified status.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This method panics if not called on the thread associated with the I/O.
     fn complete(mut self, status: IoStatus) {
         assert!(self.thread().is_current());
@@ -434,18 +376,18 @@ where
 
 impl<T> From<*mut spdk_bdev_io> for BDevIo<T>
 where
-    T: Default + 'static
+    T: Default + 'static,
 {
     fn from(io: *mut spdk_bdev_io) -> Self {
         Self {
             io: NonNull::new(io).unwrap(),
-            _ctx: PhantomData
+            _ctx: PhantomData,
         }
     }
 }
 
 /// A trait for implementing the BDev operations.
-/// 
+///
 /// The type parameter `IoChannel` is the I/O channel type for the BDev.
 #[async_trait]
 pub trait BDevOps: Send + Sync + 'static {
@@ -460,14 +402,12 @@ pub trait BDevOps: Send + Sync + 'static {
     /// Gets an I/O channel for the BDev for the calling thread.
     ///
     /// # Notes
-    /// 
+    ///
     /// The default implementation returns a per-thread I/O channel for the
     /// BDev. Implementations may override this method to provide different
     /// behavior.
     fn get_io_channel(&self) -> Result<BDevIoChannel<Self::IoChannel>, Errno> {
-        unsafe {
-            spdk_get_io_channel(self as *const _ as *mut _).try_into()
-        }
+        unsafe { spdk_get_io_channel(self as *const _ as *mut _).try_into() }
     }
 
     /// Creates a new I/O channel for the BDev.
@@ -475,32 +415,24 @@ pub trait BDevOps: Send + Sync + 'static {
 }
 
 /// A BDev implementation.
-/// 
+///
 /// The type parameter `T` is the type that provides the BDev I/O processing implementation.
 #[repr(C)]
 pub struct BDevImpl<T>
 where
-    T: BDevOps + ?Sized
+    T: BDevOps + ?Sized,
 {
     pub bdev: spdk_bdev,
-    pub ctx: T
+    pub ctx: T,
 }
 
-unsafe impl <T> Send for BDevImpl<T>
-where
-    T: BDevOps + ?Sized
-{
-}
+unsafe impl<T> Send for BDevImpl<T> where T: BDevOps + ?Sized {}
 
-unsafe impl <T> Sync for BDevImpl<T>
-where
-    T: BDevOps + ?Sized
-{
-}
+unsafe impl<T> Sync for BDevImpl<T> where T: BDevOps + ?Sized {}
 
-impl <T> BDevImpl<T>
+impl<T> BDevImpl<T>
 where
-    T: BDevOps
+    T: BDevOps,
 {
     /// Creates a new partially initialized BDev instance with the specified
     /// name, owning module and context. Implementors must provider their own
@@ -508,7 +440,7 @@ where
     pub fn new(name: &CStr, module: *const spdk_bdev_module, ctx: T) -> Box<Self> {
         let mut this = Box::new(Self {
             bdev: unsafe { mem::zeroed() },
-            ctx
+            ctx,
         });
 
         this.bdev.ctxt = addr_of_mut!(this.ctx) as *mut c_void;
@@ -528,7 +460,8 @@ where
                 Some(Self::create_io_channel),
                 Some(Self::destroy_io_channel),
                 size_of::<T::IoChannel>() as u32,
-                self.bdev.name);
+                self.bdev.name,
+            );
 
             if let Err(e) = to_result!(spdk_bdev_register(addr_of_mut!(self.bdev))) {
                 spdk_io_device_unregister(self.bdev.ctxt, None);
@@ -544,21 +477,16 @@ where
     pub async fn unregister(self: Box<Self>) -> Result<(), Errno> {
         let bdev_ptr = self.into_bdev_ptr();
 
-        Promise::new(
-            move |p| {
-                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+        Promise::new(move |p| {
+            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
-                unsafe {
-                    spdk_bdev_unregister(
-                        bdev_ptr,
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _
-                    );
-                }
-
-                Poll::Pending
+            unsafe {
+                spdk_bdev_unregister(bdev_ptr, Some(cb_fn), cb_arg.cast_mut() as *mut _);
             }
-        ).await
+
+            Poll::Pending
+        })
+        .await
     }
 
     /// Consumes the boxed instance and returns a [`Device<Owned>`] instance
@@ -568,7 +496,7 @@ where
     }
 
     /// Consumes the boxed BDev instance and returns a raw pointer to the BDev.
-    /// 
+    ///
     /// After calling this function, the caller is responsible for managing the
     /// memory previously owned by the boxed BDev instance.
     fn into_bdev_ptr(self: Box<Self>) -> *mut spdk_bdev {
@@ -602,7 +530,7 @@ where
 
             let rc = match this.ctx.destruct().await {
                 Ok(_) => 0,
-                Err(e) => e.into()
+                Err(e) => e.into(),
             };
 
             unsafe {
@@ -630,8 +558,8 @@ where
             Ok(channel) => {
                 ctx.write(channel);
                 0
-            },
-            Err(e) => e.into()
+            }
+            Err(e) => e.into(),
         }
     }
 
@@ -665,7 +593,8 @@ where
     unsafe extern "C" fn get_io_channel(ctx: *mut c_void) -> *mut spdk_io_channel {
         let this = ctx.cast::<T>();
 
-        (*this).get_io_channel()
+        (*this)
+            .get_io_channel()
             .map_or(ptr::null_mut(), |channel| channel.into_raw())
     }
 
@@ -687,20 +616,18 @@ where
     }
 }
 
-impl <T> Drop for BDevImpl<T>
+impl<T> Drop for BDevImpl<T>
 where
-    T: BDevOps + ?Sized
+    T: BDevOps + ?Sized,
 {
     fn drop(&mut self) {
-        unsafe {
-            drop(CString::from_raw(self.bdev.name))
-        }
+        unsafe { drop(CString::from_raw(self.bdev.name)) }
     }
 }
 
-impl <T> From<*mut spdk_bdev> for &'static BDevImpl<T>
+impl<T> From<*mut spdk_bdev> for &'static BDevImpl<T>
 where
-    T: BDevOps
+    T: BDevOps,
 {
     fn from(bdev: *mut spdk_bdev) -> &'static BDevImpl<T> {
         unsafe { &*bdev.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast() }
@@ -708,11 +635,11 @@ where
 }
 
 /// A wrapper that enables [`Device`] to own a custom BDev implementation.
-pub (crate) struct OwnedImpl<T: BDevOps>(Box<BDevImpl<T>>);
+pub(crate) struct OwnedImpl<T: BDevOps>(Box<BDevImpl<T>>);
 
-unsafe impl <T: BDevOps> Send for OwnedImpl<T> {}
+unsafe impl<T: BDevOps> Send for OwnedImpl<T> {}
 
-impl <T: BDevOps> OwnedImpl<T> {
+impl<T: BDevOps> OwnedImpl<T> {
     /// Creates a new owned BDev instance with the specified BDev implementation.
     pub(crate) fn new(bdev: Box<BDevImpl<T>>) -> Self {
         Self(bdev)
@@ -720,7 +647,7 @@ impl <T: BDevOps> OwnedImpl<T> {
 }
 
 #[async_trait]
-impl <T: BDevOps> OwnedOps for OwnedImpl<T> {
+impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
     fn as_ptr(&self) -> *mut spdk_bdev {
         addr_of!(self.0.bdev) as *mut _
     }
@@ -735,19 +662,16 @@ impl <T: BDevOps> OwnedOps for OwnedImpl<T> {
             let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
             unsafe {
-                spdk_bdev_unregister(
-                    bdev.as_ptr(),
-                    Some(cb_fn),
-                    cb_arg.cast_mut() as *mut _
-                );
+                spdk_bdev_unregister(bdev.as_ptr(), Some(cb_fn), cb_arg.cast_mut() as *mut _);
             }
 
             Poll::Pending
-        }).await
+        })
+        .await
     }
 }
 
-impl <T: BDevOps> From<Owned> for OwnedImpl<T> {
+impl<T: BDevOps> From<Owned> for OwnedImpl<T> {
     fn from(value: Owned) -> Self {
         Self(unsafe { Box::from_raw(value.as_ptr().cast()) })
     }

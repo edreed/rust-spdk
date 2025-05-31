@@ -1,70 +1,30 @@
 use std::{
-    ffi::{
-        CStr,
-        c_void,
-    },
-    ptr::{
-        NonNull,
-
-        null_mut,
-    },
+    ffi::{c_void, CStr},
+    ptr::{null_mut, NonNull},
     task::Poll,
 };
 
 use spdk_sys::{
-    spdk_nvmf_subsystem,
-    spdk_nvmf_subtype,
-    
-    SPDK_NVMF_SUBTYPE_DISCOVERY,
-    SPDK_NVMF_SUBTYPE_NVME,
-
-    spdk_nvmf_subsystem_add_host,
-    spdk_nvmf_subsystem_add_listener,
-    spdk_nvmf_subsystem_add_ns_ext,
-    spdk_nvmf_subsystem_get_allow_any_host,
-    spdk_nvmf_subsystem_get_first,
-    spdk_nvmf_subsystem_get_mn,
-    spdk_nvmf_subsystem_get_next,
-    spdk_nvmf_subsystem_get_nqn,
-    spdk_nvmf_subsystem_get_ns,
-    spdk_nvmf_subsystem_get_sn,
-    spdk_nvmf_subsystem_get_type,
-    spdk_nvmf_subsystem_host_allowed,
-    spdk_nvmf_subsystem_pause,
-    spdk_nvmf_subsystem_remove_host,
-    spdk_nvmf_subsystem_remove_listener,
-    spdk_nvmf_subsystem_remove_ns,
-    spdk_nvmf_subsystem_resume,
-    spdk_nvmf_subsystem_set_allow_any_host,
-    spdk_nvmf_subsystem_set_mn,
-    spdk_nvmf_subsystem_set_sn,
-    spdk_nvmf_subsystem_start,
-    spdk_nvmf_subsystem_stop,
+    spdk_nvmf_subsystem, spdk_nvmf_subsystem_add_host, spdk_nvmf_subsystem_add_listener,
+    spdk_nvmf_subsystem_add_ns_ext, spdk_nvmf_subsystem_get_allow_any_host,
+    spdk_nvmf_subsystem_get_first, spdk_nvmf_subsystem_get_mn, spdk_nvmf_subsystem_get_next,
+    spdk_nvmf_subsystem_get_nqn, spdk_nvmf_subsystem_get_ns, spdk_nvmf_subsystem_get_sn,
+    spdk_nvmf_subsystem_get_type, spdk_nvmf_subsystem_host_allowed, spdk_nvmf_subsystem_pause,
+    spdk_nvmf_subsystem_remove_host, spdk_nvmf_subsystem_remove_listener,
+    spdk_nvmf_subsystem_remove_ns, spdk_nvmf_subsystem_resume,
+    spdk_nvmf_subsystem_set_allow_any_host, spdk_nvmf_subsystem_set_mn, spdk_nvmf_subsystem_set_sn,
+    spdk_nvmf_subsystem_start, spdk_nvmf_subsystem_stop, spdk_nvmf_subtype,
+    SPDK_NVMF_SUBTYPE_DISCOVERY, SPDK_NVMF_SUBTYPE_NVME,
 };
 
 use crate::{
-    errors::{
-        Errno,
-
-        EINVAL,
-        ENOENT,
-    },
+    errors::{Errno, EINVAL, ENOENT},
     nvme::TransportId,
-    task::{
-        Promise,
-        Promissory,
-    },
-    to_poll_pending_on_ok,
-    to_result,
+    task::{Promise, Promissory},
+    to_poll_pending_on_ok, to_result,
 };
 
-use super::{
-    AllowedHosts,
-    Namespace,
-    Namespaces,
-    Target,
-};
-
+use super::{AllowedHosts, Namespace, Namespaces, Target};
 
 /// The type of a NVMe-oF subsystem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,7 +70,7 @@ impl Subsystem {
     }
 
     /// Returns the pointer to the underlying `spdk_nvmf_subsystem` structure.
-    pub(crate) fn as_ptr(&self) -> *mut spdk_nvmf_subsystem{
+    pub(crate) fn as_ptr(&self) -> *mut spdk_nvmf_subsystem {
         self.0.as_ptr()
     }
 
@@ -127,9 +87,7 @@ impl Subsystem {
 
     /// Returns the serial number of the subsystem.
     pub fn serial_number(&self) -> &CStr {
-        unsafe {
-            CStr::from_ptr(spdk_nvmf_subsystem_get_sn(self.as_ptr()))
-        }
+        unsafe { CStr::from_ptr(spdk_nvmf_subsystem_get_sn(self.as_ptr())) }
     }
 
     /// Sets the model number of the subsystem.
@@ -145,23 +103,17 @@ impl Subsystem {
 
     /// Returns the model number of the subsystem.
     pub fn model_number(&self) -> &CStr {
-        unsafe {
-            CStr::from_ptr(spdk_nvmf_subsystem_get_mn(self.as_ptr()))
-        }
+        unsafe { CStr::from_ptr(spdk_nvmf_subsystem_get_mn(self.as_ptr())) }
     }
 
     /// Returns the NQN of the subsystem.
     pub fn nqn(&self) -> &CStr {
-        unsafe {
-            CStr::from_ptr(spdk_nvmf_subsystem_get_nqn(self.as_ptr()))
-        }
+        unsafe { CStr::from_ptr(spdk_nvmf_subsystem_get_nqn(self.as_ptr())) }
     }
 
     /// Return the type of the subsystem.
     pub fn subtype(&self) -> SubsystemType {
-        unsafe {
-            spdk_nvmf_subsystem_get_type(self.as_ptr()).into()
-        }
+        unsafe { spdk_nvmf_subsystem_get_type(self.as_ptr()).into() }
     }
 
     /// Returns whether the subsystems is the Discovery controller.
@@ -180,30 +132,35 @@ impl Subsystem {
     /// Returns whether the subsystem allows any host to connect or only hosts
     /// in the allowed list.
     pub fn is_any_host_allowed(&self) -> bool {
-        unsafe {
-            spdk_nvmf_subsystem_get_allow_any_host(self.as_ptr())
-        }
+        unsafe { spdk_nvmf_subsystem_get_allow_any_host(self.as_ptr()) }
     }
 
     /// Adds a host NQN to the allowed list.
     pub fn allow_host(&self, host_nqn: &CStr) -> Result<(), Errno> {
         unsafe {
-            to_result!(spdk_nvmf_subsystem_add_host(self.as_ptr(), host_nqn.as_ptr(), null_mut()))
+            to_result!(spdk_nvmf_subsystem_add_host(
+                self.as_ptr(),
+                host_nqn.as_ptr(),
+                null_mut()
+            ))
         }
     }
 
     /// Removes a host NQN from the allowed list.
-    /// 
+    ///
     /// If a host with the given NQN is already connected, it will not be
     /// disconnected. However, no new connections from the host will be allowed.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns `Ok(true)` if the host was removed from the allowed list, and
     /// `Ok(false)` if the host was not in the allowed list.
     pub fn deny_host(&self, host_nqn: &CStr) -> Result<bool, Errno> {
         let res = unsafe {
-            to_result!(spdk_nvmf_subsystem_remove_host(self.as_ptr(), host_nqn.as_ptr()))
+            to_result!(spdk_nvmf_subsystem_remove_host(
+                self.as_ptr(),
+                host_nqn.as_ptr()
+            ))
         };
 
         match res {
@@ -215,9 +172,7 @@ impl Subsystem {
 
     /// Returns whether the given host is allowed to connect to the subsystem.
     pub fn is_host_allowed(&self, host_nqn: &CStr) -> bool {
-        unsafe {
-            spdk_nvmf_subsystem_host_allowed(self.as_ptr(), host_nqn.as_ptr())
-        }
+        unsafe { spdk_nvmf_subsystem_host_allowed(self.as_ptr(), host_nqn.as_ptr()) }
     }
 
     /// Returns an iterator over the hosts allowed to connect to this subsystem.
@@ -228,8 +183,8 @@ impl Subsystem {
     /// A callback invoked with the result of a NVMe-oF state change operation.
     unsafe extern "C" fn complete_state_change(
         _subsys: *mut spdk_nvmf_subsystem,
-        cx : *mut c_void,
-        status: i32
+        cx: *mut c_void,
+        status: i32,
     ) {
         let p = Promissory::<()>::from_raw(cx.cast());
 
@@ -237,13 +192,13 @@ impl Subsystem {
     }
 
     /// Starts the subsystem.
-    /// 
+    ///
     /// This method transitions of the subsystem from the Inactive to Active state.
     pub async fn start(&self) -> Result<(), Errno> {
         Promise::new(|p| {
             let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_nvmf_subsystem_start(
                         self.as_ptr(),
@@ -255,17 +210,18 @@ impl Subsystem {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Stops the subsystem.
-    /// 
+    ///
     /// This method transitions of the subsystem from the Active to Inactive state.
     pub async fn stop(&self) -> Result<(), Errno> {
         Promise::new(|p| {
             let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                         spdk_nvmf_subsystem_stop(
                         self.as_ptr(),
@@ -277,13 +233,14 @@ impl Subsystem {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Pauses the subsystem.
-    /// 
+    ///
     /// This method transitions of the subsystem from the Paused to Inactive state.
-    /// 
+    ///
     /// In a paused state, all admin queues are frozen across the whole
     /// subsystem. If a namespace identifier is provided, all commands to that
     /// namespace are quiesced and incoming commands are queued until the
@@ -293,7 +250,7 @@ impl Subsystem {
         Promise::new(|p| {
             let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_nvmf_subsystem_pause(
                         self.as_ptr(),
@@ -306,17 +263,18 @@ impl Subsystem {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Resumes the subsystem.
-    /// 
+    ///
     /// This method transitions of the subsystem from the Inactive to Paused state.
     pub async fn resume(&self) -> Result<(), Errno> {
         Promise::new(|p| {
             let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_nvmf_subsystem_resume(
                         self.as_ptr(),
@@ -328,11 +286,12 @@ impl Subsystem {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Adds the given block device as a namespace on the subsystem.
-    /// 
+    ///
     /// The subsystem must be in the Paused or Inactive states to add a
     /// namespace.
     pub fn add_namespace(&self, device_name: &CStr) -> Result<Namespace, Errno> {
@@ -342,7 +301,8 @@ impl Subsystem {
                 device_name.as_ptr(),
                 null_mut(),
                 0,
-                null_mut());
+                null_mut(),
+            );
 
             if nsid == 0 {
                 return Err(EINVAL);
@@ -355,13 +315,11 @@ impl Subsystem {
     }
 
     /// Removes a namespace from the subsystem.
-    /// 
+    ///
     /// The subsystem must be in the Paused or Inactive states to remove a
     /// namespace.
     pub fn remove_namespace(&self, nsid: u32) -> Result<(), Errno> {
-        unsafe {
-            to_result!(spdk_nvmf_subsystem_remove_ns(self.as_ptr(), nsid))
-        }
+        unsafe { to_result!(spdk_nvmf_subsystem_remove_ns(self.as_ptr(), nsid)) }
     }
 
     /// Returns an iterator over the namespaces in the subsystem.
@@ -370,7 +328,7 @@ impl Subsystem {
     }
 
     /// Adds a listener on the specified transport to the subsystem.
-    /// 
+    ///
     /// The subsystem must be in the Paused or Inactive states to add a
     /// listener.
     pub async fn add_listener(&self, transport_id: &TransportId) -> Result<(), Errno> {
@@ -382,18 +340,19 @@ impl Subsystem {
                     self.as_ptr(),
                     transport_id.as_ptr() as *mut _,
                     Some(cb_fn),
-                    cb_arg.cast_mut() as *mut _
+                    cb_arg.cast_mut() as *mut _,
                 );
             }
 
             Poll::Pending
-        }).await
+        })
+        .await
     }
 
     /// Removes a listener on the specified transport from the subsystem.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns `Ok(true)` if the listener was removed, and `Ok(false)` if no
     /// listener was listening on the given transport.
     pub fn remove_listener(&self, transport_id: &TransportId) -> Result<bool, Errno> {

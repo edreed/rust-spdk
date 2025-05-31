@@ -9,31 +9,31 @@ use proc_macro::TokenStream;
 
 /// Derives the [`Parser`] trait for a struct defining command-line arguments in
 /// addition to the standard SPDK Application Framework arguments.
-/// 
+///
 /// This macro provides simple command-line argument parsing for SPDK
 /// applications and integrates with the [`macro@main`] macro. It allows an
 /// application to extend the set of command-line arguments supported by the
 /// SPDK Event Framework. The derived struct will implement the [`Parser`] trait
 /// and its `parse` method can be passed to the [`macro@main`] macro.
-/// 
+///
 /// If you need more advanced argument parsing, consider using a crate like
 /// [`clap`] and create a runtime using the [`Builder`] type.
-/// 
+///
 /// # Field Types
-/// 
+///
 /// The type of each field in the derived struct must implement the [`FromStr`]
 /// trait.
-/// 
+///
 /// Boolean fields are treated as flags and will be set to `true` if present on
 /// the command-line. The option supports an optional value containing `true` or
 /// `false` to explicitly set the value.
-/// 
+///
 /// # Attributes
-/// 
+///
 /// The optional `spdk_arg` helper attribute can be used the customize the
 /// command-line behavior. The following metadata is supported by this
 /// attribute:
-/// 
+///
 /// * `short`: The short name of the argument, e.g. `short = 'C'`. If not present,
 ///   no short argument will be generated.
 /// * `long`: The long name of the argument, e.g. `long = "block-count"`. If not
@@ -45,18 +45,18 @@ use proc_macro::TokenStream;
 ///   the usage help text, e.g. `value_name = "SIZE"`. If not present, the value
 ///   name will be derived from the field name by converting to uppercase and
 ///   replacing underscores with dashes.
-/// 
+///
 /// # Help Text
-/// 
+///
 /// The help text for the derived struct will be generated from the doc comments
 /// for each field.
-/// 
+///
 /// # Usage
-/// 
+///
 /// ```no_run
 /// use std::path::PathBuf;
 /// use spdk::{self, cli::Parser};
-/// 
+///
 /// #[derive(Debug, Parser)]
 /// struct Args {
 ///     /// Path to the block device to use.
@@ -74,13 +74,13 @@ use proc_macro::TokenStream;
 /// #[spdk::main(cli_args = Args::parse())]
 /// async fn main() {
 ///     let args = Args::get();
-/// 
+///
 ///     println!("{:#?}", args);
 /// }
 /// ```
-/// 
+///
 /// The following help text will be generated for the above example:
-/// 
+///
 /// ```text
 /// $ cli --help
 /// cli [options]
@@ -138,7 +138,7 @@ use proc_macro::TokenStream;
 ///       --create-new [CREATE_NEW]
 ///                            If specified, creates a new block device.
 /// ```
-/// 
+///
 /// [`Parser`]: ../../spdk/cli/trait.Parser.html
 /// [`clap`]: https://crates.io/crates/clap
 /// [`Builder`]: ../../spdk/runtime/struct.Builder.html
@@ -151,26 +151,26 @@ pub fn parser(input: TokenStream) -> TokenStream {
 
 /// Marks the main entry point of an application using the SPDK Application
 /// Framework.
-/// 
+///
 /// # Notes
-/// 
+///
 /// This macro is for applications that do not require a complex setup. Consider
 /// using [`Builder`](../spdk/runtime/struct.Builder.html) to create a
 /// [`Runtime`](../spdk/runtime/struct.Runtime.html) directly if this macro does
 /// not meet your needs.
-/// 
+///
 /// The [`Runtime`](../spdk/runtime/struct.Runtime.html) created by this macro
 /// is initialized from the command line arguments supported by the
 /// [`spdk_app_parse_args`](../spdk_sys/fn.spdk_app_parse_args.html) function.
-/// 
+///
 /// # Attributes
-/// 
+///
 /// The `cli_args` attribute is used with the `Parser` trait to specify the
 /// parsing function for a struct defining command-line arguments. See the
 /// [`Parser`] derive macro for more information.
-/// 
+///
 /// # Usage
-/// 
+///
 /// ```no_run
 /// #[spdk::main]
 /// async fn main() {
@@ -183,22 +183,22 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Marks a struct as a SPDK block device module.
-/// 
+///
 /// This attribute macro creates a singleton instance of type [`Module<T>`] for
 /// the target struct and registers it with the SPDK block device module list.
-/// 
+///
 /// The singleton instance can be accessed using the [`instance()`] method of
 /// the [`ModuleInstance`] trait.
-/// 
+///
 /// BDev implementors call the [`new_bdev()`] method of the `ModuleInstance`
 /// trait to create a new block device instance.
-/// 
+///
 /// # Example
-/// 
+///
 /// The following example creates a block device module for a device that
 /// ignores writes and returns zeroed buffers for reads:
-/// 
-/// 
+///
+///
 /// ```rust
 /// use std::io::Write;
 ///
@@ -302,7 +302,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 ///
 /// ```
-/// 
+///
 /// [`instance()`]: ../spdk/bdev/trait.ModuleInstance.html#tymethod.instance
 /// [`new_bdev()`]: ../spdk/bdev/trait.ModuleInstance.html#tymethod.new_bdev
 /// [`Module<T>`]: ../spdk/bdev/struct.Module.html
