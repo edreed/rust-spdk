@@ -1,64 +1,30 @@
 use std::{
     cell::Cell,
     env,
-    ffi::{
-        CStr,
-        CString,
-        c_void,
-    },
+    ffi::{c_void, CStr, CString},
     future::Future,
-    mem::{
-        MaybeUninit,
-        size_of,
-    },
-    os::raw::{
-        c_char,
-        c_int,
-    },
-    ptr::{
-        addr_of_mut,
-        null,
-    },
-    sync::{
-        Arc,
-        atomic::AtomicBool,
-    },
+    mem::{size_of, MaybeUninit},
+    os::raw::{c_char, c_int},
+    ptr::{addr_of_mut, null},
+    sync::{atomic::AtomicBool, Arc},
 };
 
 use spdk_sys::{
-    SPDK_APP_PARSE_ARGS_SUCCESS,
-
-    spdk_app_opts,
-    spdk_app_shutdown_cb,
-
-    spdk_app_opts_init,
-    spdk_app_parse_args,
-    spdk_app_start,
-    spdk_app_stop,
+    spdk_app_opts, spdk_app_opts_init, spdk_app_parse_args, spdk_app_shutdown_cb, spdk_app_start,
+    spdk_app_stop, SPDK_APP_PARSE_ARGS_SUCCESS,
 };
 use static_init::dynamic;
 
 use crate::{
-    errors::{
-        Errno,
-
-        EINVAL,
-    },
-    runtime::{
-        Reactor,
-
-        reactors,
-    },
-    task::{
-        Task,
-        ThreadTask,
-    },
+    errors::{Errno, EINVAL},
+    runtime::{reactors, Reactor},
+    task::{Task, ThreadTask},
     to_result,
 };
 
 /// Builds a runtime using the Application Framework component of the
 /// [SPDK Event Framework][SPEF].
-/// 
+///
 /// `Builder` implements a fluent-style interface enabling custom configuration
 /// through chaining function calls. The `Runtime` object is constructed by
 /// calling the [`build`] method.
@@ -68,9 +34,7 @@ use crate::{
 pub struct Builder(spdk_app_opts);
 
 #[dynamic]
-static ARGV_CSTRING: Vec<CString> = env::args()
-    .map(|a| CString::new(a).unwrap())
-    .collect();
+static ARGV_CSTRING: Vec<CString> = env::args().map(|a| CString::new(a).unwrap()).collect();
 
 #[dynamic]
 static APP_NAME: CString = CString::new(
@@ -79,8 +43,9 @@ static APP_NAME: CString = CString::new(
         .file_stem()
         .unwrap()
         .to_string_lossy()
-        .to_string()
-    ).unwrap();
+        .to_string(),
+)
+.unwrap();
 
 impl Builder {
     /// Returns a new builder with default values.
@@ -90,7 +55,7 @@ impl Builder {
 
     /// Returns a new builder with values initialized from the given
     /// [`spdk_app_opts`] struct.
-    /// 
+    ///
     /// [`spdk_app_opts`]: ../../spdk_sys/struct.spdk_app_opts.html
     pub fn from_options(opts: spdk_app_opts) -> Self {
         let mut builder = Self(opts);
@@ -110,9 +75,7 @@ impl Builder {
 
     /// Returns a new builder with values initialized from the command line.
     pub fn from_cmdline() -> Result<Self, Errno> {
-        let argv: Vec<*const c_char> = ARGV_CSTRING.iter()
-            .map(|a| a.as_ptr())
-            .collect();
+        let argv: Vec<*const c_char> = ARGV_CSTRING.iter().map(|a| a.as_ptr()).collect();
         let mut builder = Self::new();
 
         unsafe {
@@ -123,10 +86,11 @@ impl Builder {
                 null(),
                 null(),
                 None,
-                None);
+                None,
+            );
 
             if rc != SPDK_APP_PARSE_ARGS_SUCCESS {
-                return Err(EINVAL)
+                return Err(EINVAL);
             }
         }
 
@@ -142,10 +106,10 @@ impl Builder {
     }
 
     /// Sets the configuration file used to initialize SPDK subsystems.
-    /// 
+    ///
     /// The subsystem configuration file is a JSON formatted file. The
     /// format is documented in [`$SPDK/lib/init/json_config.c`][SCFG].
-    /// 
+    ///
     /// [SCFG]: https://github.com/spdk/spdk/blob/master/lib/init/json_config.c
     pub fn with_config_file(&mut self, path: &CStr) -> &mut Self {
         self.0.json_config_file = path.as_ptr();
@@ -171,20 +135,20 @@ impl Builder {
     }
 
     /// Creates the configured `Runtime`.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```no_run
     /// use spdk::runtime::Builder;
     /// use std::ffi::CStr;
-    /// 
+    ///
     /// const MY_APP_NAME: &CStr = c"my_app";
-    /// 
+    ///
     /// fn main() {
     ///     let rt = Builder::new()
     ///         .with_name(MY_APP_NAME)
     ///         .build();
-    /// 
+    ///
     ///     rt.block_on(async {
     ///         println!("Hello, World!");
     ///     });
@@ -205,7 +169,10 @@ impl Default for Builder {
         let mut opts: MaybeUninit<Builder> = MaybeUninit::<Builder>::uninit();
 
         unsafe {
-            spdk_app_opts_init(addr_of_mut!((*opts.as_mut_ptr()).0), size_of::<spdk_app_opts>());
+            spdk_app_opts_init(
+                addr_of_mut!((*opts.as_mut_ptr()).0),
+                size_of::<spdk_app_opts>(),
+            );
             opts.assume_init()
         }
     }
@@ -215,20 +182,18 @@ static SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// A runtime implemented using the Application Framework component of the
 /// [SPDK Event Framework][SPEF].
-/// 
+///
 /// [SPEF]: https://spdk.io/doc/event.html
 pub struct Runtime(Cell<spdk_app_opts>);
 
 impl Runtime {
     /// Returns a new default runtime.
     pub fn new() -> Self {
-        Builder::new()
-            .with_name(APP_NAME.as_c_str())
-            .build()
+        Builder::new().with_name(APP_NAME.as_c_str()).build()
     }
 
     /// Returns a new runtime initialized from the command line.
-    pub fn from_cmdline()  -> Result<Self, Errno> {
+    pub fn from_cmdline() -> Result<Self, Errno> {
         Ok(Builder::from_cmdline()?
             .with_name(APP_NAME.as_c_str())
             .build())
@@ -244,7 +209,7 @@ impl Runtime {
     unsafe extern "C" fn handle_start<F>(ctx: *mut c_void)
     where
         F: Future<Output = ()> + 'static,
-        F::Output: 'static
+        F::Output: 'static,
     {
         let task = Arc::from_raw(ctx.cast::<ThreadTask<(), F>>());
 
@@ -255,35 +220,38 @@ impl Runtime {
     fn start<F>(&self, fut: F)
     where
         F: Future<Output = ()> + 'static,
-        F::Output: 'static
+        F::Output: 'static,
     {
         let (task, _) = ThreadTask::with_future(None, fut);
         let ctx = Arc::into_raw(task).cast_mut();
 
         unsafe {
-            to_result!(spdk_app_start(self.0.as_ptr(), Some(Self::handle_start::<F>), ctx.cast()))
-                .expect("app started");
+            to_result!(spdk_app_start(
+                self.0.as_ptr(),
+                Some(Self::handle_start::<F>),
+                ctx.cast()
+            ))
+            .expect("app started");
         }
-
     }
 
     /// Runs a future to completion on the SPDK Application Framework.
-    /// 
+    ///
     /// This function initializes the SPDK Application Framework and runs the
     /// given future to completion on the current thread. Any tasks which the
     /// future spawns internally will be executed on this runtime.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```no_run
     /// use spdk::runtime::Runtime;
     /// use std::ffi::CStr;
-    /// 
+    ///
     /// const MY_APP_NAME: &CStr = c"my_app";
-    /// 
+    ///
     /// fn main() {
     ///     let rt = Runtime::new();
-    /// 
+    ///
     ///     rt.block_on(async {
     ///         println!("Hello, World!");
     ///     });
@@ -292,18 +260,20 @@ impl Runtime {
     pub fn block_on<F>(&self, fut: F)
     where
         F: Future<Output = ()> + 'static,
-        F::Output: 'static
+        F::Output: 'static,
     {
         struct StopGuard;
 
         impl Drop for StopGuard {
             fn drop(&mut self) {
-                unsafe { spdk_app_stop(0); }
+                unsafe {
+                    spdk_app_stop(0);
+                }
             }
         }
 
         let wrapped_fut = async move {
-            let _sg = StopGuard{};
+            let _sg = StopGuard {};
 
             // Ensure each reactor has an spdk_thread associated with it and
             // collect their exit signals.
@@ -316,5 +286,11 @@ impl Runtime {
         };
 
         self.start(wrapped_fut);
+    }
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -1,45 +1,19 @@
-use std::{
-    ffi::CString,
-    iter::Map,
-    os::raw::c_void,
-    ptr::null_mut,
-};
+use std::{ffi::CString, iter::Map, os::raw::c_void, ptr::null_mut};
 
 use futures::{
-    channel::oneshot::{
-        self,
-
-        Sender,
-    },
+    channel::oneshot::{self, Sender},
     Future,
 };
 
-use spdk_sys::{
-    spdk_event_allocate,
-    spdk_event_call,
-};
+use spdk_sys::{spdk_event_allocate, spdk_event_call};
 
 use crate::{
-    errors::{
-        Errno,
-
-        ENOMEM,
-    },
-    task::{
-        JoinHandle,
-        ReactorTask,
-        Task,
-    },
+    errors::{Errno, ENOMEM},
+    task::{JoinHandle, ReactorTask, Task},
     thread::Thread,
 };
 
-use super::{
-    CpuCore,
-    CpuCores,
-    CpuSet,
-
-    cpu_cores,
-};
+use super::{cpu_cores, CpuCore, CpuCores, CpuSet};
 
 /// Represents an event loop running in a OS thread bound to a dedicated CPU
 /// core that drives execution of asynchronous tasks.
@@ -48,16 +22,16 @@ pub struct Reactor(CpuCore);
 
 impl Reactor {
     /// Initializes this reactor.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// This function returns a [`JoinHandle<_>`] used to await a
     /// [`Sender<()>`]. The `Sender` is used to signal the reactor to exit.
     /// Since the main reactor cannot await itself, this function returns `None`
     /// if called from the main CPU core.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function panics if not called from the main CPU core.
     pub(crate) fn init(self) -> Option<Sender<()>> {
         assert!(CpuCore::current() == CpuCore::main());
@@ -92,23 +66,20 @@ impl Reactor {
     }
 
     /// Tries to return the current reactor.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// If the current system thread is running an SPDK Reactor, this function
     /// returns `Some(r)` where `r` is the current reactor. Otherwise, this
     /// function returns `None`.
     pub fn try_current() -> Option<Self> {
-        match CpuCore::try_current() {
-            Some(core) => Some(Self(core)),
-            None => None,
-        }
+        CpuCore::try_current().map(Self)
     }
 
     /// Returns the current reactor.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function panics if the current system thread is not running an SPDK
     /// Reactor.
     pub fn current() -> Self {
@@ -126,7 +97,7 @@ impl Reactor {
 
     /// Returns the main reactor for this runtime.
     pub fn main() -> Self {
-            Reactor(CpuCore::main())
+        Reactor(CpuCore::main())
     }
 
     /// Returns the dedicated CPU core this reactor is bound to.
@@ -136,9 +107,12 @@ impl Reactor {
 
     pub fn send_event<F>(&self, f: F) -> Result<(), Errno>
     where
-        F: FnOnce() + 'static
+        F: FnOnce() + 'static,
     {
-        unsafe extern "C" fn handle_event<F: FnOnce() + 'static>(arg1: *mut c_void, _arg2: *mut c_void) {
+        unsafe extern "C" fn handle_event<F: FnOnce() + 'static>(
+            arg1: *mut c_void,
+            _arg2: *mut c_void,
+        ) {
             let f = Box::from_raw(arg1.cast::<F>());
 
             f();
@@ -151,8 +125,9 @@ impl Reactor {
                 self.0.into(),
                 Some(handle_event::<F>),
                 Box::into_raw(f).cast(),
-                null_mut());
-            
+                null_mut(),
+            );
+
             if event.is_null() {
                 return Err(ENOMEM);
             }
@@ -165,16 +140,16 @@ impl Reactor {
 
     /// Spawns a new asynchronous task to be executed on this reactor and
     /// returns a [`JoinHandle`] to await results.
-    /// 
+    ///
     /// The indirection of `fut_gen` instead of receiving a `Future` directly
     /// allows for futures that may not be `Send` once started.
-    pub fn spawn<G, F, T>(&self, fut_gen: G ) -> JoinHandle<T>
+    pub fn spawn<G, F, T>(&self, fut_gen: G) -> JoinHandle<T>
     where
         G: FnOnce() -> F + Send + 'static,
         F: Future<Output = T> + 'static,
-        T: Send + 'static
+        T: Send + 'static,
     {
-        let (task, join_handle) = ReactorTask::with_future(self.clone(), fut_gen());
+        let (task, join_handle) = ReactorTask::with_future(*self, fut_gen());
 
         Task::schedule(task);
 
@@ -187,7 +162,7 @@ impl Reactor {
 pub fn spawn_local<F, T>(fut: F) -> JoinHandle<T>
 where
     F: Future<Output = T> + 'static,
-    T: 'static
+    T: 'static,
 {
     let (task, join_handle) = ReactorTask::with_future(Reactor::current(), fut);
 

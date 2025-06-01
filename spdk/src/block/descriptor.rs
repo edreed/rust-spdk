@@ -1,46 +1,21 @@
 use std::{
-    ffi::{
-        c_int,
-        c_void,
-        CStr,
-    },
-    ptr::{
-        NonNull,
-
-        null_mut,
-    },
+    ffi::{c_int, c_void, CStr},
+    ptr::{null_mut, NonNull},
 };
 
 use spdk_sys::{
-    spdk_bdev,
-    spdk_bdev_desc,
-
-    spdk_bdev_close,
-    spdk_bdev_desc_get_bdev,
-    spdk_bdev_open_async,
+    spdk_bdev, spdk_bdev_close, spdk_bdev_desc, spdk_bdev_desc_get_bdev, spdk_bdev_open_async,
 };
 use ternary_rs::if_else;
 
 use crate::{
     block::Any,
-    errors::{
-        Errno,
-
-        EINVAL,
-        ENOMEM,
-    },
-    task::{
-        Promise,
-        Promissory,
-    },
-
+    errors::{Errno, EINVAL, ENOMEM},
+    task::{Promise, Promissory},
     to_poll_pending_on_ok,
 };
 
-use super::{
-    Device,
-    IoChannel,
-};
+use super::{Device, IoChannel};
 
 /// A handle to an open block device.
 #[derive(Debug)]
@@ -50,8 +25,7 @@ unsafe impl Send for Descriptor {}
 unsafe impl Sync for Descriptor {}
 
 impl Descriptor {
-    unsafe extern "C" fn handle_event(_type: u32, _bdev: *mut spdk_bdev, _ctx: *mut c_void) {
-    }
+    unsafe extern "C" fn handle_event(_type: u32, _bdev: *mut spdk_bdev, _ctx: *mut c_void) {}
 
     unsafe extern "C" fn open_complete(desc: *mut spdk_bdev_desc, status: c_int, ctx: *mut c_void) {
         let p = Promissory::<Descriptor>::from_raw(ctx.cast());
@@ -69,7 +43,7 @@ impl Descriptor {
         Promise::new(|p| {
             let (cb_fn, cb_arg) = (Self::open_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_open_async(
                         name.as_ptr(),
@@ -85,7 +59,8 @@ impl Descriptor {
                     unsafe {drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Returns a pointer to the underlying `spdk_bdev_desc` struct.
@@ -99,7 +74,7 @@ impl Descriptor {
     }
 
     /// Returns an [`IoChannel`] for this [`Descriptor`].
-    /// 
+    ///
     /// I/O channels are bound to the `spdk_thread` on which this function is
     /// called. The returned [`IoChannel`] cannot be used from any other thread.
     pub fn io_channel(&self) -> Result<IoChannel, Errno> {

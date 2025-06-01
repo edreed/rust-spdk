@@ -5,47 +5,31 @@ use std::{
     ffi::CStr,
     mem::{self},
     os::raw::c_char,
-    ptr::{
-        NonNull,
-
-        null_mut,
-    },
+    ptr::{null_mut, NonNull},
     task::Poll,
 };
 
 use async_trait::async_trait;
 use spdk_sys::{
-    malloc_bdev_opts,
-    spdk_bdev,
-
-    create_malloc_disk,
-    delete_malloc_disk, 
-    spdk_bdev_get_name,
+    create_malloc_disk, delete_malloc_disk, malloc_bdev_opts, spdk_bdev, spdk_bdev_get_name,
 };
 
 use crate::{
-    block::{
-        Device,
-        Owned,
-        OwnedOps,
-    },
+    block::{Device, Owned, OwnedOps},
     errors::Errno,
-    task::{
-        Promise,
-        Promissory,
-    },
+    task::{Promise, Promissory},
     to_result,
 };
 
 /// Builds a [`Malloc`] instance using the Malloc Block Device module of the
 /// SPDK.
-/// 
+///
 /// `Builder` implements a fluent-style interface enabling custom configuration
 /// through chaining function calls. The [`build`] method constructs a new
 /// `Malloc` instance.
-/// 
+///
 /// [`build`]: Builder::build
-pub  struct Builder(malloc_bdev_opts);
+pub struct Builder(malloc_bdev_opts);
 
 unsafe impl Send for Builder {}
 
@@ -75,22 +59,23 @@ impl Builder {
 
     /// Creates a new [`Device<Malloc>`] instance that owns the underlying
     /// `spdk_bdev` pointer.
-    /// 
+    ///
     /// # Notes
-    /// 
+    ///
     /// The returned [`Device<Malloc>`] instance owns the underlying `spdk_bdev`
     /// pointer and will destroy it when dropped. See [`Device<T>`] for a detailed
     /// discussion of ownership semantics and requirements.
-    /// 
+    ///
     /// [`Device<Malloc>::destroy`]: method@crate::block::Device<Malloc>::destroy
     /// [`task::yield_now`]: function@crate::task::yield_now
-    pub fn build(self) -> Result<Device<Malloc>, Errno>{
+    pub fn build(self) -> Result<Device<Malloc>, Errno> {
         let mut malloc = null_mut();
-        
+
         unsafe { to_result!(create_malloc_disk(&mut malloc, &self.0))? };
 
-        Ok(Device::new(Malloc(
-            unsafe { NonNull::new_unchecked(malloc) })))
+        Ok(Device::new(Malloc(unsafe {
+            NonNull::new_unchecked(malloc)
+        })))
     }
 }
 
@@ -119,12 +104,13 @@ impl OwnedOps for Malloc {
                 delete_malloc_disk(
                     spdk_bdev_get_name(self.as_ptr()),
                     Some(cb_fn),
-                    cb_arg.cast_mut() as *mut _
+                    cb_arg.cast_mut() as *mut _,
                 );
             }
 
             Poll::Pending
-        }).await
+        })
+        .await
     }
 }
 

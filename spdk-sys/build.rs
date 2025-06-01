@@ -1,9 +1,4 @@
-use std::{
-    env,
-    fs::canonicalize,
-    iter::once,
-    path::PathBuf,
-};
+use std::{env, fs::canonicalize, iter::once, path::PathBuf};
 
 use bindgen::callbacks::ParseCallbacks;
 use fs_extra::dir;
@@ -53,8 +48,7 @@ fn main() {
     let spdk_wrappers = spdk_dir.join("build/wrappers.c");
 
     if !spdk_dir.exists() {
-        let copy_options = dir::CopyOptions::new()
-            .overwrite(true);
+        let copy_options = dir::CopyOptions::new().overwrite(true);
 
         dir::copy(spdk_src_dir, out_dir.clone(), &copy_options).expect("$OUT_DIR is writeable");
     }
@@ -83,7 +77,14 @@ fn main() {
 
     let old_pkg_config_path = env::var("PKG_CONFIG_PATH").unwrap_or("".into());
 
-    env::set_var("PKG_CONFIG_PATH", format!("{}:{}", old_pkg_config_path, spdk_pkgconfig_dir.to_str().unwrap()));
+    env::set_var(
+        "PKG_CONFIG_PATH",
+        format!(
+            "{}:{}",
+            old_pkg_config_path,
+            spdk_pkgconfig_dir.to_str().unwrap()
+        ),
+    );
 
     let mut pkg_config = pkg_config::Config::new();
     pkg_config
@@ -92,17 +93,31 @@ fn main() {
         .statik(true);
 
     let mut pkg_configs = vec![
-        pkg_config.probe("spdk_env_dpdk").expect("spdk_env_dpdk package config exists"),
-        pkg_config.probe("spdk_event").expect("spdk_event package config exists"),
-        pkg_config.probe("spdk_syslibs").expect("spdk_syslibs package config exists"),
+        pkg_config
+            .probe("spdk_env_dpdk")
+            .expect("spdk_env_dpdk package config exists"),
+        pkg_config
+            .probe("spdk_event")
+            .expect("spdk_event package config exists"),
+        pkg_config
+            .probe("spdk_syslibs")
+            .expect("spdk_syslibs package config exists"),
     ];
 
     let mut defines = Vec::<&str>::new();
     let include_bdev = env::var_os("CARGO_FEATURE_BDEV").is_some();
 
     if include_bdev {
-        pkg_configs.push(pkg_config.probe("spdk_bdev").expect("spdk_bdev package config exists"));
-        pkg_configs.push(pkg_config.probe("spdk_event_bdev").expect("spdk_event_bdev package config exists"));
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_bdev")
+                .expect("spdk_bdev package config exists"),
+        );
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_event_bdev")
+                .expect("spdk_event_bdev package config exists"),
+        );
         defines.push("CARGO_FEATURE_BDEV=1");
     }
 
@@ -115,22 +130,38 @@ fn main() {
     let include_bdev_malloc = env::var_os("CARGO_FEATURE_BDEV_MALLOC").is_some();
 
     if include_bdev_malloc {
-        pkg_configs.push(pkg_config.probe("spdk_bdev_malloc").expect("spdk_bdev_malloc package config exists"));
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_bdev_malloc")
+                .expect("spdk_bdev_malloc package config exists"),
+        );
         defines.push("CARGO_FEATURE_BDEV_MALLOC=1");
     }
 
     let include_json = env::var_os("CARGO_FEATURE_JSON").is_some();
 
     if include_json {
-        pkg_configs.push(pkg_config.probe("spdk_json").expect("spdk_json package config exists"));
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_json")
+                .expect("spdk_json package config exists"),
+        );
         defines.push("CARGO_FEATURE_JSON=1");
     }
 
     let include_target_nvmf = env::var_os("CARGO_FEATURE_NVMF").is_some();
 
     if include_target_nvmf {
-        pkg_configs.push(pkg_config.probe("spdk_nvmf").expect("spdk_nvmf package config exists"));
-        pkg_configs.push(pkg_config.probe("spdk_event_nvmf").expect("spdk_event_nvmf package config exists"));
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_nvmf")
+                .expect("spdk_nvmf package config exists"),
+        );
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_event_nvmf")
+                .expect("spdk_event_nvmf package config exists"),
+        );
         defines.push("CARGO_FEATURE_NVMF=1");
     }
 
@@ -143,7 +174,9 @@ fn main() {
         .cloned()
         .collect();
 
-    link_paths.iter().for_each(|p| println!("cargo:rustc-link-search=native={}", p.to_str().unwrap()));
+    link_paths
+        .iter()
+        .for_each(|p| println!("cargo:rustc-link-search=native={}", p.to_str().unwrap()));
 
     let include_paths: Vec<PathBuf> = pkg_configs
         .iter()
@@ -161,7 +194,11 @@ fn main() {
         .chain(once(&"isal_crypto".to_string()))
         .unique()
         .cloned()
-        .partition(|l| link_paths.iter().any(|p| p.join(format!("lib{}.a", l)).exists()));
+        .partition(|l| {
+            link_paths
+                .iter()
+                .any(|p| p.join(format!("lib{}.a", l)).exists())
+        });
 
     static_libs
         .iter()
@@ -174,7 +211,11 @@ fn main() {
         .header("wrapper.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .parse_callbacks(Box::new(DoxygenCallbacks::new()))
-        .clang_args(include_paths.iter().map(|i| format!("-I{}", i.to_string_lossy().to_string())))
+        .clang_args(
+            include_paths
+                .iter()
+                .map(|i| format!("-I{}", i.to_string_lossy())),
+        )
         .clang_args(defines.iter().map(|d| format!("-D{}", d)))
         .allowlist_function("spdk_.*")
         .allowlist_type("spdk_.*")
@@ -191,8 +232,7 @@ fn main() {
         .layout_tests(false);
 
     if include_bdev_module {
-        builder = builder
-            .clang_arg("-D CARGO_FEATURE_BDEV_MODULE=1")
+        builder = builder.clang_arg("-D CARGO_FEATURE_BDEV_MODULE=1")
     }
 
     if include_bdev_malloc {
@@ -202,8 +242,7 @@ fn main() {
     }
 
     if include_target_nvmf {
-        builder = builder
-            .allowlist_var("g_spdk_.*")
+        builder = builder.allowlist_var("g_spdk_.*")
     }
 
     let _ = builder
@@ -221,7 +260,6 @@ fn main() {
 
         defines.iter().for_each(|d| _ = wrappers.define(d, None));
 
-        wrappers
-            .compile("spdk_wrappers");
+        wrappers.compile("spdk_wrappers");
     }
 }

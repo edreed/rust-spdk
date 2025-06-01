@@ -20,7 +20,7 @@ impl serde::ser::Error for Error {
 }
 
 impl serde::de::Error for Error {
-    fn custom<T: fmt::Display>(msg:T) -> Self {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
         Error::Message(msg.to_string())
     }
 }

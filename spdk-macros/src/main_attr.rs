@@ -1,14 +1,6 @@
 use proc_macro::TokenStream;
-use quote::{
-    quote,
-    quote_spanned,
-};
-use syn::{
-    ItemFn,
-    Meta,
-    parse_macro_input,
-    spanned::Spanned,
-};
+use quote::{quote, quote_spanned};
+use syn::{parse_macro_input, spanned::Spanned, ItemFn, Meta};
 
 /// Generates the `main` function for an application using the SPDK Application
 /// Framework.
@@ -21,7 +13,7 @@ pub(crate) fn generate_main(attr: TokenStream, item: TokenStream) -> TokenStream
             .into();
     }
 
-    let mut build_rt = quote!{
+    let mut build_rt = quote! {
         match spdk::runtime::Runtime::from_cmdline() {
             Ok(rt) => rt,
             Err(_) => {
@@ -37,7 +29,7 @@ pub(crate) fn generate_main(attr: TokenStream, item: TokenStream) -> TokenStream
             Meta::NameValue(nv) if nv.path.is_ident("cli_args") => {
                 let expr = &nv.value;
 
-                build_rt = quote_spanned!{expr.span()=>
+                build_rt = quote_spanned! {expr.span()=>
                     match #expr {
                         Ok(builder) => builder.build(),
                         Err(_) => {
@@ -45,7 +37,7 @@ pub(crate) fn generate_main(attr: TokenStream, item: TokenStream) -> TokenStream
                         },
                     }
                 };
-            },
+            }
             _ => {
                 let message = format!(
                     "unexpected attribute metadata: {}`",
@@ -55,12 +47,12 @@ pub(crate) fn generate_main(attr: TokenStream, item: TokenStream) -> TokenStream
                 return syn::Error::new(meta.span(), message)
                     .into_compile_error()
                     .into();
-            },
+            }
         }
     }
 
     let block = fun.block;
-    let expanded = quote!{
+    let expanded = quote! {
         fn main() {
             let rt = #build_rt;
 

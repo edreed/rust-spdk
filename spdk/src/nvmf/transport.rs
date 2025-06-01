@@ -1,72 +1,38 @@
 use std::{
     ffi::CStr,
-    fmt::{
-        Debug,
-        Display
-    },
-    mem::{
-        MaybeUninit,
-
-        size_of_val, self,
-    },
+    fmt::{Debug, Display},
+    mem::{self, size_of_val, MaybeUninit},
     ptr::NonNull,
     time::Duration,
 };
 
 use spdk_sys::{
-    spdk_nvmf_transport,
-    spdk_nvmf_transport_opts,
-    spdk_nvme_transport_type,
-
-    SPDK_NVME_TRANSPORT_CUSTOM,
-    SPDK_NVME_TRANSPORT_FC,
-    SPDK_NVME_TRANSPORT_NAME_CUSTOM,
-    SPDK_NVME_TRANSPORT_NAME_FC,
-    SPDK_NVME_TRANSPORT_NAME_PCIE,
-    SPDK_NVME_TRANSPORT_NAME_RDMA,
-    SPDK_NVME_TRANSPORT_NAME_TCP,
-    SPDK_NVME_TRANSPORT_NAME_VFIOUSER,
-    SPDK_NVME_TRANSPORT_PCIE,
-    SPDK_NVME_TRANSPORT_RDMA,
-    SPDK_NVME_TRANSPORT_TCP,
+    spdk_nvme_transport_type, spdk_nvmf_get_transport_name, spdk_nvmf_get_transport_type,
+    spdk_nvmf_transport, spdk_nvmf_transport_create_async, spdk_nvmf_transport_destroy,
+    spdk_nvmf_transport_get_first, spdk_nvmf_transport_get_next, spdk_nvmf_transport_opts,
+    spdk_nvmf_transport_opts_init, SPDK_NVME_TRANSPORT_CUSTOM, SPDK_NVME_TRANSPORT_FC,
+    SPDK_NVME_TRANSPORT_NAME_CUSTOM, SPDK_NVME_TRANSPORT_NAME_FC, SPDK_NVME_TRANSPORT_NAME_PCIE,
+    SPDK_NVME_TRANSPORT_NAME_RDMA, SPDK_NVME_TRANSPORT_NAME_TCP, SPDK_NVME_TRANSPORT_NAME_VFIOUSER,
+    SPDK_NVME_TRANSPORT_PCIE, SPDK_NVME_TRANSPORT_RDMA, SPDK_NVME_TRANSPORT_TCP,
     SPDK_NVME_TRANSPORT_VFIOUSER,
-
-    spdk_nvmf_get_transport_name,
-    spdk_nvmf_get_transport_type,
-    spdk_nvmf_transport_create_async,
-    spdk_nvmf_transport_get_first,
-    spdk_nvmf_transport_get_next,
-    spdk_nvmf_transport_opts_init,
-    spdk_nvmf_transport_destroy,
 };
 
 use crate::{
-    errors::{
-        Errno,
-
-        EINVAL,
-        ENODEV,
-        ENOMEM,
-        EPERM,
-    },
-    task::{
-        Promise,
-        Promissory,
-    },
-    thread,
-    to_poll_pending_on_ok,
+    errors::{Errno, EINVAL, ENODEV, ENOMEM, EPERM},
+    task::{Promise, Promissory},
+    thread, to_poll_pending_on_ok,
 };
 
 use super::Target;
 
 /// The type of NVMe-oF transport.
-/// 
+///
 /// # Notes
-/// 
+///
 /// These are mapped directly to the NVMe over Fabrics TRTYPE values, except for
 /// PCIe, which is a special case since NVMe over Fabrics does not define a
 /// TRTYPE for local PCIe.
-/// 
+///
 /// Transports supported by SPDK but not defined in the NVMe-oF specification
 /// are given values outside of the 8-bit range of the TRTYPE value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,11 +109,15 @@ impl Builder {
             if !spdk_nvmf_transport_opts_init(
                 transport_name.as_ptr(),
                 opts.as_mut_ptr(),
-                size_of_val(&opts)) {
+                size_of_val(&opts),
+            ) {
                 return Err(EINVAL);
             }
 
-            Ok(Self{ transport_name, opts: Box::new(opts.assume_init()) })
+            Ok(Self {
+                transport_name,
+                opts: Box::new(opts.assume_init()),
+            })
         }
     }
 
@@ -156,7 +126,7 @@ impl Builder {
         Promise::new(move |p| {
             let (cb_fn, cb_arg) = Promissory::callback_with_object(p);
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_nvmf_transport_create_async(
                         self.transport_name.as_ptr(),
@@ -169,7 +139,8 @@ impl Builder {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Sets the maximum queue depth.
@@ -274,25 +245,25 @@ enum OwnershipState {
 unsafe impl Send for OwnershipState {}
 
 /// Represents a NVMe-oF transport.
-/// 
+///
 /// `Transport` wraps an `spdk_nvmf_transport` pointer and can be in one of
 /// three ownership states: owned, borrowed, or none.
-/// 
+///
 /// An owned transport owns the underlying `spdk_nvmf_transport` pointer and
 /// will destroy it when dropped. The caller must ensure that the drop occurs in
 /// the same thread that created the transport. It must also occur as part of
 /// thread event handling by explicitly calling [`task::yield_now`] before
 /// dropping the transport. However, it is easiest and safest to explicitly call
 /// [`Transport::destroy`] on the transport rather than let it drop naturally.
-/// 
+///
 /// A borrowed transport borrows the underlying `spdk_nvmf_transport` pointer.
 /// Dropping a borrowed transport has no effect on the underlying
 /// `spdk_nvmf_transport` pointer.
-/// 
+///
 /// A transport with no ownership state can only be safely queried for ownership
 /// state or dropped. Any other operation will panic. A transport will be left
 /// in this state after the [`Transport::take`] method is called.
-/// 
+///
 /// [`Transport::destroy`]: method@Transport::destroy
 /// [`Transport::take`]: method@Transport::take
 /// [`task::yield_now`]: function@crate::task::yield_now
@@ -321,9 +292,7 @@ impl Transport {
     /// Returns a pointer to the underlying `spdk_nvmf_transport` structure.
     pub fn as_ptr(&self) -> *mut spdk_nvmf_transport {
         match &self.0 {
-            OwnershipState::Owned(ptr) | OwnershipState::Borrowed(ptr) => {
-                ptr.as_ptr()
-            },
+            OwnershipState::Owned(ptr) | OwnershipState::Borrowed(ptr) => ptr.as_ptr(),
             OwnershipState::None => panic!("no transport"),
         }
     }
@@ -333,7 +302,7 @@ impl Transport {
         match self.0 {
             OwnershipState::Owned(ptr) | OwnershipState::Borrowed(ptr) => {
                 Self(OwnershipState::Borrowed(ptr))
-            },
+            }
             OwnershipState::None => panic!("no transport"),
         }
     }
@@ -361,9 +330,7 @@ impl Transport {
 
     /// Returns the name of the transport.
     pub fn name(&self) -> &'static CStr {
-        unsafe {
-            CStr::from_ptr(spdk_nvmf_get_transport_name(self.as_ptr()))
-        }
+        unsafe { CStr::from_ptr(spdk_nvmf_get_transport_name(self.as_ptr())) }
     }
 
     /// Returns the type of the transport.
@@ -372,9 +339,9 @@ impl Transport {
     }
 
     /// Destroys the transport asynchronously.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Only an owned transport can be destroyed. This function returns
     /// `Err(EPERM)` if called on a borrowed transport and `Err(ENODEV)` if
     /// called on a transport that neither owns nor borrows the underlying
@@ -387,7 +354,7 @@ impl Transport {
                 Promise::new(move |p| {
                     let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
 
-                    let res = to_poll_pending_on_ok!{
+                    let res = to_poll_pending_on_ok! {
                         unsafe {
                             spdk_nvmf_transport_destroy(
                                 self.as_ptr(),
@@ -403,8 +370,9 @@ impl Transport {
                     mem::forget(self.take());
 
                     res
-                }).await
-            },
+                })
+                .await
+            }
         }
     }
 }

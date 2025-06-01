@@ -1,18 +1,11 @@
 use std::ptr::NonNull;
 
 use spdk_sys::{
-    spdk_nvmf_ns,
-    
-    spdk_nvmf_ns_get_bdev,
-    spdk_nvmf_ns_get_id,
-    spdk_nvmf_subsystem_get_first_ns,
+    spdk_nvmf_ns, spdk_nvmf_ns_get_bdev, spdk_nvmf_ns_get_id, spdk_nvmf_subsystem_get_first_ns,
     spdk_nvmf_subsystem_get_next_ns,
 };
 
-use crate::block::{
-    self,
-    Any,
-};
+use crate::block::{self, Any};
 
 use super::Subsystem;
 
@@ -56,14 +49,12 @@ pub struct Namespaces<'a> {
 
 unsafe impl Send for Namespaces<'_> {}
 
-impl <'a> Namespaces<'a> {
+impl<'a> Namespaces<'a> {
     /// Creates a new iterator over the namespaces in a NVMe-oF subsystem.
     pub(crate) fn new(subsys: &'a Subsystem) -> Self {
         Self {
             subsys,
-            next: unsafe {
-                spdk_nvmf_subsystem_get_first_ns(subsys.as_ptr())
-            },
+            next: unsafe { spdk_nvmf_subsystem_get_first_ns(subsys.as_ptr()) },
         }
     }
 }
@@ -79,9 +70,7 @@ impl Iterator for Namespaces<'_> {
 
             let namespace = self.next;
 
-            self.next = spdk_nvmf_subsystem_get_next_ns(
-                self.subsys.as_ptr(),
-                self.next);
+            self.next = spdk_nvmf_subsystem_get_next_ns(self.subsys.as_ptr(), self.next);
 
             Some(Namespace::from_ptr(namespace))
         }

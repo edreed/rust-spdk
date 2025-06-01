@@ -1,4 +1,7 @@
-use std::{time::Duration, io::{self, Write}};
+use std::{
+    io::{self, Write},
+    time::Duration,
+};
 
 use spdk::time::interval;
 
@@ -10,7 +13,7 @@ async fn main() {
         print!("{}...", countdown);
 
         io::stdout().flush().unwrap();
-        
+
         timer.tick().await;
         print!("\x08\x08\x08\x08");
     }

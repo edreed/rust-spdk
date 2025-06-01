@@ -1,21 +1,10 @@
-use std::{
-    cmp::Ordering,
-    ffi::CString,
-    mem::MaybeUninit,
-    str::FromStr,
-};
+use std::{cmp::Ordering, ffi::CString, mem::MaybeUninit, str::FromStr};
 
 use spdk_sys::{
-    spdk_nvme_transport_id,
-
-    spdk_nvme_transport_id_compare,
-    spdk_nvme_transport_id_parse,
+    spdk_nvme_transport_id, spdk_nvme_transport_id_compare, spdk_nvme_transport_id_parse,
 };
 
-use crate::{
-    errors::Errno,
-    to_result,
-};
+use crate::{errors::Errno, to_result};
 
 #[derive(Clone)]
 pub struct TransportId(spdk_nvme_transport_id);
@@ -36,7 +25,8 @@ impl FromStr for TransportId {
 
             to_result!(spdk_nvme_transport_id_parse(
                 transport_id.as_mut_ptr(),
-                s.as_ptr()))?;
+                s.as_ptr()
+            ))?;
 
             Ok(TransportId(transport_id.assume_init()))
         }
@@ -45,9 +35,7 @@ impl FromStr for TransportId {
 
 impl PartialEq for TransportId {
     fn eq(&self, other: &Self) -> bool {
-        unsafe {
-            spdk_nvme_transport_id_compare(&self.0, &other.0) == 0
-        }
+        unsafe { spdk_nvme_transport_id_compare(&self.0, &other.0) == 0 }
     }
 }
 

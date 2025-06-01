@@ -1,34 +1,17 @@
-use std::{
-    ffi::CStr,
-    fmt::Debug,
-    mem::size_of,
-};
+use std::{ffi::CStr, fmt::Debug, mem::size_of};
 
 use async_trait::async_trait;
 use spdk_sys::{
-    spdk_bdev,
-    spdk_bdev_module,
-
-    spdk_bdev_module_examine_done,
-    spdk_bdev_module_fini_done,
-    spdk_bdev_module_init_done,
-    spdk_bdev_module_list_add
+    spdk_bdev, spdk_bdev_module, spdk_bdev_module_examine_done, spdk_bdev_module_fini_done,
+    spdk_bdev_module_init_done, spdk_bdev_module_list_add,
 };
 
 use crate::{
-    block::{
-        Any,
-        Device,
-    },
+    block::{Any, Device},
     thread::{self},
 };
 
-use super::{
-    BDevImpl,
-    BDevIoCtx,
-    BDevOps,
-};
-
+use super::{BDevImpl, BDevIoCtx, BDevOps};
 
 /// A trait defining BDev module operations.
 #[async_trait(?Send)]
@@ -41,12 +24,10 @@ pub trait ModuleOps {
     type IoContext: Default + 'static;
 
     /// Initializes the module.
-    async fn init(&self) {
-    }
+    async fn init(&self) {}
 
     /// Finalizes the module.
-    async fn fini(&self) {
-    }
+    async fn fini(&self) {}
 
     /// Returns the size of the per-I/O context.
     fn get_io_context_size(&self) -> usize {
@@ -63,8 +44,7 @@ pub trait ModuleOps {
     /// synchronously.
     ///
     /// The default implementation claims no devices.
-    fn examine_config(&self, _bdev: Device<Any>) {
-    }
+    fn examine_config(&self, _bdev: Device<Any>) {}
 
     /// Examines the specified block device to determine whether it should be
     /// claimed by a Virtual BDev implemented by this module.
@@ -75,8 +55,7 @@ pub trait ModuleOps {
     /// decision whether to claim can be made asynchronously.
     ///
     /// The default implementation claims no devices.
-    async fn examine_disk(&self, _bdev: Device<Any>) {
-    }
+    async fn examine_disk(&self, _bdev: Device<Any>) {}
 }
 
 /// A trait implemented by the [`module`] attribute macro to provide access to
@@ -86,7 +65,7 @@ pub trait ModuleOps {
 /// [`Module`]: struct@super::Module
 pub trait ModuleInstance<T>
 where
-    T: Default + ModuleOps + 'static
+    T: Default + ModuleOps + 'static,
 {
     /// Returns a reference to the singleton instance of the module.
     fn instance() -> &'static T;
@@ -97,46 +76,38 @@ where
     /// Creates a new partially initialized BDev instance with the specified
     /// name and context. Implementors must provider their own constructor
     /// function to complete initialization.
-    fn new_bdev<B: BDevOps>(name: &CStr, ctx: B) -> Box<BDevImpl<B>>
+    fn new_bdev<B>(name: &CStr, ctx: B) -> Box<BDevImpl<B>>
     where
         B: BDevOps;
 }
 
 /// A BDev module implementation created by the [`module`] attribute macro.
-/// 
+///
 /// The type parameter `T` is the module instance type.
 ///
 /// [`module`]: macro@crate::module
 #[derive(Debug)]
 pub struct Module<T>
 where
-    T: ModuleInstance<T> + Default + ModuleOps + 'static
+    T: ModuleInstance<T> + Default + ModuleOps + 'static,
 {
     pub module: spdk_bdev_module,
-    pub instance: T
+    pub instance: T,
 }
 
-unsafe impl <T> Send for Module<T>
-where
-    T: ModuleInstance<T> + Default + ModuleOps + Send + 'static
-{
-}
+unsafe impl<T> Send for Module<T> where T: ModuleInstance<T> + Default + ModuleOps + Send + 'static {}
 
-unsafe impl <T> Sync for Module<T>
-where
-    T: ModuleInstance<T> + Default + ModuleOps + Sync + 'static
-{
-}
+unsafe impl<T> Sync for Module<T> where T: ModuleInstance<T> + Default + ModuleOps + Sync + 'static {}
 
-impl <T> Module<T>
+impl<T> Module<T>
 where
-    T: ModuleInstance<T> + Default + ModuleOps + 'static
+    T: ModuleInstance<T> + Default + ModuleOps + 'static,
 {
     /// Creates a new BDev module instance with the specified name.
-    /// 
+    ///
     /// This method is used by the [`module`] attribute macro to create the
     /// singleton module instance. It must not be called directly.
-    /// 
+    ///
     /// [`module`]: macro@crate::module
     pub fn new(name: &'static CStr) -> Self {
         let mut module: spdk_bdev_module = unsafe { std::mem::zeroed() };
@@ -154,14 +125,17 @@ where
         module.config_json = None;
         module.async_fini_start = false;
 
-        Self { module, instance: Default::default() }
+        Self {
+            module,
+            instance: Default::default(),
+        }
     }
 
     /// Registers the module with the SPDK BDev module list.
-    /// 
+    ///
     /// This method is used by the [`module`] attribute macro to register the
     /// singleton module instance. It must not be called directly.
-    /// 
+    ///
     /// [`module`]: macro@crate::module
     pub fn register(&self) {
         unsafe { spdk_bdev_module_list_add(&self.module as *const _ as *mut _) };
@@ -172,7 +146,9 @@ where
         thread::spawn_local(async {
             T::instance().init().await;
 
-            unsafe { spdk_bdev_module_init_done(T::module() as *mut _); }
+            unsafe {
+                spdk_bdev_module_init_done(T::module() as *mut _);
+            }
         });
 
         0
@@ -183,7 +159,9 @@ where
         thread::spawn_local(async {
             T::instance().fini().await;
 
-            unsafe { spdk_bdev_module_fini_done(); }
+            unsafe {
+                spdk_bdev_module_fini_done();
+            }
         });
     }
 

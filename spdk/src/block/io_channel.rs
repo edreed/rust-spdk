@@ -1,83 +1,33 @@
 use std::{
-    fmt::{
-        self,
-
-        Debug,
-        Formatter,
-    },
-    io::{
-        IoSlice,
-        IoSliceMut,
-    },
+    fmt::{self, Debug, Formatter},
+    io::{IoSlice, IoSliceMut},
     mem::zeroed,
     os::raw::c_void,
-    ptr::{
-        NonNull,
-
-        addr_of,
-        addr_of_mut,
-    },
+    ptr::{addr_of, addr_of_mut, NonNull},
     sync::Arc,
     task::Poll,
 };
 
 use spdk_sys::{
-    iovec as IoVec,
-    spdk_bdev,
-    spdk_bdev_desc,
-    spdk_bdev_io,
-    spdk_bdev_io_wait_entry,
-    spdk_io_channel,
-
+    iovec as IoVec, spdk_bdev, spdk_bdev_copy_blocks, spdk_bdev_desc, spdk_bdev_desc_get_bdev,
+    spdk_bdev_flush, spdk_bdev_free_io, spdk_bdev_get_io_channel, spdk_bdev_io,
+    spdk_bdev_io_wait_entry, spdk_bdev_queue_io_wait, spdk_bdev_read, spdk_bdev_read_blocks,
+    spdk_bdev_readv, spdk_bdev_readv_blocks, spdk_bdev_reset, spdk_bdev_unmap,
+    spdk_bdev_unmap_blocks, spdk_bdev_write, spdk_bdev_write_blocks, spdk_bdev_write_zeroes,
+    spdk_bdev_write_zeroes_blocks, spdk_bdev_writev, spdk_bdev_writev_blocks,
+    spdk_bdev_zone_management, spdk_io_channel, spdk_io_channel_get_thread, spdk_put_io_channel,
     SPDK_BDEV_ZONE_RESET,
-
-    spdk_bdev_copy_blocks,
-    spdk_bdev_desc_get_bdev,
-    spdk_bdev_flush,
-    spdk_bdev_free_io,
-    spdk_bdev_get_io_channel,
-    spdk_bdev_queue_io_wait,
-    spdk_bdev_read_blocks,
-    spdk_bdev_read,
-    spdk_bdev_readv_blocks,
-    spdk_bdev_readv,
-    spdk_bdev_reset,
-    spdk_bdev_unmap_blocks,
-    spdk_bdev_unmap,
-    spdk_bdev_write_blocks,
-    spdk_bdev_write_zeroes_blocks,
-    spdk_bdev_write_zeroes,
-    spdk_bdev_write,
-    spdk_bdev_writev_blocks,
-    spdk_bdev_writev,
-    spdk_bdev_zone_management,
-    spdk_io_channel_get_thread,
-    spdk_put_io_channel,
 };
 use ternary_rs::if_else;
 
 use crate::{
-    errors::{
-        Errno,
-
-        EINVAL,
-        EIO,
-        ENOMEM,
-    },
-    task::{
-        Promise,
-        Promissory,
-    },
+    errors::{Errno, EINVAL, EIO, ENOMEM},
+    task::{Promise, Promissory},
     thread::Thread,
-
     to_poll_pending_on_ok,
 };
 
-use super::{
-    Any,
-    Descriptor,
-    Device,
-};
+use super::{Any, Descriptor, Device};
 
 /// A handle to a block device I/O channel.
 pub struct IoChannel {
@@ -93,7 +43,7 @@ impl IoChannel {
         // outstanding I/O channels.
         let desc = unsafe { NonNull::new_unchecked(desc.as_ptr()) };
         let channel = unsafe { spdk_bdev_get_io_channel(desc.as_ptr()) };
-        
+
         match NonNull::new(channel) {
             Some(channel) => Ok(Self { desc, channel }),
             None => Err(ENOMEM),
@@ -130,12 +80,10 @@ impl IoChannel {
     }
 
     /// A callback invoked when a block device I/O operation completes.
-    unsafe extern "C" fn io_complete(
-        io: *mut spdk_bdev_io,
-        success: bool,
-        cx: *mut c_void
-    ) {
-        unsafe { spdk_bdev_free_io(io); }
+    unsafe extern "C" fn io_complete(io: *mut spdk_bdev_io, success: bool, cx: *mut c_void) {
+        unsafe {
+            spdk_bdev_free_io(io);
+        }
 
         let p = Promissory::<()>::from_raw(cx.cast());
 
@@ -143,50 +91,49 @@ impl IoChannel {
     }
 
     /// Waits for an I/O to become available.
-    /// 
+    ///
     /// When an I/O submission function returns `ENOMEM`, it means the I/O
     /// buffer pool has no available buffers on this thread. This function waits
     /// for an I/O buffer to become available.
-    /// 
+    ///
     /// This function must only be called after one of the I/O submission
     /// functions returns `ENOMEM`.
-    /// 
+    ///
     /// This function returns `Err(EINVAL)` if the I/O channel an I/O buffer is
     /// available on the current thread..
     async fn wait_io_available(&self) -> Result<(), Errno> {
-        Promise::with_context(
-            unsafe { zeroed::<spdk_bdev_io_wait_entry>() },
-            |p| {
-                // SAFETY: The caller guarantees that there are no other
-                // references to the `Promissory` instance, so we can safely get
-                // a mutable reference to the user context. We convert the
-                // mutable reference to a pointer so we can get the callback and
-                // context from the `Arc<Promissory>` instance to store in the
-                // context.
-                let wait = addr_of_mut!(*Promissory::user_context_mut(p).expect("sole reference"));
-                let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
+        Promise::with_context(unsafe { zeroed::<spdk_bdev_io_wait_entry>() }, |p| {
+            // SAFETY: The caller guarantees that there are no other
+            // references to the `Promissory` instance, so we can safely get
+            // a mutable reference to the user context. We convert the
+            // mutable reference to a pointer so we can get the callback and
+            // context from the `Arc<Promissory>` instance to store in the
+            // context.
+            let wait = addr_of_mut!(*Promissory::user_context_mut(p).expect("sole reference"));
+            let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
 
-                // SAFETY: The memory referenced by `wait` has been zeroed, so
-                // overwriting its field is safe.
+            // SAFETY: The memory referenced by `wait` has been zeroed, so
+            // overwriting its field is safe.
+            unsafe {
+                addr_of_mut!((*wait).bdev).write(self.bdev());
+                addr_of_mut!((*wait).cb_fn).write(Some(cb_fn));
+                addr_of_mut!((*wait).cb_arg).write(cb_arg.cast_mut() as *mut _);
+            }
+
+            to_poll_pending_on_ok! {
                 unsafe {
-                    addr_of_mut!((*wait).bdev).write(self.bdev());
-                    addr_of_mut!((*wait).cb_fn).write(Some(cb_fn));
-                    addr_of_mut!((*wait).cb_arg).write(cb_arg.cast_mut() as *mut _);
+                    spdk_bdev_queue_io_wait(
+                        self.bdev(),
+                        self.channel.as_ptr(),
+                        wait
+                    )
                 }
-
-                to_poll_pending_on_ok!{
-                    unsafe {
-                        spdk_bdev_queue_io_wait(
-                            self.bdev(),
-                            self.channel.as_ptr(),
-                            wait
-                        )
-                    }
-                    => on ready {
-                        unsafe { drop(Promissory::from_raw(cb_arg)) };
-                    }
+                => on ready {
+                    unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
-            }).await
+            }
+        })
+        .await
     }
 
     /// Executes an I/O operation, queuing the I/O for later execution if there
@@ -199,7 +146,7 @@ impl IoChannel {
             match Promise::new(|p| (start_fn)(p)).await {
                 Ok(()) => return Ok(()),
                 Err(e) if e != ENOMEM => return Err(e),
-                Err(_) => self.wait_io_available().await?
+                Err(_) => self.wait_io_available().await?,
             }
         }
     }
@@ -209,7 +156,7 @@ impl IoChannel {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_zone_management(
                         self.descriptor(),
@@ -224,7 +171,8 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Writes the data in the buffer to the block device at the specified
@@ -234,7 +182,7 @@ impl IoChannel {
             let buf = buf.as_ref();
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_write(
                         self.descriptor(),
@@ -250,19 +198,26 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Writes the data in the slice of buffers to the block device at the specified
     /// byte offset.
-    pub async fn write_vectored_at<'b, B>(&self, bufs: &'b B, offset: u64, length: u64) -> Result<(), Errno>
-        where B: AsRef<[IoSlice<'b>]> + ?Sized
+    pub async fn write_vectored_at<'b, B>(
+        &self,
+        bufs: &'b B,
+        offset: u64,
+        length: u64,
+    ) -> Result<(), Errno>
+    where
+        B: AsRef<[IoSlice<'b>]> + ?Sized,
     {
         self.execute_io(|p| {
             let bufs = bufs.as_ref();
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_writev(
                         self.descriptor(),
@@ -279,14 +234,19 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Writes the data in the buffer to the block device at the specified
     /// block offset.
     ///
     /// The buffer length must be a multiple of the block size of the device.
-    pub async fn write_blocks_at<B: AsRef<[u8]>>(&self, buf: &B, offset_blocks: u64) -> Result<(), Errno> {
+    pub async fn write_blocks_at<B: AsRef<[u8]>>(
+        &self,
+        buf: &B,
+        offset_blocks: u64,
+    ) -> Result<(), Errno> {
         self.execute_io(|p| {
             let buf = buf.as_ref();
             let logical_block_size = self.device().logical_block_size() as usize;
@@ -297,7 +257,7 @@ impl IoChannel {
 
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_write_blocks(
                         self.descriptor(),
@@ -313,19 +273,26 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Writes the data in the slice of buffers to the block device at the specified
     /// block offset.
-    pub async fn write_vectored_blocks_at<'b, B>(&self, bufs: &'b B, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno>
-        where B: AsRef<[IoSlice<'b>]> + ?Sized
+    pub async fn write_vectored_blocks_at<'b, B>(
+        &self,
+        bufs: &'b B,
+        offset_blocks: u64,
+        num_blocks: u64,
+    ) -> Result<(), Errno>
+    where
+        B: AsRef<[IoSlice<'b>]> + ?Sized,
     {
         self.execute_io(|p| {
             let bufs = bufs.as_ref();
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_writev_blocks(
                         self.descriptor(),
@@ -342,7 +309,8 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Writes zeroes to the block device at the specified byte offset.
@@ -350,7 +318,7 @@ impl IoChannel {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_write_zeroes(
                         self.descriptor(),
@@ -365,15 +333,20 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Writes zeroes to the block device at the specified block offset.
-    pub async fn write_zeroes_blocks_at(&self, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
+    pub async fn write_zeroes_blocks_at(
+        &self,
+        offset_blocks: u64,
+        num_blocks: u64,
+    ) -> Result<(), Errno> {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_write_zeroes_blocks(
                         self.descriptor(),
@@ -388,7 +361,8 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Reads data from the block device at the specified byte offset into the
@@ -397,7 +371,7 @@ impl IoChannel {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_read(
                         self.descriptor(),
@@ -413,19 +387,26 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Reads data from the block device at the specified byte offset into the
     /// slice of buffers.
-    pub async fn read_vectored_at<'b, B>(&self, bufs: &'b mut B, offset: u64, length: u64) -> Result<(), Errno>
-        where B: AsMut<[IoSliceMut<'b>]> + ?Sized
+    pub async fn read_vectored_at<'b, B>(
+        &self,
+        bufs: &'b mut B,
+        offset: u64,
+        length: u64,
+    ) -> Result<(), Errno>
+    where
+        B: AsMut<[IoSliceMut<'b>]> + ?Sized,
     {
         self.execute_io(|p| {
             let bufs = bufs.as_mut();
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_readv(
                         self.descriptor(),
@@ -442,14 +423,19 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Reads data from the block device at the specified block offset into the
     /// buffer.
     ///
     /// The buffer must be a multiple of the block size of the device.
-    pub async fn read_blocks_at<B: AsMut<[u8]>>(&self, buf: &mut B, offset_blocks: u64) -> Result<(), Errno> {
+    pub async fn read_blocks_at<B: AsMut<[u8]>>(
+        &self,
+        buf: &mut B,
+        offset_blocks: u64,
+    ) -> Result<(), Errno> {
         self.execute_io(|p| {
             let buf = buf.as_mut();
             let logical_block_size = self.device().logical_block_size() as usize;
@@ -460,7 +446,7 @@ impl IoChannel {
 
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_read_blocks(
                         self.descriptor(),
@@ -476,19 +462,26 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Reads data from the block device at the specified block offset into the
     /// slice of buffers.
-    pub async fn read_vectored_blocks_at<'b, B>(&self, bufs: &'b mut B, offset_blocks: u64, num_blocks: u64) -> Result<(), Errno>
-        where B: AsMut<[IoSliceMut<'b>]> + ?Sized
+    pub async fn read_vectored_blocks_at<'b, B>(
+        &self,
+        bufs: &'b mut B,
+        offset_blocks: u64,
+        num_blocks: u64,
+    ) -> Result<(), Errno>
+    where
+        B: AsMut<[IoSliceMut<'b>]> + ?Sized,
     {
         self.execute_io(|p| {
             let bufs = bufs.as_mut();
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_readv_blocks(
                         self.descriptor(),
@@ -505,15 +498,21 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Copies blocks from the source block offset to the destination block offset.
-    pub async fn copy_blocks(&self, src_offset_blocks: u64, dst_offset_blocks: u64, num_blocks: u64) -> Result<(), Errno> {
+    pub async fn copy_blocks(
+        &self,
+        src_offset_blocks: u64,
+        dst_offset_blocks: u64,
+        num_blocks: u64,
+    ) -> Result<(), Errno> {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_copy_blocks(
                         self.descriptor(),
@@ -529,7 +528,8 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Notifies the block device that the specified range of bytes is no longer
@@ -538,7 +538,7 @@ impl IoChannel {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_unmap(
                         self.descriptor(),
@@ -553,7 +553,8 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Notifies the block device that the specified range of blocks is no longer
@@ -562,7 +563,7 @@ impl IoChannel {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_unmap_blocks(
                         self.descriptor(),
@@ -577,19 +578,20 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Flushes the specified range of bytes from the volatile cache to the
     /// block device.
-    /// 
+    ///
     /// For devices with volatile cache, data is not guaranteed to be persistent
     /// until the completion of the flush operation.
     pub async fn flush(&self, offset: u64, len: u64) -> Result<(), Errno> {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_flush(
                         self.descriptor(),
@@ -604,7 +606,8 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Resets the block device.
@@ -612,7 +615,7 @@ impl IoChannel {
         self.execute_io(|p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok!{
+            to_poll_pending_on_ok! {
                 unsafe {
                     spdk_bdev_reset(
                         self.descriptor(),
@@ -625,7 +628,8 @@ impl IoChannel {
                     unsafe { drop(Promissory::from_raw(cb_arg)) };
                 }
             }
-        }).await
+        })
+        .await
     }
 }
 
@@ -637,7 +641,11 @@ impl Drop for IoChannel {
 
 impl Debug for IoChannel {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "IoChannel {{ bdev: {:?}, thread: {:?} }}", self.device(), self.thread())
+        write!(
+            f,
+            "IoChannel {{ bdev: {:?}, thread: {:?} }}",
+            self.device(),
+            self.thread()
+        )
     }
 }
-

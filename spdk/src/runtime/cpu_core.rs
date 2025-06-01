@@ -1,10 +1,6 @@
 use spdk_sys::{
-    spdk_env_get_core_count,
-    spdk_env_get_current_core,
-    spdk_env_get_first_core,
-    spdk_env_get_main_core,
-    spdk_env_get_next_core,
-    spdk_env_get_socket_id,
+    spdk_env_get_core_count, spdk_env_get_current_core, spdk_env_get_first_core,
+    spdk_env_get_main_core, spdk_env_get_next_core, spdk_env_get_socket_id,
 };
 
 use super::CpuSet;
@@ -22,7 +18,7 @@ impl CpuCore {
     /// Tries to return the current CPU core.
     ///
     /// # Returns
-    /// 
+    ///
     /// If the current system thread is a dedicated SPDK CPU core, this function
     /// returns `Some(c)` where `c` is the current CPU core. Otherwise, this
     /// function returns `None`.
@@ -37,9 +33,9 @@ impl CpuCore {
     }
 
     /// Returns the current CPU core.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This function panics if the current system thread is not a on dedicated
     /// SPDK core.
     pub fn current() -> Self {

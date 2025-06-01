@@ -1,33 +1,16 @@
-use std::{
-    cell::Cell,
-    ffi::CString,
-    os::raw::c_int,
-};
+use std::{cell::Cell, ffi::CString, os::raw::c_int};
 
 use proc_macro2::TokenStream;
-use quote::{
-    format_ident,
-    quote,
-    quote_spanned,
-};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{
+    spanned::Spanned,
+    visit::{self, Visit},
     Data::Struct,
-    Expr,
-    Field,
+    Expr, Field,
     Fields::Named,
     Ident,
-    Lit::{
-        self,
-        Char,
-        Str,
-    },
-    LitCStr,
-    spanned::Spanned,
-    Type,
-    visit::{
-        self,
-        Visit,
-    },
+    Lit::{self, Char, Str},
+    LitCStr, Type,
 };
 use ternary_rs::if_else;
 
@@ -60,7 +43,9 @@ struct Arg {
 impl Arg {
     /// Creates a new `Arg` initialized from a [`Field`].
     fn from_field(field: &Field) -> Self {
-        let mut arg = Self { ..Default::default() };
+        let mut arg = Self {
+            ..Default::default()
+        };
 
         arg.visit_field(field);
 
@@ -71,27 +56,26 @@ impl Arg {
     /// the derived struct
     fn field_init(&self) -> TokenStream {
         let ident = self.ident.as_ref().unwrap();
-        let default = self.default.clone().unwrap_or_else(|| {
-            quote_spanned!(self.r#type.span()=> std::default::Default::default())
-        });
+        let default = self.default.clone().unwrap_or_else(
+            || quote_spanned!(self.r#type.span()=> std::default::Default::default()),
+        );
 
-        quote!{
+        quote! {
             #ident: #default
         }
     }
 
     /// Returns the value of the `val` field of the [`option`] struct.
-    /// 
+    ///
     /// [`option`]: ../../spdk_sys/struct.option.html
     fn opt_val(&self) -> c_int {
         if let Some(v) = self.opt_val.get() {
-            return v
+            return v;
         }
-        
+
         let opt_val = if let Some(c) = self.short_opt {
             c as c_int
-        }
-        else {
+        } else {
             let v = unsafe { CURRENT_OPT_VALUE + 1 };
 
             unsafe { CURRENT_OPT_VALUE = v };
@@ -106,18 +90,21 @@ impl Arg {
 
     /// Returns a `TokenStream` representing the [`option`] struct for a field
     /// in the derived struct.
-    /// 
+    ///
     /// [`option`]: ../../spdk_sys/struct.option.html
     fn long_opt(&self) -> TokenStream {
         let ident = self.ident.as_ref().unwrap();
-        let long_opt = CString::new(self.long_opt.clone().unwrap_or_else(|| {
-            ident.to_string().replace("_", "-")
-        })).unwrap();
+        let long_opt = CString::new(
+            self.long_opt
+                .clone()
+                .unwrap_or_else(|| ident.to_string().replace("_", "-")),
+        )
+        .unwrap();
         let long_opt_lit = LitCStr::new(&long_opt, ident.span());
         let has_arg = self.has_arg;
         let opt_val = self.opt_val();
 
-        quote!{
+        quote! {
             spdk_sys::option {
                 name: #long_opt_lit.as_ptr(),
                 has_arg: #has_arg,
@@ -130,7 +117,7 @@ impl Arg {
     /// Returns a `TokenStream` representing the `match` arm in the argument
     /// parsing callback invoked by [`spdk_app_parse_args`] that converts the
     /// string argument into the field value.
-    /// 
+    ///
     /// [`spdk_app_parse_args`]: ../../spdk_sys/fn.spdk_app_parse_args.html
     fn parse_option(&self) -> TokenStream {
         let ident = self.ident.as_ref().unwrap();
@@ -138,15 +125,15 @@ impl Arg {
 
         match self.has_arg {
             NO_ARGUMENT => {
-                quote_spanned!{self.r#type.as_ref().unwrap().span()=>
+                quote_spanned! {self.r#type.as_ref().unwrap().span()=>
                     #opt_val => {
                         cur_value.#ident = true;
                         return 0;
                     },
                 }
-            },
+            }
             OPTIONAL_ARGUMENT => {
-                quote_spanned!{self.r#type.as_ref().unwrap().span()=>
+                quote_spanned! {self.r#type.as_ref().unwrap().span()=>
                     #opt_val => {
                         cur_value.#ident = match optarg {
                             Some(v) => v.parse().unwrap(),
@@ -155,15 +142,15 @@ impl Arg {
                         return 0;
                     },
                 }
-            },
+            }
             REQUIRED_ARGUMENT => {
-                quote_spanned!{self.r#type.as_ref().unwrap().span()=>
+                quote_spanned! {self.r#type.as_ref().unwrap().span()=>
                     #opt_val => {
                         cur_value.#ident = optarg.unwrap().parse().unwrap();
                         return 0;
                     },
                 }
-            },
+            }
             _ => unreachable!("unexpected has_arg value: {}", self.has_arg),
         }
     }
@@ -189,23 +176,26 @@ impl Arg {
     /// derived struct.
     fn help(&self) -> Vec<String> {
         let ident = self.ident.as_ref().unwrap();
-        let long_opt = self.long_opt.clone().unwrap_or_else(|| {
-            ident.to_string().replace("_", "-")
-        });
+        let long_opt = self
+            .long_opt
+            .clone()
+            .unwrap_or_else(|| ident.to_string().replace("_", "-"));
         let opt_val = self.opt_val();
-        let value_name = self.value_name.clone().unwrap_or_else(|| {
-            ident.to_string().to_uppercase()
-        });
+        let value_name = self
+            .value_name
+            .clone()
+            .unwrap_or_else(|| ident.to_string().to_uppercase());
 
         let mut opt_text = if_else!(
             opt_val < 128,
             format!("-{}, --{}", opt_val as u8 as char, long_opt),
-            format!("    --{}", long_opt));
+            format!("    --{}", long_opt)
+        );
         opt_text = match self.has_arg {
             NO_ARGUMENT => opt_text,
             OPTIONAL_ARGUMENT => {
                 format!("{} [{}]", opt_text, value_name)
-            },
+            }
             REQUIRED_ARGUMENT => {
                 format!("{} <{}>", opt_text, value_name)
             }
@@ -213,12 +203,15 @@ impl Arg {
         };
 
         if opt_text.len() < 25 {
-            vec![format!("  {:25}{}", opt_text, self.help.clone().unwrap_or_default())]
-        }
-        else {
+            vec![format!(
+                "  {:25}{}",
+                opt_text,
+                self.help.clone().unwrap_or_default()
+            )]
+        } else {
             vec![
                 format!("  {}", opt_text),
-                format!("  {:>25}{}", "", self.help.clone().unwrap_or_default())
+                format!("  {:>25}{}", "", self.help.clone().unwrap_or_default()),
             ]
         }
     }
@@ -238,8 +231,12 @@ impl<'ast> Visit<'ast> for Arg {
 
         self.has_arg = match ty {
             syn::Type::Path(ref p) => {
-                if_else!(p.path.is_ident("bool"), OPTIONAL_ARGUMENT, REQUIRED_ARGUMENT)
-            },
+                if_else!(
+                    p.path.is_ident("bool"),
+                    OPTIONAL_ARGUMENT,
+                    REQUIRED_ARGUMENT
+                )
+            }
             _ => REQUIRED_ARGUMENT,
         };
     }
@@ -263,24 +260,23 @@ impl<'ast> Visit<'ast> for Arg {
                     if let Char(c) = meta.value()?.parse()? {
                         self.short_opt = Some(c.value());
                     }
-                }
-                else if meta.path.is_ident("long") {
+                } else if meta.path.is_ident("long") {
                     if let Str(s) = meta.value()?.parse()? {
                         self.long_opt = Some(s.value());
                     }
-                }
-                else if meta.path.is_ident("default") {
+                } else if meta.path.is_ident("default") {
                     let val: Expr = meta.value()?.parse()?;
 
                     self.default = Some(quote_spanned!(val.span()=> #val));
-                }
-                else if meta.path.is_ident("value_name") {
+                } else if meta.path.is_ident("value_name") {
                     if let Str(s) = meta.value()?.parse()? {
                         self.value_name = Some(s.value());
                     }
-                }
-                else {
-                    return Err(meta.error(format!("unexpected attribute metadata: {}", meta.path.get_ident().unwrap())));
+                } else {
+                    return Err(meta.error(format!(
+                        "unexpected attribute metadata: {}",
+                        meta.path.get_ident().unwrap()
+                    )));
                 }
 
                 Ok(())
@@ -297,10 +293,9 @@ impl<'ast> Visit<'ast> for Arg {
 
 /// Orchestrates the derivation of the [`Parser`] trait for a struct annotated
 /// with the `derive(Parser)` attribute.
-/// 
+///
 /// [`Parser`]: ../../spdk/cli/trait.Parser.html
-pub(crate) struct DeriveParser {
-}
+pub(crate) struct DeriveParser {}
 
 impl DeriveParser {
     /// Creates a new `DeriveParser`.
@@ -310,32 +305,34 @@ impl DeriveParser {
 
     /// Derives the [`Parser`] trait for a struct annotated with the
     /// `derive(Parser)` attribute.
-    /// 
+    ///
     /// [`Parser`]: ../../spdk/cli/trait.Parser.html
     pub(crate) fn derive(&mut self, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-        let input =  syn::parse_macro_input!(input as syn::DeriveInput);
+        let input = syn::parse_macro_input!(input as syn::DeriveInput);
 
         let fields = match input.data {
-            Struct(ref s) => {
-                match &s.fields {
-                    Named(f) => f.named.iter(),
-                    _ => {
-                        return syn::Error::new(input.span(), "cannot derive macro `Parser` for tuple or unit struct types")
-                            .into_compile_error()
-                            .into()
-                    },
+            Struct(ref s) => match &s.fields {
+                Named(f) => f.named.iter(),
+                _ => {
+                    return syn::Error::new(
+                        input.span(),
+                        "cannot derive macro `Parser` for tuple or unit struct types",
+                    )
+                    .into_compile_error()
+                    .into()
                 }
             },
             _ => {
-                return syn::Error::new(input.span(), "cannot derive macro `Parser` for non-struct types")
-                    .into_compile_error()
-                    .into()
-            },
+                return syn::Error::new(
+                    input.span(),
+                    "cannot derive macro `Parser` for non-struct types",
+                )
+                .into_compile_error()
+                .into()
+            }
         };
 
-        let args: Vec<_> = fields
-            .map(Arg::from_field)
-            .collect();
+        let args: Vec<_> = fields.map(Arg::from_field).collect();
 
         let type_ident = input.ident;
         let uppername = type_ident.to_string().to_uppercase();
@@ -345,14 +342,15 @@ impl DeriveParser {
         let parse_opts = args.iter().map(Arg::parse_option);
         let long_opt = args.iter().map(Arg::long_opt);
         let long_opts_count = long_opt.len();
-        let getopts_str = CString::new(args
-            .iter()
-            .map(Arg::getopts_str)
-            .fold(String::new(), |mut acc, s| {
+        let getopts_str = CString::new(args.iter().map(Arg::getopts_str).fold(
+            String::new(),
+            |mut acc, s| {
                 acc.push_str(&s);
 
                 acc
-            })).unwrap();
+            },
+        ))
+        .unwrap();
         let getopts_str_lit = LitCStr::new(&getopts_str, type_ident.span());
         let help = args.iter().flat_map(Arg::help);
         let errors = args.iter().flat_map(Arg::errors);
