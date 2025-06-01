@@ -137,10 +137,7 @@ impl<T: OwnedOps> Device<T> {
     pub fn from_name(name: &CStr) -> Option<Device<Any>> {
         let bdev = unsafe { spdk_bdev_get_by_name(name.as_ptr()) };
 
-        match NonNull::new(bdev) {
-            Some(b) => Some(Device::<Any>(OwnershipState::Borrowed(b))),
-            None => None,
-        }
+        NonNull::new(bdev).map(|b| Device::<Any>(OwnershipState::Borrowed(b)))
     }
 
     /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
@@ -191,7 +188,7 @@ impl<T: OwnedOps> Device<T> {
             OwnershipState::Owned(dev) => Device::<Any>(OwnershipState::Borrowed(unsafe {
                 NonNull::new_unchecked(dev.as_ptr())
             })),
-            OwnershipState::Borrowed(bdev) => Device::<Any>(OwnershipState::Borrowed(bdev.clone())),
+            OwnershipState::Borrowed(bdev) => Device::<Any>(OwnershipState::Borrowed(*bdev)),
             OwnershipState::None => panic!("no device"),
         }
     }

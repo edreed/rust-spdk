@@ -33,10 +33,13 @@ impl BDevIoChannelOps for PassthruRsChannel {
     async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
         match io.io_type() {
             IoType::Read => {
-                io.allocate_buffers(io.num_blocks() * io.device().logical_block_size() as u64)
+                let num_blocks = io.num_blocks();
+                let offset_blocks = io.offset_blocks();
+
+                io.allocate_buffers(num_blocks * io.device().logical_block_size() as u64)
                     .await?;
                 self.ch
-                    .read_vectored_blocks_at(io.buffers_mut(), io.offset_blocks(), io.num_blocks())
+                    .read_vectored_blocks_at(io.buffers_mut(), offset_blocks, num_blocks)
                     .await
             }
             IoType::Write => {

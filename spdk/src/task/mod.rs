@@ -5,6 +5,7 @@
 mod join_handle;
 mod poller;
 mod promise;
+#[allow(clippy::module_inception)]
 mod task;
 mod yield_now;
 

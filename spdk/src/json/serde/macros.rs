@@ -4,7 +4,7 @@ macro_rules! to_write_result {
         if $r == 0 {
             Ok(())
         } else {
-            Err(crate::json::serde::Error::WriteFailed)
+            Err($crate::json::serde::Error::WriteFailed)
         }
     };
 }
@@ -15,7 +15,7 @@ macro_rules! to_unexpected_value_result {
         if $r >= 0 {
             Ok(())
         } else {
-            Err(crate::json::serde::Error::UnexpectedValue)
+            Err($crate::json::serde::Error::UnexpectedValue)
         }
     };
 }

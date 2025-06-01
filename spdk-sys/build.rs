@@ -214,7 +214,7 @@ fn main() {
         .clang_args(
             include_paths
                 .iter()
-                .map(|i| format!("-I{}", i.to_string_lossy().to_string())),
+                .map(|i| format!("-I{}", i.to_string_lossy())),
         )
         .clang_args(defines.iter().map(|d| format!("-D{}", d)))
         .allowlist_function("spdk_.*")

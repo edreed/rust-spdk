@@ -193,7 +193,7 @@ where
     pub(crate) fn with_future(target_thread: Option<Thread>, fut: F) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
-            target_thread: target_thread,
+            target_thread,
             state: RefCell::new(TaskState::Pending),
             result_sender: UnsafeCell::new(Some(sx)),
             future: UnsafeCell::new(fut),
@@ -207,7 +207,7 @@ where
         self.target_thread
             .as_ref()
             .map(Thread::borrow)
-            .unwrap_or_else(|| Thread::application())
+            .unwrap_or_else(Thread::application)
     }
 
     /// Executes a task on the executor.
@@ -261,10 +261,8 @@ where
 
         // If the current thread is the target of this task, attempt to run it
         // synchronously.
-        if target_thread.is_current() {
-            if Self::run(&arc_self) {
-                return;
-            }
+        if target_thread.is_current() && Self::run(&arc_self) {
+            return;
         }
 
         // The task could not be run synchronously, so enqueue it to run on the
@@ -327,7 +325,7 @@ where
     pub(crate) fn with_future(target_reactor: Reactor, fut: F) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
-            target_reactor: target_reactor,
+            target_reactor,
             state: RefCell::new(TaskState::Pending),
             result_sender: UnsafeCell::new(Some(sx)),
             future: UnsafeCell::new(fut),
@@ -387,10 +385,8 @@ where
 
         // If the current reactor is the target of this task, attempt to run it
         // synchronously.
-        if target_reactor.is_current() {
-            if Self::run(&arc_self) {
-                return;
-            }
+        if target_reactor.is_current() && Self::run(&arc_self) {
+            return;
         }
 
         // The task could not be run synchronously, so enqueue it to run on the

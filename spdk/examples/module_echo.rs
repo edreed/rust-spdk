@@ -55,9 +55,10 @@ struct EchoChannel {
 
 impl EchoChannel {
     async fn do_read(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
+        let offset_blocks = io.offset_blocks();
         let dst_buf = io.buffers_mut();
 
-        if io.offset_blocks() == 0 {
+        if offset_blocks == 0 {
             // Some Virtual BDev read the first block to inspect
             // partition or other metadata to determine whether
             // to claim the device. We imply return a block of
@@ -88,7 +89,10 @@ impl EchoChannel {
         }
 
         // SAFETY: We will wait for the reader to consume the buffer before returning.
-        unsafe { *src_buf = Some(transmute(io.buffers())) };
+        unsafe {
+            *src_buf =
+                Some(transmute::<&[std::io::IoSlice<'_>], &[std::io::IoSlice<'_>]>(io.buffers()))
+        };
 
         self.device.reader.notify_one();
 
@@ -151,10 +155,7 @@ impl BDevOps for Echo {
     }
 
     fn io_type_supported(&self, io_type: IoType) -> bool {
-        match io_type {
-            IoType::Read | IoType::Write => true,
-            _ => false,
-        }
+        matches!(io_type, IoType::Read | IoType::Write)
     }
 
     fn new_io_channel(&mut self) -> Result<EchoChannel, Errno> {

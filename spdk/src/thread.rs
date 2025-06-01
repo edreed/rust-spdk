@@ -108,10 +108,7 @@ impl Thread {
         unsafe {
             let t = spdk_thread_get_by_id(id);
 
-            match NonNull::new(t) {
-                Some(t) => Some(Self(OwnershipState::Borrowed(t))),
-                None => None,
-            }
+            NonNull::new(t).map(|t| Self(OwnershipState::Borrowed(t)))
         }
     }
 
@@ -129,10 +126,7 @@ impl Thread {
         unsafe {
             let t = spdk_thread_get_app_thread();
 
-            match NonNull::new(t) {
-                Some(t) => Some(Self(OwnershipState::Borrowed(t))),
-                None => None,
-            }
+            NonNull::new(t).map(|t| Self(OwnershipState::Borrowed(t)))
         }
     }
 
@@ -160,10 +154,7 @@ impl Thread {
         unsafe {
             let t = spdk_get_thread();
 
-            match NonNull::new(t) {
-                Some(t) => Some(Self(OwnershipState::Borrowed(t))),
-                None => None,
-            }
+            NonNull::new(t).map(|t| Self(OwnershipState::Borrowed(t)))
         }
     }
 

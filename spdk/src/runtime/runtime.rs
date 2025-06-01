@@ -288,3 +288,9 @@ impl Runtime {
         self.start(wrapped_fut);
     }
 }
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
+    }
+}

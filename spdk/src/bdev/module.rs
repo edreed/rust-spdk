@@ -76,7 +76,7 @@ where
     /// Creates a new partially initialized BDev instance with the specified
     /// name and context. Implementors must provider their own constructor
     /// function to complete initialization.
-    fn new_bdev<B: BDevOps>(name: &CStr, ctx: B) -> Box<BDevImpl<B>>
+    fn new_bdev<B>(name: &CStr, ctx: B) -> Box<BDevImpl<B>>
     where
         B: BDevOps;
 }

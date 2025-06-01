@@ -11,7 +11,8 @@
 pub mod malloc;
 
 #[cfg(feature = "bdev-module")]
-pub(crate) mod bdev;
+#[allow(clippy::module_inception)]
+mod bdev;
 #[cfg(feature = "bdev-module")]
 mod module;
 

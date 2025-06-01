@@ -47,7 +47,7 @@ unsafe impl Sync for NullRs {}
 impl NullRs {
     /// Creates a new NullRs block device.
     pub fn try_new() -> Result<Device<Owned>, Errno> {
-        let mut null = NullRsModule::new_bdev(c"null-rs", NullRs::default());
+        let mut null = NullRsModule::new_bdev(c"null-rs", NullRs);
 
         null.bdev.blocklen = 4096;
         null.bdev.blockcnt = 1;

@@ -29,7 +29,7 @@ struct Args {
 
 #[spdk::main(cli_args = Args::parse())]
 async fn main() {
-    let mut target = nvmf::targets().nth(0).unwrap();
+    let mut target = nvmf::targets().next().unwrap();
 
     let transport = nvmf::TransportBuilder::new(TransportType::TCP)
         .unwrap()
@@ -46,7 +46,7 @@ async fn main() {
         if_else!(args.listen_addr.is_ipv4(), "IPv4", "IPv6"),
         args.listen_addr,
         args.listen_port,
-        NQN.to_string_lossy().to_string()
+        NQN.to_string_lossy()
     )
     .parse::<TransportId>()
     .unwrap();

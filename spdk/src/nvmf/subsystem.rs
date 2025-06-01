@@ -310,7 +310,7 @@ impl Subsystem {
 
             let ns = spdk_nvmf_subsystem_get_ns(self.as_ptr(), nsid);
 
-            return Ok(Namespace::from_ptr(ns));
+            Ok(Namespace::from_ptr(ns))
         }
     }
 

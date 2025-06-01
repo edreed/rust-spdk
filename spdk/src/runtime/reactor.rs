@@ -73,10 +73,7 @@ impl Reactor {
     /// returns `Some(r)` where `r` is the current reactor. Otherwise, this
     /// function returns `None`.
     pub fn try_current() -> Option<Self> {
-        match CpuCore::try_current() {
-            Some(core) => Some(Self(core)),
-            None => None,
-        }
+        CpuCore::try_current().map(Self)
     }
 
     /// Returns the current reactor.
@@ -152,7 +149,7 @@ impl Reactor {
         F: Future<Output = T> + 'static,
         T: Send + 'static,
     {
-        let (task, join_handle) = ReactorTask::with_future(self.clone(), fut_gen());
+        let (task, join_handle) = ReactorTask::with_future(*self, fut_gen());
 
         Task::schedule(task);
 

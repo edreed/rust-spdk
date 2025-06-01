@@ -13,7 +13,7 @@ async fn main() {
         r.spawn(|| async {
             let core_id = Reactor::current().core().id();
 
-            time::sleep(Duration::from_secs(1 * core_id as u64)).await;
+            time::sleep(Duration::from_secs(core_id as u64)).await;
 
             println!("Hello, World from the reactor on core {}!", core_id);
         })

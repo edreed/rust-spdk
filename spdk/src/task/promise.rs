@@ -227,6 +227,8 @@ where
     /// The raw pointer must have been previously returned by a call to
     /// `Promissory<R, C>::into_raw`.
     ///
+    /// # Safety
+    ///
     /// See [`Arc<T>::from_raw`] for safety requirements.
     pub unsafe fn from_raw(raw: *const Self) -> Arc<Self> {
         Arc::from_raw(raw)
@@ -292,6 +294,10 @@ where
     }
 }
 
+/// A function that starts the asynchronous operation the will yield a result
+/// for the [`Promise`].
+type StartFn<'a, R, C> = dyn FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a;
+
 /// Orchestrates the execution of an asynchronous operation and provides access
 /// to its result.
 pub struct Promise<'a, R, C = ()>
@@ -299,7 +305,7 @@ where
     R: Debug + 'static,
     C: 'static,
 {
-    start_fn: Option<Box<dyn FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a>>,
+    start_fn: Option<Box<StartFn<'a, R, C>>>,
     promissory: Arc<Promissory<R, C>>,
 }
 

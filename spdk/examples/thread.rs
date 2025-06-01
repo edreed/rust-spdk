@@ -16,7 +16,7 @@ async fn main() {
             let t = Thread::new(name.as_c_str(), &core.into()).unwrap();
 
             t.spawn(move || async move {
-                time::sleep(Duration::from_secs(1 * core.id() as u64)).await;
+                time::sleep(Duration::from_secs(core.id() as u64)).await;
 
                 println!(
                     "Hello, World from {}!",

@@ -6,9 +6,9 @@
 #[macro_export]
 macro_rules! to_result {
     ($r:expr) => {
-        match crate::errors::Errno($r) {
-            crate::errors::Errno(0) => Ok(()),
-            crate::errors::Errno(e) if e < 0 => Err(crate::errors::Errno(-e)),
+        match $crate::errors::Errno($r) {
+            $crate::errors::Errno(0) => Ok(()),
+            $crate::errors::Errno(e) if e < 0 => Err($crate::errors::Errno(-e)),
             _ => unreachable!(),
         }
     };
@@ -23,9 +23,9 @@ macro_rules! to_result {
 #[macro_export]
 macro_rules! to_result_size {
     ($r:expr) => {
-        match crate::errors::Errno($r) {
-            crate::errors::Errno(e) if e < 0 => Err(crate::errors::Errno(-e)),
-            crate::errors::Errno(s) => Ok(s as usize),
+        match $crate::errors::Errno($r) {
+            $crate::errors::Errno(e) if e < 0 => Err($crate::errors::Errno(-e)),
+            $crate::errors::Errno(s) => Ok(s as usize),
         }
     };
 }
@@ -41,7 +41,7 @@ macro_rules! to_result_size {
 #[macro_export]
 macro_rules! to_poll_pending_on_ok {
     ($r:expr) => {
-        match crate::to_result!($r) {
+        match $crate::to_result!($r) {
             Ok(()) => std::task::Poll::Pending,
             Err(e) => std::task::Poll::Ready(Err(e))
         }
@@ -76,7 +76,7 @@ macro_rules! to_poll_pending_on_ok {
 #[macro_export]
 macro_rules! to_poll_pending_on_err {
     ($e:expr, $r:expr) => {
-        match crate::to_result!($r) {
+        match $crate::to_result!($r) {
             Ok(()) => std::task::Poll::Ready(Ok(())),
             Err(e) if e == $e => std::task::Poll::Pending,
             Err(e) => std::task::Poll::Ready(Err(e))

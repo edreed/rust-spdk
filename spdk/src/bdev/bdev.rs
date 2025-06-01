@@ -89,9 +89,9 @@ impl From<Result<(), Errno>> for IoStatus {
     }
 }
 
-impl Into<spdk_bdev_io_status> for IoStatus {
-    fn into(self) -> spdk_bdev_io_status {
-        match self {
+impl From<IoStatus> for spdk_bdev_io_status {
+    fn from(val: IoStatus) -> spdk_bdev_io_status {
+        match val {
             IoStatus::AioError => SPDK_BDEV_IO_STATUS_AIO_ERROR,
             IoStatus::Aborted => SPDK_BDEV_IO_STATUS_ABORTED,
             IoStatus::FirstFusedFailed => SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED,
@@ -265,7 +265,7 @@ where
     }
 
     /// Returns the mutable buffers associated with the I/O request.
-    pub fn buffers_mut(&self) -> &mut [IoSliceMut<'_>] {
+    pub fn buffers_mut(&mut self) -> &mut [IoSliceMut<'_>] {
         unsafe {
             let mut iovecs = ptr::null_mut();
             let mut iovec_count: c_int = 0;
@@ -451,6 +451,17 @@ where
         this
     }
 
+    /// Converts a raw `spdk_bdev` pointer to a reference to the BDevImpl.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the `spdk_bdev` pointer is valid and points
+    /// to a `BDevImpl<T>` instance. This function does not perform any
+    /// validation on the pointer.
+    pub unsafe fn from_raw(bdev: *mut spdk_bdev) -> &'static BDevImpl<T> {
+        &*bdev.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast()
+    }
+
     /// Registers the BDev with the SPDK subsystem. This function must be called
     /// from the SPDK application thread.
     pub fn register(&mut self) -> Result<(), Errno> {
@@ -520,7 +531,7 @@ where
 
     /// Returns the name of the BDev.
     pub fn name(&self) -> &'static CStr {
-        unsafe { &CStr::from_ptr(self.bdev.name) }
+        unsafe { CStr::from_ptr(self.bdev.name) }
     }
 
     /// Destroys the BDev instance.
@@ -622,15 +633,6 @@ where
 {
     fn drop(&mut self) {
         unsafe { drop(CString::from_raw(self.bdev.name)) }
-    }
-}
-
-impl<T> From<*mut spdk_bdev> for &'static BDevImpl<T>
-where
-    T: BDevOps,
-{
-    fn from(bdev: *mut spdk_bdev) -> &'static BDevImpl<T> {
-        unsafe { &*bdev.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast() }
     }
 }
 

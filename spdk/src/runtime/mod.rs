@@ -5,6 +5,7 @@
 mod cpu_core;
 mod cpu_set;
 mod reactor;
+#[allow(clippy::module_inception)]
 mod runtime;
 
 pub use cpu_core::cpu_cores;

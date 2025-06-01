@@ -219,7 +219,7 @@ impl<'de> Deserializer<'de> {
                 spdk_json_parse(
                     input.as_ptr() as *mut u8 as *mut c_void,
                     input.len(),
-                    mem::transmute(values.as_mut_ptr()),
+                    mem::transmute::<*mut Value<'_>, *mut spdk_json_val>(values.as_mut_ptr()),
                     values.capacity(),
                     ptr::null_mut(),
                     0,
@@ -249,13 +249,11 @@ impl<'de> Deserializer<'de> {
     }
 
     /// Returns the next JSON value without consuming it.
-    #[must_use]
     fn peek(&self) -> Result<&Value<'de>> {
         self.values.get(self.position).ok_or(Error::Eof)
     }
 
     /// Returns the next JSON value and advances the position.
-    #[must_use]
     fn next(&mut self) -> Result<&Value<'de>> {
         if self.position < self.values.len() {
             let current = self.position;
@@ -276,7 +274,7 @@ impl<'de> Deserializer<'de> {
     }
 }
 
-impl<'a, 'de> de::Deserializer<'de> for &'a mut Deserializer<'de> {
+impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     type Error = Error;
 
     fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
