@@ -10,12 +10,12 @@ links = "spdk"
 [build-dependencies]
 autotools = "0.2.7"
 bindgen = { version = "0.71.1", features = ["experimental"] }
-cc = "1.1.6"
+cc = "1.2.25"
 doxygen-rs = "0.4.2"
 fs_extra = "1.3.0"
-itertools = "0.13.0"
-pkg-config = "0.3.30"
-regex = "1.10.5"
+itertools = "0.14.0"
+pkg-config = "0.3.32"
+regex = "1.11.1"
 
 [features]
 default = []
