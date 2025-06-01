@@ -10,10 +10,10 @@ rust-version = "1.77.0"
 proc-macro = true
 
 [dependencies]
-convert_case = "0.6.0"
-proc-macro2 = "1.0.86"
-quote = "1.0.36"
-syn = { version = "2.0.72", features = ["full", "visit"] }
+convert_case = "0.8.0"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+syn = { version = "2.0.101", features = ["full", "visit"] }
 ternary-rs = "1.0.0"
 
 [features]
