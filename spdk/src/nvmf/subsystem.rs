@@ -176,7 +176,7 @@ impl Subsystem {
     }
 
     /// Returns an iterator over the hosts allowed to connect to this subsystem.
-    pub fn allowed_hosts(&self) -> AllowedHosts {
+    pub fn allowed_hosts(&self) -> AllowedHosts<'_> {
         AllowedHosts::new(self)
     }
 
@@ -323,7 +323,7 @@ impl Subsystem {
     }
 
     /// Returns an iterator over the namespaces in the subsystem.
-    pub fn namespaces(&self) -> Namespaces {
+    pub fn namespaces(&self) -> Namespaces<'_> {
         Namespaces::new(self)
     }
 
