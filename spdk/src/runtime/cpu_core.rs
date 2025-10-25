@@ -1,6 +1,6 @@
 use spdk_sys::{
     spdk_env_get_core_count, spdk_env_get_current_core, spdk_env_get_first_core,
-    spdk_env_get_main_core, spdk_env_get_next_core, spdk_env_get_socket_id,
+    spdk_env_get_main_core, spdk_env_get_next_core, spdk_env_get_numa_id,
 };
 
 use super::CpuSet;
@@ -52,9 +52,9 @@ impl CpuCore {
         self.0
     }
 
-    /// Returns the ID of the socket this CPU core is on.
-    pub fn socket_id(&self) -> u32 {
-        unsafe { spdk_env_get_socket_id(self.0) }
+    /// Returns the NUMA node ID of this CPU core.
+    pub fn numa_id(&self) -> i32 {
+        unsafe { spdk_env_get_numa_id(self.0) }
     }
 }
 

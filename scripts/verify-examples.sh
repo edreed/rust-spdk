@@ -27,6 +27,6 @@ run_example module_echo --features="bdev-module" -- "${COMMON_ARGS[@]}" --lcores
 run_example module_null --features="bdev-module" -- "${COMMON_ARGS[@]}"
 run_example module_passthru --features="bdev-malloc,bdev-module" -- "${COMMON_ARGS[@]}"
 run_example reactor -- "${COMMON_ARGS[@]}"
-run_example reactor -- "${COMMON_ARGS[@]}"
+run_example runtime -- "${COMMON_ARGS[@]}"
 run_example sleep -- "${COMMON_ARGS[@]}"
 run_example thread -- "${COMMON_ARGS[@]}"
