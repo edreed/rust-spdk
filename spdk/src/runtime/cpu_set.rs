@@ -79,8 +79,6 @@ impl Clone for CpuSet {
     }
 }
 
-impl Copy for CpuSet {}
-
 impl BitAndAssign for CpuSet {
     fn bitand_assign(&mut self, rhs: Self) {
         unsafe {
