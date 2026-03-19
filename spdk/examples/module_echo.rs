@@ -5,9 +5,10 @@ use std::{
     sync::Arc,
 };
 
-use async_std::sync::{Condvar, Mutex};
+use async_condvar_fair::Condvar;
 use async_trait::async_trait;
 use futures::future::join;
+use parking_lot::Mutex;
 use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
     block::{Device, IoType, Owned},
@@ -54,6 +55,8 @@ struct EchoChannel {
 }
 
 impl EchoChannel {
+    // The `reader `condition variable releases the lock during the await.
+    #[allow(clippy::await_holding_lock)]
     async fn do_read(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
         let offset_blocks = io.offset_blocks();
         let dst_buf = io.buffers_mut();
@@ -68,7 +71,7 @@ impl EchoChannel {
             return Ok(());
         }
 
-        let mut src_buf = self.device.src_buf.lock().await;
+        let mut src_buf = self.device.src_buf.lock();
 
         while src_buf.is_none() {
             src_buf = self.device.reader.wait(src_buf).await;
@@ -81,8 +84,10 @@ impl EchoChannel {
         Ok(())
     }
 
+    // The `writer `condition variable releases the lock during the await.
+    #[allow(clippy::await_holding_lock)]
     async fn do_write(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
-        let mut src_buf = self.device.src_buf.lock().await;
+        let mut src_buf = self.device.src_buf.lock();
 
         while src_buf.is_some() {
             src_buf = self.device.writer.wait(src_buf).await;
