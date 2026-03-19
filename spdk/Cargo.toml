@@ -9,11 +9,11 @@ all-features = true
 
 [dependencies]
 aquamarine = "0.6.0"
-async-trait = "0.1.88"
-errno = "0.3.12"
-futures = "0.3.31"
-libc = "0.2.172"
-serde = { version = "1.0.219", features = ["derive"] }
+async-trait = "0.1.89"
+errno = "0.3.14"
+futures = "0.3.32"
+libc = "0.2.183"
+serde = { version = "1.0.228", features = ["derive"] }
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
 spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
 static_init = "1.0.4"
