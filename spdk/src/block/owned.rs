@@ -16,10 +16,10 @@ pub trait OwnedOps: From<Owned> + Send + 'static {
     async fn destroy(self) -> Result<(), Errno>;
 }
 
-type DestroyFn = fn(Owned) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>>;
+type DestroyFn = fn(Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>> + Send>>;
 
 /// Destroys the type-erased device managed by the specified [`Owned`] instance.
-fn destroy_device<T>(owned: Owned) -> Pin<Box<(dyn Future<Output = Result<(), Errno>> + Send)>>
+fn destroy_device<T>(owned: Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>> + Send>>
 where
     T: OwnedOps,
 {

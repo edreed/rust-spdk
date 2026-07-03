@@ -67,7 +67,6 @@ impl PartialEq for CpuSet {
 impl Eq for CpuSet {}
 
 impl Clone for CpuSet {
-    #[allow(clippy::non_canonical_clone_impl)]
     fn clone(&self) -> Self {
         unsafe {
             let mut cpu_set = MaybeUninit::<spdk_cpuset>::uninit();
@@ -78,8 +77,6 @@ impl Clone for CpuSet {
         }
     }
 }
-
-impl Copy for CpuSet {}
 
 impl BitAndAssign for CpuSet {
     fn bitand_assign(&mut self, rhs: Self) {
