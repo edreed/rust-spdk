@@ -113,10 +113,16 @@ impl PassthruRs {
         passthru.bdev.blocklen = base.blocklen;
         passthru.bdev.blockcnt = base.blockcnt;
 
-        passthru.bdev.md_interleave = base.md_interleave;
+        passthru
+            .bdev
+            .__bindgen_anon_1
+            .set_md_interleave(base.__bindgen_anon_1.md_interleave());
         passthru.bdev.md_len = base.md_len;
         passthru.bdev.dif_type = base.dif_type;
-        passthru.bdev.dif_is_head_of_md = base.dif_is_head_of_md;
+        passthru
+            .bdev
+            .__bindgen_anon_1
+            .set_dif_is_head_of_md(base.__bindgen_anon_1.dif_is_head_of_md());
         passthru.bdev.dif_check_flags = base.dif_check_flags;
 
         passthru.register()?;

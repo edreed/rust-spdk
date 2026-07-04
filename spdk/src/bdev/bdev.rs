@@ -620,6 +620,7 @@ where
             get_spin_time: None,
             get_module_ctx: None,
             get_memory_domains: None,
+            get_memory_domain_types: None,
             reset_device_stat: None,
             dump_device_stat_json: None,
             accel_sequence_supported: None,
