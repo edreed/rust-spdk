@@ -193,8 +193,8 @@ impl Builder {
     }
 
     /// Sets the buffer cache size.
-    pub fn with_buf_cache_size(mut self, buf_cache_size: u32) -> Self {
-        self.opts.buf_cache_size = buf_cache_size;
+    pub fn with_iobuf_small_cache_size(mut self, iobuf_small_cache_size: u32) -> Self {
+        self.opts.__bindgen_anon_1.iobuf_small_cache_size = iobuf_small_cache_size;
 
         self
     }

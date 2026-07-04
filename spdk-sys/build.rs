@@ -221,6 +221,7 @@ fn main() {
         .allowlist_type("spdk_.*")
         .allowlist_var("spdk_.*")
         .allowlist_var("SPDK_.*")
+        .blocklist_type("spdk_nvme_cdata_(fuses|oncs)")
         .opaque_type("spdk_nvme_(ctrlr|health|sgl|tcp)_.*")
         .opaque_type("spdk_nvmf_fabric_.*")
         .opaque_type("spdk_bdev_ext_io_opts")
@@ -256,7 +257,8 @@ fn main() {
         wrappers
             .file(spdk_wrappers)
             .include(".")
-            .includes(include_paths);
+            .includes(include_paths)
+            .flag("-Wno-unused-parameter");
 
         defines.iter().for_each(|d| _ = wrappers.define(d, None));
 
