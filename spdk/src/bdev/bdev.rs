@@ -5,8 +5,8 @@ use std::{
     mem::{self, offset_of, size_of, ManuallyDrop},
     os::raw::{c_int, c_void},
     ptr::{self, addr_of, addr_of_mut, drop_in_place, NonNull},
+    rc::Rc,
     slice,
-    sync::Arc,
     task::Poll,
 };
 
@@ -189,7 +189,7 @@ pub(crate) struct BDevIoCtx<T>
 where
     T: Default + 'static,
 {
-    buf_promissory: Option<Arc<Promissory<()>>>,
+    buf_promissory: Option<Rc<Promissory<()>>>,
     inner: T,
 }
 
