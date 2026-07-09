@@ -9,7 +9,7 @@ use spdk_sys::{spdk_event_allocate, spdk_event_call};
 
 use crate::{
     errors::{Errno, ENOMEM},
-    task::{JoinHandle, ReactorTask, Task},
+    task::{self, Executor, JoinHandle},
     thread::Thread,
 };
 
@@ -149,11 +149,20 @@ impl Reactor {
         F: Future<Output = T> + 'static,
         T: Send + 'static,
     {
-        let (task, join_handle) = ReactorTask::with_future(*self, fut_gen());
+        task::spawn_on_reactor(*self, fut_gen)
+    }
+}
 
-        Task::schedule(task);
+impl Executor for Reactor {
+    fn is_current(&self) -> bool {
+        self.is_current()
+    }
 
-        join_handle
+    fn schedule<F>(&self, f: F)
+    where
+        F: FnOnce() + 'static,
+    {
+        self.send_event(f).expect("send event");
     }
 }
 
@@ -164,11 +173,7 @@ where
     F: Future<Output = T> + 'static,
     T: 'static,
 {
-    let (task, join_handle) = ReactorTask::with_future(Reactor::current(), fut);
-
-    Task::schedule(task);
-
-    join_handle
+    task::spawn_on_current_reactor(fut)
 }
 
 /// An iterator over the reactors for this runtime.

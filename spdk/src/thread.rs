@@ -32,7 +32,7 @@ use spdk_sys::{
 use crate::{
     errors::{Errno, ENOMEM},
     runtime::CpuSet,
-    task::{JoinHandle, Task, ThreadTask},
+    task::{self, Executor, JoinHandle},
     to_result,
 };
 
@@ -319,11 +319,20 @@ impl Thread {
         F: Future<Output = T> + 'static,
         T: Send + 'static,
     {
-        let (task, join_handle) = ThreadTask::with_future(Some(self.borrow()), fut_gen());
+        task::spawn_on_thread(self.borrow(), fut_gen)
+    }
+}
 
-        Task::schedule(task);
+impl Executor for Thread {
+    fn is_current(&self) -> bool {
+        self.is_current()
+    }
 
-        join_handle
+    fn schedule<F>(&self, f: F)
+    where
+        F: FnOnce() + 'static,
+    {
+        self.send_msg(f).expect("thread message sent");
     }
 }
 
@@ -362,11 +371,7 @@ where
     F: Future<Output = T> + 'static,
     T: 'static,
 {
-    let (task, join_handle) = ThreadTask::with_future(Some(Thread::current()), fut);
-
-    Task::schedule(task);
-
-    join_handle
+    task::spawn_on_current_thread(fut)
 }
 
 /// Runs the provided future on the current SPDK thread until completion.
@@ -384,9 +389,7 @@ where
     T: Send + 'static,
 {
     let current_thread = Thread::current();
-    let (task, mut join_handle) = ThreadTask::with_future(Some(current_thread.borrow()), fut);
-
-    Task::schedule_by_ref(&task);
+    let mut join_handle = task::spawn_on_current_thread(fut);
 
     loop {
         match Pin::new(&mut join_handle).rx_pin_mut().try_recv() {

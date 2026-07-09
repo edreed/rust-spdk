@@ -18,7 +18,8 @@ use static_init::dynamic;
 use crate::{
     errors::{Errno, EINVAL},
     runtime::{reactors, Reactor},
-    task::{Task, ThreadTask},
+    task::{ArcTask, Task},
+    thread::Thread,
     to_result,
 };
 
@@ -211,18 +212,17 @@ impl Runtime {
         F: Future<Output = ()> + 'static,
         F::Output: 'static,
     {
-        let task = Arc::from_raw(ctx.cast::<ThreadTask<(), F>>());
+        let task = Arc::from_raw(ctx.cast::<Task<Thread, (), F>>());
 
-        Task::schedule_by_ref(&task);
+        ArcTask::schedule_by_ref(&task);
     }
 
     /// Starts the SPDK Application Framework with the given future.
     fn start<F>(&self, fut: F)
     where
         F: Future<Output = ()> + 'static,
-        F::Output: 'static,
     {
-        let (task, _) = ThreadTask::with_future(None, fut);
+        let (task, _) = Task::<Thread, (), F>::with_future(None, fut);
         let ctx = Arc::into_raw(task).cast_mut();
 
         unsafe {

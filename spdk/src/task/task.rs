@@ -14,64 +14,107 @@ use crate::{runtime::Reactor, thread::Thread};
 
 use super::JoinHandle;
 
-/// A way of scheduling and executing an asynchronous task in the SPDK Event
-/// Framework.
-pub(crate) trait Task: Send {
-    /// Schedules a task for execution on its target, consuming the task in the
-    /// process.
-    fn schedule(arc_self: Arc<Self>);
+/// A trait defining the interface for an executor that can schedule and execute tasks.
+pub(crate) trait Executor {
+    /// Returns `true` if the current executor is the same as this executor.
+    fn is_current(&self) -> bool;
+
+    /// Schedules a task for execution on this executor.
+    fn schedule<F>(&self, f: F)
+    where
+        F: FnOnce() + 'static;
+}
+
+pub(crate) trait ArcTaskBase: Send + 'static {
+    /// Returns the executor on which this task should be executed.
+    fn executor(&self) -> impl Executor + 'static;
+}
+
+/// A way of scheduling and executing an asynchronous task in the SPDK Event Framework.
+pub(crate) trait ArcTask: ArcTaskBase {
+    /// Schedules a task for execution on its target, consuming the task in the process.
+    fn schedule(arc_self: Arc<Self>) {
+        let executor = arc_self.executor();
+
+        // If the current executor is the target of this task, attempt to run it synchronously.
+        if executor.is_current() && Self::run(&arc_self) {
+            return;
+        }
+
+        // The task could not be run synchronously, so enqueue it to run on the target executor at a
+        // later time.
+        executor.schedule(move || assert!(Self::run(&arc_self)));
+    }
 
     /// Schedules a task for execution without consuming the task.
     ///
     /// # Panics
     ///
-    /// This method panics if this task's target executor is not the current
-    /// executor.
-    fn schedule_by_ref(arc_self: &Arc<Self>);
+    /// This method panics if this task's target executor is not the current executor.
+    fn schedule_by_ref(arc_self: &Arc<Self>) {
+        let executor = arc_self.executor();
+
+        assert!(executor.is_current());
+
+        // First, attempt to run the task synchronously.
+        if !Self::run(arc_self) {
+            // The task could not be run synchronously, so enqueue it to run on the target executor
+            // at a later time.
+            let cloned_task = arc_self.clone();
+
+            executor.schedule(move || assert!(Self::run(&cloned_task)));
+        }
+    }
+
+    /// Executes a task on the executor.
+    ///
+    /// # Returns
+    ///
+    /// This method returns `true` if the task was run synchronously. If it returns `false`, the
+    /// task could not be executed synchronously and should be scheduled to run later.
+    fn run(arc_self: &Arc<Self>) -> bool;
 }
 
 /// Clones the [`RawWaker`] for this task.
 ///
-/// This function is invoked through the [`RawWakerVTable`] created by the
-/// [`waker_ref<W>`] function.
-unsafe fn waker_clone<W: Task>(data: *const ()) -> RawWaker {
+/// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
+/// function.
+unsafe fn waker_clone<W: ArcTask>(data: *const ()) -> RawWaker {
     Arc::<W>::increment_strong_count(data.cast());
 
     RawWaker::new(data, waker_vtable::<W>())
 }
 
-/// Wakes the task referenced by the given [`RawWaker`] consuming the `RawWaker`
-/// in the process.
+/// Wakes the task referenced by the given [`RawWaker`] consuming the `RawWaker` in the process.
 ///
-/// This function is invoked through the [`RawWakerVTable`] created by the
-/// [`waker_ref<W>`] function.
-unsafe fn waker_wake<W: Task>(data: *const ()) {
-    let rc_task = Arc::<W>::from_raw(data.cast());
+/// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
+/// function.
+unsafe fn waker_wake<W: ArcTask>(data: *const ()) {
+    let arc_task = Arc::<W>::from_raw(data.cast());
 
-    Task::schedule(rc_task);
+    ArcTask::schedule(arc_task);
 }
 
-/// Wakes the task referenced by the given [`RawWaker`] without consuming the
-/// `RawWaker`.
+/// Wakes the task referenced by the given [`RawWaker`] without consuming the `RawWaker`.
 ///
-/// This function is invoked through the [`RawWakerVTable`] created by the
-/// [`waker_ref<W>`] function.
-unsafe fn waker_wake_by_ref<W: Task>(data: *const ()) {
-    let rc_task = ManuallyDrop::new(Arc::<W>::from_raw(data.cast()));
+/// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
+/// function.
+unsafe fn waker_wake_by_ref<W: ArcTask>(data: *const ()) {
+    let arc_task = ManuallyDrop::new(Arc::<W>::from_raw(data.cast()));
 
-    Task::schedule_by_ref(&rc_task);
+    ArcTask::schedule_by_ref(&arc_task);
 }
 
 /// Drops the given [`RawWaker`] releasing its resources.
 ///
-/// This function is invoked through the [`RawWakerVTable`] created by the
-/// [`waker_ref<W>`] function.
-unsafe fn waker_drop<W: Task>(data: *const ()) {
+/// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
+/// function.
+unsafe fn waker_drop<W: ArcTask>(data: *const ()) {
     drop(Arc::<W>::from_raw(data.cast()));
 }
 
 /// Gets the [`RawWakerVTable`] used by a [`RawWaker`] to awaken a task.
-fn waker_vtable<W: Task>() -> &'static RawWakerVTable {
+fn waker_vtable<W: ArcTask>() -> &'static RawWakerVTable {
     &RawWakerVTable::new(
         waker_clone::<W>,
         waker_wake::<W>,
@@ -81,7 +124,7 @@ fn waker_vtable<W: Task>() -> &'static RawWakerVTable {
 }
 
 /// Creates a reference to the [`Waker`] from a reference to a [`Task<T>`].
-fn waker_ref<W: Task>(arc_self: &Arc<W>) -> WakerRef<'_> {
+fn waker_ref<W: ArcTask>(arc_self: &Arc<W>) -> WakerRef<'_> {
     let data = Arc::as_ptr(arc_self).cast();
 
     let waker =
@@ -145,8 +188,7 @@ impl TaskState {
     ///
     /// # Panics
     ///
-    /// This method panics if the task is polled in a state other than `Pending`
-    /// or `Polling`.
+    /// This method panics if the task is polled in a state other than `Pending` or `Polling`.
     fn poll(&mut self) -> Self {
         match self {
             Self::Pending => self.replace(Self::Polling),
@@ -157,43 +199,43 @@ impl TaskState {
 }
 
 /// Orchestrates the execution of a [`Future`].
-pub(crate) struct ThreadTask<T, F>
+pub(crate) struct Task<E, T, F>
 where
+    E: Executor + 'static,
     T: 'static,
     F: Future<Output = T> + 'static,
 {
-    target_thread: Option<Thread>,
+    executor: Option<E>,
     state: RefCell<TaskState>,
     result_sender: UnsafeCell<Option<oneshot::Sender<T>>>,
     future: UnsafeCell<F>,
 }
 
-unsafe impl<T, F> Send for ThreadTask<T, F>
+unsafe impl<E, T, F> Send for Task<E, T, F>
 where
+    E: Executor + 'static,
     T: 'static,
     F: Future<Output = T> + 'static,
 {
 }
 
-impl<T, F> ThreadTask<T, F>
+impl<T, F> Task<Thread, T, F>
 where
     T: 'static,
     F: Future<Output = T> + 'static,
 {
     /// Constructs a new task from a [`Future`] to be scheduled on a [`Thread`].
     ///
-    /// If `target_thread` is `None`, the task will be scheduled to run on the
-    /// application thread.
+    /// If `executor` is `None`, the task will be scheduled to run on the application thread.
     ///
     /// # Return
     ///
-    /// This function returns both a newly constructed [`ThreadTask`] and a
-    /// [`JoinHandle`] that can be used to await the result of executing the
-    /// [`Future`].
-    pub(crate) fn with_future(target_thread: Option<Thread>, fut: F) -> (Arc<Self>, JoinHandle<T>) {
+    /// This function returns both a newly constructed [`ThreadTask`] and a [`JoinHandle`] that can
+    /// be used to await the result of executing the [`Future`].
+    pub(crate) fn with_future(executor: Option<Thread>, fut: F) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
-            target_thread,
+            executor,
             state: RefCell::new(TaskState::Pending),
             result_sender: UnsafeCell::new(Some(sx)),
             future: UnsafeCell::new(fut),
@@ -201,131 +243,36 @@ where
 
         (task, JoinHandle::new(rx))
     }
+}
 
-    /// Returns the target [`Thread`] of this task.
-    fn target_thread(&self) -> Thread {
-        self.target_thread
+impl<T, F> ArcTaskBase for Task<Thread, T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
+    fn executor(&self) -> impl Executor + 'static {
+        self.executor
             .as_ref()
             .map(Thread::borrow)
             .unwrap_or_else(Thread::application)
     }
-
-    /// Executes a task on the executor.
-    ///
-    /// # Returns
-    ///
-    /// This method returns `true` if the task was run synchronously. If it
-    /// returns `false`, the task could not be executed synchronously and
-    /// should be scheduled to run later.
-    fn run(arc_self: &Arc<Self>) -> bool {
-        let state = arc_self.state.borrow_mut().poll();
-
-        match state {
-            TaskState::Pending => {
-                let waker = waker_ref(arc_self);
-                let ctx = &mut Context::from_waker(&waker);
-
-                // SAFETY: The future is only polled when in the `Polling` state
-                // (i.e. previous state was `Pending`). There are no other
-                // references to it.
-                let mut fut = unsafe { Pin::new_unchecked(&mut *arc_self.future.get()) };
-
-                match fut.as_mut().poll(ctx) {
-                    Poll::Pending => arc_self.state.borrow_mut().mark_pending(),
-                    Poll::Ready(r) => {
-                        // SAFETY: The result sender is only taken when in the
-                        // `Done` state. There are no other references to it.
-                        let _ = unsafe { &mut *arc_self.result_sender.get() }
-                            .take()
-                            .unwrap()
-                            .send(r);
-                        arc_self.state.borrow_mut().mark_done();
-                    }
-                }
-
-                true
-            }
-            TaskState::Polling => false,
-            _ => unreachable!(),
-        }
-    }
 }
 
-impl<T, F> Task for ThreadTask<T, F>
+impl<T, F> Task<Reactor, T, F>
 where
     T: 'static,
     F: Future<Output = T> + 'static,
 {
-    fn schedule(arc_self: Arc<Self>) {
-        let target_thread = arc_self.target_thread();
-
-        // If the current thread is the target of this task, attempt to run it
-        // synchronously.
-        if target_thread.is_current() && Self::run(&arc_self) {
-            return;
-        }
-
-        // The task could not be run synchronously, so enqueue it to run on the
-        // this thread at a later time.
-        target_thread
-            .send_msg(move || assert!(Self::run(&arc_self)))
-            .unwrap();
-    }
-
-    fn schedule_by_ref(arc_self: &Arc<Self>) {
-        let target_thread = arc_self.target_thread();
-
-        assert!(target_thread.is_current());
-
-        // First, attempt to run the task synchronously.
-        if !Self::run(arc_self) {
-            // The task could not be run synchronously, so enqueue it to run on the
-            // this thread at a later time.
-            let cloned_task = arc_self.clone();
-
-            target_thread
-                .send_msg(move || assert!(Self::run(&cloned_task)))
-                .unwrap();
-        }
-    }
-}
-
-/// Orchestrates the execution of a [`Future`] on a reactor.
-pub(crate) struct ReactorTask<T, F>
-where
-    T: 'static,
-    F: Future<Output = T> + 'static,
-{
-    target_reactor: Reactor,
-    state: RefCell<TaskState>,
-    result_sender: UnsafeCell<Option<oneshot::Sender<T>>>,
-    future: UnsafeCell<F>,
-}
-
-unsafe impl<T, F> Send for ReactorTask<T, F>
-where
-    T: 'static,
-    F: Future<Output = T> + 'static,
-{
-}
-
-impl<T, F> ReactorTask<T, F>
-where
-    T: 'static,
-    F: Future<Output = T> + 'static,
-{
-    /// Constructs a new task from a [`Future`] to be scheduled on the given
-    /// [`Reactor`]
+    /// Constructs a new task from a [`Future`] to be scheduled on the given [`Reactor`]
     ///
     /// # Return
     ///
-    /// This function returns both a newly constructed [`ReactorTask`] and a
-    /// [`JoinHandle`] that can be used to await the result of executing the
-    /// [`Future`].
-    pub(crate) fn with_future(target_reactor: Reactor, fut: F) -> (Arc<Self>, JoinHandle<T>) {
+    /// This function returns both a newly constructed [`ReactorTask`] and a [`JoinHandle`] that can
+    /// be used to await the result of executing the [`Future`].
+    pub(crate) fn with_future(executor: Reactor, fut: F) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
-            target_reactor,
+            executor: Some(executor),
             state: RefCell::new(TaskState::Pending),
             result_sender: UnsafeCell::new(Some(sx)),
             future: UnsafeCell::new(fut),
@@ -333,14 +280,25 @@ where
 
         (task, JoinHandle::new(rx))
     }
+}
 
-    /// Executes a task on the executor.
-    ///
-    /// # Returns
-    ///
-    /// This method returns `true` if the task was run synchronously. If it
-    /// returns `false`, the task could not be executed synchronously and
-    /// should be scheduled to run later.
+impl<T, F> ArcTaskBase for Task<Reactor, T, F>
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
+    fn executor(&self) -> impl Executor + 'static {
+        self.executor.unwrap()
+    }
+}
+
+impl<E, T, F> ArcTask for Task<E, T, F>
+where
+    E: Executor + 'static,
+    T: 'static,
+    F: Future<Output = T> + 'static,
+    Task<E, T, F>: ArcTaskBase,
+{
     fn run(arc_self: &Arc<Self>) -> bool {
         let state = arc_self.state.borrow_mut().poll();
 
@@ -349,16 +307,15 @@ where
                 let waker = waker_ref(arc_self);
                 let ctx = &mut Context::from_waker(&waker);
 
-                // SAFETY: The future is only polled when in the `Polling` state
-                // (i.e. previous state was `Pending`). There are no other
-                // references to it.
+                // SAFETY: The future is only polled when in the `Polling` state (i.e. previous
+                // state was `Pending`). There are no other references to it.
                 let mut fut = unsafe { Pin::new_unchecked(&mut *arc_self.future.get()) };
 
                 match fut.as_mut().poll(ctx) {
                     Poll::Pending => arc_self.state.borrow_mut().mark_pending(),
                     Poll::Ready(r) => {
-                        // SAFETY: The result sender is only taken when in the
-                        // `Done` state. There are no other references to it.
+                        // SAFETY: The result sender is only taken when in the `Done` state. There
+                        // are no other references to it.
                         let _ = unsafe { &mut *arc_self.result_sender.get() }
                             .take()
                             .unwrap()
@@ -375,41 +332,66 @@ where
     }
 }
 
-impl<T, F> Task for ReactorTask<T, F>
+/// Schedules a new asynchronous task to be executed on the given [`Thread`] and returns a
+/// [`JoinHandle`] to await results.
+///
+/// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
+/// may not be `Send` once started.
+pub(crate) fn spawn_on_thread<G, F, T>(thread: Thread, fut_gen: G) -> JoinHandle<T>
 where
-    T: 'static,
+    G: FnOnce() -> F + Send + 'static,
     F: Future<Output = T> + 'static,
+    T: Send + 'static,
 {
-    fn schedule(arc_self: Arc<Self>) {
-        let target_reactor = arc_self.target_reactor;
+    let (task, join_handle) = Task::<Thread, T, F>::with_future(Some(thread), fut_gen());
 
-        // If the current reactor is the target of this task, attempt to run it
-        // synchronously.
-        if target_reactor.is_current() && Self::run(&arc_self) {
-            return;
-        }
+    ArcTask::schedule(task);
 
-        // The task could not be run synchronously, so enqueue it to run on the
-        // this reactor at a later time.
-        target_reactor
-            .send_event(move || assert!(Self::run(&arc_self)))
-            .unwrap();
-    }
+    join_handle
+}
 
-    fn schedule_by_ref(arc_self: &Arc<Self>) {
-        let target_reactor = arc_self.target_reactor;
+/// Schedules a new asynchronous task to be executed on the current [`Thread`] and returns a
+/// [`JoinHandle`] to await results.
+pub(crate) fn spawn_on_current_thread<F, T>(fut: F) -> JoinHandle<T>
+where
+    F: Future<Output = T> + 'static,
+    T: 'static,
+{
+    let (task, join_handle) = Task::<Thread, T, F>::with_future(Thread::try_current(), fut);
 
-        assert!(target_reactor.is_current());
+    ArcTask::schedule(task);
 
-        // First, attempt to run the task synchronously.
-        if !Self::run(arc_self) {
-            // The task could not be run synchronously, so enqueue it to run on
-            // the this reactor at a later time.
-            let cloned_task = arc_self.clone();
+    join_handle
+}
 
-            target_reactor
-                .send_event(move || assert!(Self::run(&cloned_task)))
-                .unwrap();
-        }
-    }
+/// Schedules a new asynchronous task to be executed on the given [`Reactor`] and returns a
+/// [`JoinHandle`] to await results.
+///
+/// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
+/// may not be `Send` once started.
+pub(crate) fn spawn_on_reactor<G, F, T>(reactor: Reactor, fut_gen: G) -> JoinHandle<T>
+where
+    G: FnOnce() -> F + Send + 'static,
+    F: Future<Output = T> + 'static,
+    T: Send + 'static,
+{
+    let (task, join_handle) = Task::<Reactor, T, F>::with_future(reactor, fut_gen());
+
+    ArcTask::schedule(task);
+
+    join_handle
+}
+
+/// Schedules a new asynchronous task to be executed on the current [`Reactor`] and returns a
+/// [`JoinHandle`] to await results.
+pub(crate) fn spawn_on_current_reactor<F, T>(fut: F) -> JoinHandle<T>
+where
+    F: Future<Output = T> + 'static,
+    T: 'static,
+{
+    let (task, join_handle) = Task::<Reactor, T, F>::with_future(Reactor::current(), fut);
+
+    ArcTask::schedule(task);
+
+    join_handle
 }
