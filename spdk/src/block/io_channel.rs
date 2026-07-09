@@ -4,7 +4,7 @@ use std::{
     mem::zeroed,
     os::raw::c_void,
     ptr::{addr_of, addr_of_mut, NonNull},
-    sync::Arc,
+    rc::Rc,
     task::Poll,
 };
 
@@ -107,7 +107,7 @@ impl IoChannel {
             // references to the `Promissory` instance, so we can safely get
             // a mutable reference to the user context. We convert the
             // mutable reference to a pointer so we can get the callback and
-            // context from the `Arc<Promissory>` instance to store in the
+            // context from the `Rc<Promissory>` instance to store in the
             // context.
             let wait = addr_of_mut!(*Promissory::user_context_mut(p).expect("sole reference"));
             let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
@@ -140,7 +140,7 @@ impl IoChannel {
     /// are no `spdk_bdev_io` structures available.
     async fn execute_io<F>(&self, mut start_fn: F) -> Result<(), Errno>
     where
-        F: FnMut(&mut Arc<Promissory<()>>) -> Poll<Result<(), Errno>>,
+        F: FnMut(&mut Rc<Promissory<()>>) -> Poll<Result<(), Errno>>,
     {
         loop {
             match Promise::new(|p| (start_fn)(p)).await {

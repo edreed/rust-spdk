@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 use std::{
+    cell::RefCell,
     fmt::Debug,
     mem::{self, MaybeUninit},
     pin::Pin,
     ptr::addr_of_mut,
-    sync::{Arc, Mutex},
+    rc::Rc,
     task::{Context, Poll, Waker},
 };
 
@@ -95,12 +96,19 @@ where
 }
 
 /// Receives the result of an asynchronous operation.
+///
+/// <div class="warning">
+///
+/// The `Promissory` type is not thread-safe. It must be used on the same SPDK thread that created it.
+///
+/// </div>
 pub struct Promissory<R, C = ()>
 where
     R: Debug + 'static,
     C: 'static,
 {
-    state: Mutex<PromiseState<R>>,
+    state: RefCell<PromiseState<R>>,
+    thread: Thread,
     ctx: C,
 }
 
@@ -109,46 +117,48 @@ where
     R: Debug + 'static,
     C: 'static,
 {
-    /// Returns a new `Arc<Promise>` instance with the provided context.
-    pub fn with_context(ctx: C) -> Arc<Self> {
-        Arc::new(Self {
+    /// Returns a new `Rc<Promise>` instance with the provided context.
+    pub fn with_context(ctx: C) -> Rc<Self> {
+        Rc::new(Self {
             state: Default::default(),
+            thread: Thread::current(),
             ctx,
         })
     }
 
-    /// Returns a new `Arc<Promise>` instance, initializing the context in-place
+    /// Returns a new `Rc<Promise>` instance, initializing the context in-place
     /// using the specified function.
-    pub fn with_context_in_place<F>(ctx_init_fn: F) -> Arc<Self>
+    pub fn with_context_in_place<F>(ctx_init_fn: F) -> Rc<Self>
     where
         F: FnOnce(*mut C),
     {
-        let arc_ctx = Arc::new(MaybeUninit::<Self>::uninit());
+        let rc_ctx = Rc::new(MaybeUninit::<Self>::uninit());
 
         unsafe {
-            let ctx = (*(Arc::into_raw(arc_ctx) as *mut MaybeUninit<Self>)).as_mut_ptr();
+            let ctx = (*(Rc::into_raw(rc_ctx) as *mut MaybeUninit<Self>)).as_mut_ptr();
 
             addr_of_mut!((*ctx).state).write(Default::default());
+            addr_of_mut!((*ctx).thread).write(Thread::current());
             ctx_init_fn(addr_of_mut!((*ctx).ctx));
 
-            Arc::from_raw(ctx)
+            Rc::from_raw(ctx)
         }
     }
 
     /// Polls the state of the operation, advancing to the next state if possible.
     fn poll(&self, cx: &Context<'_>) -> PromiseState<R> {
-        self.state.lock().unwrap().poll(cx)
+        self.state.borrow_mut().poll(cx)
     }
 
     /// Returns a reference to the user context initialized using either the
     /// [`Promise::with_context`] or [`Promise::with_context_in_place`]
     /// functions.
-    pub fn user_context(arc_self: &Arc<Self>) -> &C {
-        &arc_self.ctx
+    pub fn user_context(rc_self: &Rc<Self>) -> &C {
+        &rc_self.ctx
     }
 
     /// Returns a mutable reference to the user context if there are no other
-    /// `Arc` or `Weak` pointers to the same allocation.
+    /// `Rc` or `Weak` pointers to the same allocation.
     ///
     /// Returns [`None`] otherwise because it is not safe to mutate the context
     /// of a shared valued.
@@ -156,13 +166,17 @@ where
     /// The user context is initialized using either the
     /// [`Promise::with_context`] or [`Promise::with_context_in_place`]
     /// functions.
-    pub fn user_context_mut(arc_self: &mut Arc<Self>) -> Option<&mut C> {
-        Arc::get_mut(arc_self).map(|p| &mut p.ctx)
+    pub fn user_context_mut(rc_self: &mut Rc<Self>) -> Option<&mut C> {
+        Rc::get_mut(rc_self).map(|p| &mut p.ctx)
     }
 
     /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
-    pub fn set_result(arc_self: Arc<Self>, res: Result<R, Errno>) {
-        let prev_state = match arc_self.state.try_lock() {
+    pub fn set_result(rc_self: Rc<Self>, res: Result<R, Errno>) {
+        assert!(
+            rc_self.thread.is_current(),
+            "set_result called from wrong thread"
+        );
+        let prev_state = match rc_self.state.try_borrow_mut() {
             Ok(mut state) => Ok(state.replace(PromiseState::Kept(res))),
             Err(_) => Err(res),
         };
@@ -176,7 +190,7 @@ where
             Err(res) => {
                 Thread::current()
                     .send_msg(move || {
-                        Self::set_result(arc_self, res);
+                        Self::set_result(rc_self, res);
                     })
                     .expect("send result");
             }
@@ -193,9 +207,9 @@ where
         R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
         C: 'static,
     {
-        let arc_self = Self::from_raw(cx.cast());
+        let rc_self = Self::from_raw(cx.cast());
 
-        Self::set_result(arc_self, obj.try_into().map_err(|_| EINVAL));
+        Self::set_result(rc_self, obj.try_into().map_err(|_| EINVAL));
     }
 
     /// Returns a pointer to a callback function and a context pointer suitable
@@ -206,32 +220,39 @@ where
     /// converts it to the appropriate Rust type `T`. If the received pointer is
     /// null, the result is a suitable `Err(Errno)` value.
     pub fn callback_with_object<T>(
-        arc_self: &Arc<Self>,
+        rc_self: &Rc<Self>,
     ) -> (unsafe extern "C" fn(*mut c_void, *mut T), *const Self)
     where
         R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
     {
-        (Self::complete_with_object, Self::into_raw(arc_self.clone()))
+        (Self::complete_with_object, Self::into_raw(rc_self.clone()))
     }
 
-    /// Consumes an `Arc<Promissory>` instance and returns the wrapped pointer.
+    /// Consumes an `Rc<Promissory>` instance and returns the wrapped pointer.
     ///
     /// To avoid a memory leak, the pointer must be converted back to an
-    /// `Arc<Promissory>` using the [`Promissory::from_raw`] function.
-    pub fn into_raw(arc_self: Arc<Self>) -> *const Self {
-        Arc::into_raw(arc_self)
+    /// `Rc<Promissory>` using the [`Promissory::from_raw`] function.
+    pub fn into_raw(rc_self: Rc<Self>) -> *const Self {
+        Rc::into_raw(rc_self)
     }
 
-    /// Constructs an `Arc<Promissory>` instance from a raw pointer.
+    /// Constructs an `Rc<Promissory>` instance from a raw pointer.
     ///
     /// The raw pointer must have been previously returned by a call to
     /// `Promissory<R, C>::into_raw`.
     ///
     /// # Safety
     ///
-    /// See [`Arc<T>::from_raw`] for safety requirements.
-    pub unsafe fn from_raw(raw: *const Self) -> Arc<Self> {
-        Arc::from_raw(raw)
+    /// See [`Rc<T>::from_raw`] for safety requirements.
+    pub unsafe fn from_raw(raw: *const Self) -> Rc<Self> {
+        let rc_self = Rc::from_raw(raw);
+
+        assert!(
+            rc_self.thread.is_current(),
+            "from_raw called from wrong thread"
+        );
+
+        rc_self
     }
 }
 
@@ -242,9 +263,9 @@ impl<C> Promissory<(), C> {
     /// `Ok(())`. Otherwise, the status is converted to a suitable `Err(Errno)`
     /// value.
     unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i32) {
-        let arc_self = Self::from_raw(cx.cast());
+        let rc_self = Self::from_raw(cx.cast());
 
-        Self::set_result(arc_self, to_result!(status));
+        Self::set_result(rc_self, to_result!(status));
     }
 
     /// Returns a pointer to a callback function and a context pointer suitable
@@ -255,18 +276,18 @@ impl<C> Promissory<(), C> {
     /// `Ok(())`. Otherwise, the status is converted to a suitable `Err(Errno)`
     /// value.
     pub fn callback_with_status(
-        arc_self: &Arc<Self>,
+        rc_self: &Rc<Self>,
     ) -> (unsafe extern "C" fn(*mut c_void, i32), *const Self) {
-        (Self::complete_with_status, Self::into_raw(arc_self.clone()))
+        (Self::complete_with_status, Self::into_raw(rc_self.clone()))
     }
 
     /// A callback invoked to set the result of a [`Promise`].
     ///
     /// This callback always sets the result to `Ok(())`.
     unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
-        let arc_self = Self::from_raw(cx.cast());
+        let rc_self = Self::from_raw(cx.cast());
 
-        Self::set_result(arc_self, Ok(()));
+        Self::set_result(rc_self, Ok(()));
     }
 
     /// Returns a pointer to a callback function and a context pointer suitable
@@ -275,9 +296,9 @@ impl<C> Promissory<(), C> {
     ///
     /// This callback always sets the result to `Ok(())`.
     pub fn callback_with_ok(
-        arc_self: &Arc<Self>,
+        rc_self: &Rc<Self>,
     ) -> (unsafe extern "C" fn(*mut c_void), *const Self) {
-        (Self::complete_with_ok, Self::into_raw(arc_self.clone()))
+        (Self::complete_with_ok, Self::into_raw(rc_self.clone()))
     }
 }
 
@@ -289,6 +310,7 @@ where
     fn default() -> Self {
         Self {
             state: Default::default(),
+            thread: Thread::current(),
             ctx: Default::default(),
         }
     }
@@ -296,17 +318,23 @@ where
 
 /// A function that starts the asynchronous operation the will yield a result
 /// for the [`Promise`].
-type StartFn<'a, R, C> = dyn FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a;
+type StartFn<'a, R, C> = dyn FnOnce(&mut Rc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a;
 
 /// Orchestrates the execution of an asynchronous operation and provides access
 /// to its result.
+///
+/// <div class="warning">
+///
+/// The `Promise` type is not thread-safe. It must be used on the same SPDK thread that created it.
+///
+/// </div>
 pub struct Promise<'a, R, C = ()>
 where
     R: Debug + 'static,
     C: 'static,
 {
     start_fn: Option<Box<StartFn<'a, R, C>>>,
-    promissory: Arc<Promissory<R, C>>,
+    promissory: Rc<Promissory<R, C>>,
 }
 
 unsafe impl<'a, R, C> Send for Promise<'a, R, C>
@@ -327,7 +355,7 @@ where
     /// pointer to the SPDK API.
     pub fn new<S>(start_fn: S) -> Self
     where
-        S: FnOnce(&mut Arc<Promissory<R>>) -> Poll<Result<R, Errno>> + 'a,
+        S: FnOnce(&mut Rc<Promissory<R>>) -> Poll<Result<R, Errno>> + 'a,
     {
         Self {
             start_fn: Some(Box::new(start_fn)),
@@ -345,7 +373,7 @@ where
     /// `Promissory` initialized to the specified value.
     pub fn with_context<S>(ctx: C, start_fn: S) -> Self
     where
-        S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a,
+        S: FnOnce(&mut Rc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a,
     {
         Self {
             start_fn: Some(Box::new(start_fn)),
@@ -360,7 +388,7 @@ where
     /// uninitialized memory. Reading from this pointer is undefined behavior.
     pub fn with_context_in_place<F, S>(ctx_init_fn: F, start_fn: S) -> Self
     where
-        S: FnOnce(&mut Arc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a,
+        S: FnOnce(&mut Rc<Promissory<R, C>>) -> Poll<Result<R, Errno>> + 'a,
         F: FnOnce(*mut C),
     {
         Self {
