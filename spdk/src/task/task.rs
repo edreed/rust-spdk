@@ -1,8 +1,7 @@
 use std::{
     cell::{RefCell, UnsafeCell},
-    fmt::Debug,
     future::Future,
-    mem::{self, ManuallyDrop},
+    mem::ManuallyDrop,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -133,71 +132,6 @@ fn waker_ref<W: ArcTask>(arc_self: &Arc<W>) -> WakerRef<'_> {
     WakerRef::new_unowned(waker)
 }
 
-#[cfg_attr(doc, aquamarine::aquamarine)]
-/// Encapsulates the execution state of a [`Task`].
-///
-/// The following state diagram shows the state transitions of a [`Task`].
-///
-/// ```mermaid
-/// stateDiagram-v2
-/// Pending --> Polling : poll()
-/// Polling --> Polling : poll()
-/// Polling --> Pending : mark_pending()
-/// Polling --> Done : mark_done()
-/// ```
-#[derive(Debug, Eq, PartialEq)]
-enum TaskState {
-    /// The task is pending execution.
-    Pending,
-
-    /// The task is currently being polled.
-    Polling,
-
-    /// The task has completed execution.
-    Done,
-}
-
-impl TaskState {
-    /// Replaces the current state with the specified value and returns the old state.
-    #[inline]
-    fn replace(&mut self, value: Self) -> Self {
-        mem::replace(&mut *self, value)
-    }
-
-    /// Marks the task state as pending.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the current state is not `Polling`.
-    #[inline]
-    fn mark_pending(&mut self) {
-        assert_eq!(self.replace(Self::Pending), Self::Polling);
-    }
-
-    /// Marks the task state as done.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the current state is not `Polling`.
-    #[inline]
-    fn mark_done(&mut self) {
-        assert_eq!(self.replace(Self::Done), Self::Polling);
-    }
-
-    /// Polls the state of the task, advancing to the next state if possible.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the task is polled in a state other than `Pending` or `Polling`.
-    fn poll(&mut self) -> Self {
-        match self {
-            Self::Pending => self.replace(Self::Polling),
-            Self::Polling => Self::Polling,
-            _ => panic!("task polled in unexpected state: {:?}", self),
-        }
-    }
-}
-
 /// Orchestrates the execution of a [`Future`].
 pub(crate) struct Task<E, T, F>
 where
@@ -206,9 +140,8 @@ where
     F: Future<Output = T> + 'static,
 {
     executor: Option<E>,
-    state: RefCell<TaskState>,
     result_sender: UnsafeCell<Option<oneshot::Sender<T>>>,
-    future: UnsafeCell<F>,
+    future: RefCell<F>,
 }
 
 unsafe impl<E, T, F> Send for Task<E, T, F>
@@ -230,15 +163,14 @@ where
     ///
     /// # Return
     ///
-    /// This function returns both a newly constructed [`ThreadTask`] and a [`JoinHandle`] that can
-    /// be used to await the result of executing the [`Future`].
+    /// This function returns both a newly constructed [`Task`] and a [`JoinHandle`] that can be
+    /// used to await the result of executing the `Future`.
     pub(crate) fn with_future(executor: Option<Thread>, fut: F) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
             executor,
-            state: RefCell::new(TaskState::Pending),
             result_sender: UnsafeCell::new(Some(sx)),
-            future: UnsafeCell::new(fut),
+            future: RefCell::new(fut),
         });
 
         (task, JoinHandle::new(rx))
@@ -267,15 +199,14 @@ where
     ///
     /// # Return
     ///
-    /// This function returns both a newly constructed [`ReactorTask`] and a [`JoinHandle`] that can
-    /// be used to await the result of executing the [`Future`].
+    /// This function returns both a newly constructed [`Task`] and a [`JoinHandle`] that can be
+    /// used to await the result of executing the `Future`.
     pub(crate) fn with_future(executor: Reactor, fut: F) -> (Arc<Self>, JoinHandle<T>) {
         let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
             executor: Some(executor),
-            state: RefCell::new(TaskState::Pending),
             result_sender: UnsafeCell::new(Some(sx)),
-            future: UnsafeCell::new(fut),
+            future: RefCell::new(fut),
         });
 
         (task, JoinHandle::new(rx))
@@ -300,34 +231,36 @@ where
     Task<E, T, F>: ArcTaskBase,
 {
     fn run(arc_self: &Arc<Self>) -> bool {
-        let state = arc_self.state.borrow_mut().poll();
-
-        match state {
-            TaskState::Pending => {
+        match arc_self.future.try_borrow_mut() {
+            Ok(mut fut) => {
                 let waker = waker_ref(arc_self);
-                let ctx = &mut Context::from_waker(&waker);
+                let mut ctx = Context::from_waker(&waker);
 
-                // SAFETY: The future is only polled when in the `Polling` state (i.e. previous
-                // state was `Pending`). There are no other references to it.
-                let mut fut = unsafe { Pin::new_unchecked(&mut *arc_self.future.get()) };
+                // SAFETY: The future is pinned in place for the duration of this function call, and
+                // it is not moved or dropped until the future is complete. The future is also not
+                // accessed from any other thread, so it is safe to create a pinned reference to it.
+                let fut = unsafe { Pin::new_unchecked(&mut *fut) };
 
-                match fut.as_mut().poll(ctx) {
-                    Poll::Pending => arc_self.state.borrow_mut().mark_pending(),
-                    Poll::Ready(r) => {
-                        // SAFETY: The result sender is only taken when in the `Done` state. There
-                        // are no other references to it.
-                        let _ = unsafe { &mut *arc_self.result_sender.get() }
-                            .take()
-                            .unwrap()
-                            .send(r);
-                        arc_self.state.borrow_mut().mark_done();
+                match fut.poll(&mut ctx) {
+                    Poll::Ready(result) => {
+                        // The future has completed, so send the result to the join handle.
+                        let sender = unsafe { &mut *arc_self.result_sender.get() };
+
+                        if let Some(sx) = sender.take() {
+                            let _ = sx.send(result);
+                        }
+
+                        true
                     }
+                    // The future is not ready yet, but the call to `poll` set up the task to be
+                    // awakened later. We simply return `true` here to indicate that the task has
+                    // been processed successfully.
+                    Poll::Pending => true,
                 }
-
-                true
             }
-            TaskState::Polling => false,
-            _ => unreachable!(),
+            // The task was re-entered while its future was already being polled. Return `false` to
+            // indicate that the task needs to be scheduled to run by its executor later.
+            Err(_) => false,
         }
     }
 }

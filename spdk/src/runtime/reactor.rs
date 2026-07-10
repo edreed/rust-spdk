@@ -25,10 +25,9 @@ impl Reactor {
     ///
     /// # Returns
     ///
-    /// This function returns a [`JoinHandle<_>`] used to await a
-    /// [`Sender<()>`]. The `Sender` is used to signal the reactor to exit.
-    /// Since the main reactor cannot await itself, this function returns `None`
-    /// if called from the main CPU core.
+    /// This function returns a [`JoinHandle`] used to await a [`Sender<()>`]. The `Sender` is used
+    /// to signal the reactor to exit. Since the main reactor cannot await itself, this function
+    /// returns `None` if called from the main CPU core.
     ///
     /// # Panics
     ///
