@@ -212,7 +212,7 @@ impl Runtime {
         F: Future<Output = ()> + 'static,
         F::Output: 'static,
     {
-        let task = Arc::from_raw(ctx.cast::<Task<Thread, (), F>>());
+        let task = Arc::from_raw(ctx.cast::<Task<Thread, F, ()>>());
 
         ArcTask::schedule_by_ref(&task);
     }
@@ -222,7 +222,7 @@ impl Runtime {
     where
         F: Future<Output = ()> + 'static,
     {
-        let (task, _) = Task::<Thread, (), F>::with_future(None, fut);
+        let (task, _) = Task::<Thread, F, ()>::with_future(None, fut);
         let ctx = Arc::into_raw(task).cast_mut();
 
         unsafe {

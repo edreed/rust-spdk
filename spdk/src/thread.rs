@@ -20,8 +20,10 @@ use std::{
     mem::MaybeUninit,
     pin::Pin,
     ptr::NonNull,
+    task::{Context, Poll},
 };
 
+use futures::task::noop_waker_ref;
 use spdk_sys::{
     spdk_cpuset_copy, spdk_get_thread, spdk_thread, spdk_thread_bind, spdk_thread_create,
     spdk_thread_exit, spdk_thread_get_app_thread, spdk_thread_get_by_id, spdk_thread_get_cpumask,
@@ -392,10 +394,12 @@ where
     let mut join_handle = task::spawn_on_current_thread(fut);
 
     loop {
-        match Pin::new(&mut join_handle).rx_pin_mut().try_recv() {
-            Ok(Some(r)) => return r,
-            Ok(None) => _ = current_thread.poll(),
-            Err(_) => panic!("sender dropped"),
+        if let Poll::Ready(res) =
+            Pin::new(&mut join_handle).poll(&mut Context::from_waker(noop_waker_ref()))
+        {
+            return res;
         }
+
+        current_thread.poll();
     }
 }

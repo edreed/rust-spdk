@@ -1,20 +1,77 @@
 use std::{
-    cell::{RefCell, UnsafeCell},
+    any::TypeId,
+    cell::RefCell,
+    collections::HashMap,
     future::Future,
-    mem::ManuallyDrop,
+    mem::{self, ManuallyDrop},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use futures::{channel::oneshot, task::WakerRef};
+use futures::task::WakerRef;
+use parking_lot::{Mutex, RwLock};
 
-use crate::{runtime::Reactor, thread::Thread};
+use crate::{
+    runtime::Reactor,
+    task::{JoinHandle, RawJoinHandleVTable},
+    thread::Thread,
+};
 
-use super::JoinHandle;
+/// Represents the state of a task's result.
+#[derive(Default)]
+enum ResultState<T> {
+    /// The task has not yet completed and is waiting for the result to be produced.
+    #[default]
+    Empty,
+
+    /// The task has not yet completed, but a [`Waker`] has been registered to be notified when the
+    /// result is ready.
+    Waiting(Waker),
+
+    /// The task has completed and the result is ready to be consumed.
+    Ready(T),
+
+    /// The task has completed and the result has been consumed.
+    Consumed,
+}
+
+impl<T> ResultState<T> {
+    /// Sets the result of the task and wakes any registered [`Waker`].
+    fn set_result(&mut self, result: T) -> Option<Waker> {
+        match mem::replace(self, ResultState::Ready(result)) {
+            ResultState::Empty => None,
+            ResultState::Waiting(waker) => Some(waker),
+            ResultState::Ready(_) => panic!("result already set"),
+            ResultState::Consumed => panic!("result already consumed"),
+        }
+    }
+
+    /// Polls the result of the task, returning `Poll::Pending` if the result is not yet ready, or
+    /// `Poll::Ready` with the result if it is ready.
+    fn poll_result(&mut self, cx: &mut Context<'_>) -> Poll<T> {
+        match self {
+            ResultState::Empty => {
+                *self = ResultState::Waiting(cx.waker().clone());
+                Poll::Pending
+            }
+            ResultState::Ready(_) => {
+                let res = mem::replace(self, ResultState::Consumed);
+
+                if let ResultState::Ready(res) = res {
+                    Poll::Ready(res)
+                } else {
+                    unreachable!()
+                }
+            }
+            ResultState::Waiting(_) => Poll::Pending,
+            ResultState::Consumed => panic!("poll_result called after result was consumed"),
+        }
+    }
+}
 
 /// A trait defining the interface for an executor that can schedule and execute tasks.
-pub(crate) trait Executor {
+pub trait Executor {
     /// Returns `true` if the current executor is the same as this executor.
     fn is_current(&self) -> bool;
 
@@ -31,6 +88,8 @@ pub(crate) trait ArcTaskBase: Send + 'static {
 
 /// A way of scheduling and executing an asynchronous task in the SPDK Event Framework.
 pub(crate) trait ArcTask: ArcTaskBase {
+    type Output: 'static;
+
     /// Schedules a task for execution on its target, consuming the task in the process.
     fn schedule(arc_self: Arc<Self>) {
         let executor = arc_self.executor();
@@ -72,6 +131,10 @@ pub(crate) trait ArcTask: ArcTaskBase {
     /// This method returns `true` if the task was run synchronously. If it returns `false`, the
     /// task could not be executed synchronously and should be scheduled to run later.
     fn run(arc_self: &Arc<Self>) -> bool;
+
+    /// Polls the result of a task, returning `Poll::Pending` if the result is not yet ready, or
+    /// `Poll::Ready` with the result if it is ready.
+    fn poll_result(arc_self: &Arc<Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
 }
 
 /// Clones the [`RawWaker`] for this task.
@@ -113,7 +176,7 @@ unsafe fn waker_drop<W: ArcTask>(data: *const ()) {
 }
 
 /// Gets the [`RawWakerVTable`] used by a [`RawWaker`] to awaken a task.
-fn waker_vtable<W: ArcTask>() -> &'static RawWakerVTable {
+const fn waker_vtable<W: ArcTask>() -> &'static RawWakerVTable {
     &RawWakerVTable::new(
         waker_clone::<W>,
         waker_wake::<W>,
@@ -132,30 +195,82 @@ fn waker_ref<W: ArcTask>(arc_self: &Arc<W>) -> WakerRef<'_> {
     WakerRef::new_unowned(waker)
 }
 
+/// Polls a task for its result without consuming the task.
+///
+/// # Returns
+///
+/// Poll::Pending` if the task has not yet completed, or `Poll::Ready(result)` if the task has
+/// completed and produced a result.
+unsafe fn join_handle_poll_result<J: ArcTask>(
+    data: *const (),
+    cx: &mut Context<'_>,
+) -> Poll<J::Output> {
+    let arc_task = ManuallyDrop::new(Arc::<J>::from_raw(data.cast()));
+
+    ArcTask::poll_result(&arc_task, cx)
+}
+
+/// Drops the task referenced by the given pointer, releasing its resources.
+unsafe fn join_handle_drop<J: ArcTask>(data: *mut ()) {
+    drop(Arc::<J>::from_raw(data.cast()));
+}
+
+static JOIN_HANDLE_VTABLE_MAP: LazyLock<RwLock<HashMap<TypeId, Box<RawJoinHandleVTable<()>>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Gets the [`RawJoinHandleVTable`] used by a [`JoinHandle`] to poll a task.
+fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVTable<J::Output> {
+    if let Some(vtable) = JOIN_HANDLE_VTABLE_MAP
+        .read()
+        .get(&TypeId::of::<J>())
+        .map(|v| unsafe {
+            &*(v as *const Box<RawJoinHandleVTable<()>>
+                as *const Box<RawJoinHandleVTable<J::Output>>)
+        })
+    {
+        return vtable.as_ref();
+    }
+
+    let vtable = unsafe {
+        &*(JOIN_HANDLE_VTABLE_MAP
+            .write()
+            .entry(TypeId::of::<J>())
+            .or_insert_with(|| {
+                mem::transmute(Box::new(RawJoinHandleVTable::new(
+                    join_handle_poll_result::<J>,
+                    join_handle_drop::<J>,
+                )))
+            }) as *const Box<RawJoinHandleVTable<()>>
+            as *const Box<RawJoinHandleVTable<J::Output>>)
+    };
+
+    vtable.as_ref()
+}
+
 /// Orchestrates the execution of a [`Future`].
-pub(crate) struct Task<E, T, F>
+pub(crate) struct Task<E, F, T>
 where
     E: Executor + 'static,
-    T: 'static,
     F: Future<Output = T> + 'static,
+    T: 'static,
 {
     executor: Option<E>,
-    result_sender: UnsafeCell<Option<oneshot::Sender<T>>>,
+    result: Mutex<ResultState<T>>,
     future: RefCell<F>,
 }
 
-unsafe impl<E, T, F> Send for Task<E, T, F>
+unsafe impl<E, F, T> Send for Task<E, F, T>
 where
     E: Executor + 'static,
-    T: 'static,
     F: Future<Output = T> + 'static,
+    T: 'static,
 {
 }
 
-impl<T, F> Task<Thread, T, F>
+impl<F, T> Task<Thread, F, T>
 where
-    T: 'static,
     F: Future<Output = T> + 'static,
+    T: 'static,
 {
     /// Constructs a new task from a [`Future`] to be scheduled on a [`Thread`].
     ///
@@ -166,21 +281,28 @@ where
     /// This function returns both a newly constructed [`Task`] and a [`JoinHandle`] that can be
     /// used to await the result of executing the `Future`.
     pub(crate) fn with_future(executor: Option<Thread>, fut: F) -> (Arc<Self>, JoinHandle<T>) {
-        let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
             executor,
-            result_sender: UnsafeCell::new(Some(sx)),
+            result: Mutex::new(ResultState::Empty),
             future: RefCell::new(fut),
         });
 
-        (task, JoinHandle::new(rx))
+        let cloned_task = task.clone();
+        let join_handle = unsafe {
+            JoinHandle::new(
+                Arc::into_raw(cloned_task) as *mut _,
+                join_handle_vtable::<Self>(),
+            )
+        };
+
+        (task, join_handle)
     }
 }
 
-impl<T, F> ArcTaskBase for Task<Thread, T, F>
+impl<F, T> ArcTaskBase for Task<Thread, F, T>
 where
-    T: 'static,
     F: Future<Output = T> + 'static,
+    T: 'static,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor
@@ -190,7 +312,7 @@ where
     }
 }
 
-impl<T, F> Task<Reactor, T, F>
+impl<F, T> Task<Reactor, F, T>
 where
     T: 'static,
     F: Future<Output = T> + 'static,
@@ -202,18 +324,25 @@ where
     /// This function returns both a newly constructed [`Task`] and a [`JoinHandle`] that can be
     /// used to await the result of executing the `Future`.
     pub(crate) fn with_future(executor: Reactor, fut: F) -> (Arc<Self>, JoinHandle<T>) {
-        let (sx, rx) = oneshot::channel();
         let task = Arc::new(Self {
             executor: Some(executor),
-            result_sender: UnsafeCell::new(Some(sx)),
+            result: Mutex::new(ResultState::Empty),
             future: RefCell::new(fut),
         });
 
-        (task, JoinHandle::new(rx))
+        let cloned_task = task.clone();
+        let join_handle = unsafe {
+            JoinHandle::new(
+                Arc::into_raw(cloned_task) as *mut _,
+                join_handle_vtable::<Self>(),
+            )
+        };
+
+        (task, join_handle)
     }
 }
 
-impl<T, F> ArcTaskBase for Task<Reactor, T, F>
+impl<F, T> ArcTaskBase for Task<Reactor, F, T>
 where
     T: 'static,
     F: Future<Output = T> + 'static,
@@ -223,13 +352,15 @@ where
     }
 }
 
-impl<E, T, F> ArcTask for Task<E, T, F>
+impl<E, F, T> ArcTask for Task<E, F, T>
 where
     E: Executor + 'static,
     T: 'static,
     F: Future<Output = T> + 'static,
-    Task<E, T, F>: ArcTaskBase,
+    Task<E, F, T>: ArcTaskBase,
 {
+    type Output = T;
+
     fn run(arc_self: &Arc<Self>) -> bool {
         match arc_self.future.try_borrow_mut() {
             Ok(mut fut) => {
@@ -243,25 +374,25 @@ where
 
                 match fut.poll(&mut ctx) {
                     Poll::Ready(result) => {
-                        // The future has completed, so send the result to the join handle.
-                        let sender = unsafe { &mut *arc_self.result_sender.get() };
+                        let res = arc_self.result.lock().set_result(result);
 
-                        if let Some(sx) = sender.take() {
-                            let _ = sx.send(result);
-                        }
-
-                        true
+                        if let Some(waker) = res {
+                            waker.wake();
+                        };
                     }
-                    // The future is not ready yet, but the call to `poll` set up the task to be
-                    // awakened later. We simply return `true` here to indicate that the task has
-                    // been processed successfully.
-                    Poll::Pending => true,
+                    Poll::Pending => {}
                 }
+
+                true
             }
             // The task was re-entered while its future was already being polled. Return `false` to
             // indicate that the task needs to be scheduled to run by its executor later.
             Err(_) => false,
         }
+    }
+
+    fn poll_result(arc_self: &Arc<Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        arc_self.result.lock().poll_result(cx)
     }
 }
 
@@ -276,7 +407,7 @@ where
     F: Future<Output = T> + 'static,
     T: Send + 'static,
 {
-    let (task, join_handle) = Task::<Thread, T, F>::with_future(Some(thread), fut_gen());
+    let (task, join_handle) = Task::<Thread, F, T>::with_future(Some(thread), fut_gen());
 
     ArcTask::schedule(task);
 
@@ -290,7 +421,7 @@ where
     F: Future<Output = T> + 'static,
     T: 'static,
 {
-    let (task, join_handle) = Task::<Thread, T, F>::with_future(Thread::try_current(), fut);
+    let (task, join_handle) = Task::<Thread, F, T>::with_future(Thread::try_current(), fut);
 
     ArcTask::schedule(task);
 
@@ -308,7 +439,7 @@ where
     F: Future<Output = T> + 'static,
     T: Send + 'static,
 {
-    let (task, join_handle) = Task::<Reactor, T, F>::with_future(reactor, fut_gen());
+    let (task, join_handle) = Task::<Reactor, F, T>::with_future(reactor, fut_gen());
 
     ArcTask::schedule(task);
 
@@ -322,7 +453,7 @@ where
     F: Future<Output = T> + 'static,
     T: 'static,
 {
-    let (task, join_handle) = Task::<Reactor, T, F>::with_future(Reactor::current(), fut);
+    let (task, join_handle) = Task::<Reactor, F, T>::with_future(Reactor::current(), fut);
 
     ArcTask::schedule(task);
 

@@ -1,43 +1,97 @@
 use std::{
-    pin::Pin,
+    future::Future,
     task::{Context, Poll},
 };
 
-use futures::{channel::oneshot, Future};
+/// A virtual function table (vtable) that specifies the operations that can be performed on a
+/// [`RawJoinHandle`].
+///
+/// The pointer passed to all functions in this vtable is the `data` pointer of the enclosing
+/// [`RawJoinHandle`] object. The vtable is used to construct a [`RawJoinHandle`] that is embedded
+/// in a [`JoinHandle`]. The vtable is used by `JoinHandle` orchestrate receiving the result of an
+/// asynchronous operation.
+pub(crate) struct RawJoinHandleVTable<T>
+where
+    T: 'static,
+{
+    poll_result: unsafe fn(*const (), &mut Context<'_>) -> Poll<T>,
+    drop: unsafe fn(*mut ()),
+}
+
+impl<T> RawJoinHandleVTable<T>
+where
+    T: 'static,
+{
+    /// Creates a new `RawJoinHandleVTable` with the specified `poll_result` and `drop` functions.
+    ///
+    /// `poll_result`
+    ///
+    /// This function is called when a [`JoinHandle`] is polled thorugh its [`Future`] trait
+    /// implementation. It returns a [`Poll<T>`] value indicating whether the task has completed
+    /// and, if so, the result of the task.
+    ///
+    /// `drop
+    ///
+    /// This function is called when a [`JoinHandle`] is dropped. It should perform any necessary
+    /// cleanup for the task.
+    pub(crate) const fn new(
+        poll_result: unsafe fn(*const (), &mut Context<'_>) -> Poll<T>,
+        drop: unsafe fn(*mut ()),
+    ) -> Self {
+        Self { poll_result, drop }
+    }
+}
+
+/// A raw handle to a task that can be used to await the result of the task.
+pub(crate) struct RawJoinHandle<T>
+where
+    T: 'static,
+{
+    vtable: &'static RawJoinHandleVTable<T>,
+    data: *mut (),
+}
 
 /// A handle that awaits the result of a task.
 ///
 /// Dropping a [`JoinHandle`] will detach the task leaving no way to join on
 /// it or obtain its result.
 ///
-/// A [`JoinHandle`] is created when task is spawned.
-pub struct JoinHandle<T> {
-    rx: oneshot::Receiver<T>,
+/// A [`JoinHandle`] is created when a task is spawned.
+pub struct JoinHandle<T>
+where
+    T: 'static,
+{
+    raw: RawJoinHandle<T>,
 }
 
-impl<T> JoinHandle<T> {
-    /// Create a new [`JoinHandle`] from a [`oneshot::Receiver`].
-    pub(crate) fn new(rx: oneshot::Receiver<T>) -> Self {
-        Self { rx }
-    }
-
-    /// Returns a pinned reference to the [`oneshot::Receiver`] used to receive
-    /// the result of the task.
-    pub(crate) fn rx_pin_mut(self: Pin<&mut Self>) -> Pin<&mut oneshot::Receiver<T>> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.rx) }
+impl<T> JoinHandle<T>
+where
+    T: 'static,
+{
+    /// Creates a new `JoinHandle` with the specified `data` pointer and `vtable`.
+    pub(crate) const unsafe fn new(data: *mut (), vtable: &'static RawJoinHandleVTable<T>) -> Self {
+        Self {
+            raw: RawJoinHandle { vtable, data },
+        }
     }
 }
 
-impl<T> Future for JoinHandle<T> {
+impl<T> Future for JoinHandle<T>
+where
+    T: 'static,
+{
     type Output = T;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let pinned_rx = self.rx_pin_mut();
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        unsafe { (self.raw.vtable.poll_result)(self.raw.data, cx) }
+    }
+}
 
-        match pinned_rx.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(r)) => Poll::Ready(r),
-            Poll::Ready(Err(_)) => panic!("sender dropped"),
-        }
+impl<T> Drop for JoinHandle<T>
+where
+    T: 'static,
+{
+    fn drop(&mut self) {
+        unsafe { (self.raw.vtable.drop)(self.raw.data) }
     }
 }

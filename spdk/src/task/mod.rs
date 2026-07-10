@@ -9,6 +9,7 @@ mod promise;
 mod task;
 mod yield_now;
 
+pub(crate) use join_handle::RawJoinHandleVTable;
 pub(crate) use task::{
     spawn_on_current_reactor, spawn_on_current_thread, spawn_on_reactor, spawn_on_thread, ArcTask,
     Executor, Task,
