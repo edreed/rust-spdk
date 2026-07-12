@@ -13,6 +13,7 @@ async-trait = "0.1.89"
 errno = "0.3.14"
 futures = "0.3.32"
 libc = "0.2.186"
+parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
 spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
