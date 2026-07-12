@@ -14,81 +14,15 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::{
     runtime::Reactor,
-    task::{JoinHandle, RawJoinHandleVTable},
+    task::{Executor, JoinHandle, RawJoinHandleVTable, ResultState, TaskBase},
     thread::Thread,
 };
 
-/// Represents the state of a task's result.
-#[derive(Default)]
-enum ResultState<T> {
-    /// The task has not yet completed and is waiting for the result to be produced.
-    #[default]
-    Empty,
-
-    /// The task has not yet completed, but a [`Waker`] has been registered to be notified when the
-    /// result is ready.
-    Waiting(Waker),
-
-    /// The task has completed and the result is ready to be consumed.
-    Ready(T),
-
-    /// The task has completed and the result has been consumed.
-    Consumed,
-}
-
-impl<T> ResultState<T> {
-    /// Sets the result of the task and wakes any registered [`Waker`].
-    fn set_result(&mut self, result: T) -> Option<Waker> {
-        match mem::replace(self, ResultState::Ready(result)) {
-            ResultState::Empty => None,
-            ResultState::Waiting(waker) => Some(waker),
-            ResultState::Ready(_) => panic!("result already set"),
-            ResultState::Consumed => panic!("result already consumed"),
-        }
-    }
-
-    /// Polls the result of the task, returning `Poll::Pending` if the result is not yet ready, or
-    /// `Poll::Ready` with the result if it is ready.
-    fn poll_result(&mut self, cx: &mut Context<'_>) -> Poll<T> {
-        match self {
-            ResultState::Empty => {
-                *self = ResultState::Waiting(cx.waker().clone());
-                Poll::Pending
-            }
-            ResultState::Ready(_) => {
-                let res = mem::replace(self, ResultState::Consumed);
-
-                if let ResultState::Ready(res) = res {
-                    Poll::Ready(res)
-                } else {
-                    unreachable!()
-                }
-            }
-            ResultState::Waiting(_) => Poll::Pending,
-            ResultState::Consumed => panic!("poll_result called after result was consumed"),
-        }
-    }
-}
-
-/// A trait defining the interface for an executor that can schedule and execute tasks.
-pub trait Executor {
-    /// Returns `true` if the current executor is the same as this executor.
-    fn is_current(&self) -> bool;
-
-    /// Schedules a task for execution on this executor.
-    fn schedule<F>(&self, f: F)
-    where
-        F: FnOnce() + 'static;
-}
-
-pub(crate) trait ArcTaskBase: Send + 'static {
-    /// Returns the executor on which this task should be executed.
-    fn executor(&self) -> impl Executor + 'static;
-}
-
-/// A way of scheduling and executing an asynchronous task in the SPDK Event Framework.
-pub(crate) trait ArcTask: ArcTaskBase {
-    type Output: 'static;
+/// A way of scheduling and executing an asynchronous task on a different executor in the SPDK Event
+/// Framework.
+pub(crate) trait ArcTask: TaskBase {
+    /// The type of value produced by the task when it completes.
+    type Output: Send + 'static;
 
     /// Schedules a task for execution on its target, consuming the task in the process.
     fn schedule(arc_self: Arc<Self>) {
@@ -105,23 +39,19 @@ pub(crate) trait ArcTask: ArcTaskBase {
     }
 
     /// Schedules a task for execution without consuming the task.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if this task's target executor is not the current executor.
     fn schedule_by_ref(arc_self: &Arc<Self>) {
         let executor = arc_self.executor();
 
-        assert!(executor.is_current());
-
-        // First, attempt to run the task synchronously.
-        if !Self::run(arc_self) {
-            // The task could not be run synchronously, so enqueue it to run on the target executor
-            // at a later time.
-            let cloned_task = arc_self.clone();
-
-            executor.schedule(move || assert!(Self::run(&cloned_task)));
+        // If the current executor is the target of this task, attempt to run it synchronously.
+        if executor.is_current() && Self::run(arc_self) {
+            return;
         }
+
+        // The task could not be run synchronously, so enqueue it to run on the target executor
+        // at a later time.
+        let cloned_task = arc_self.clone();
+
+        executor.schedule(move || assert!(Self::run(&cloned_task)));
     }
 
     /// Executes a task on the executor.
@@ -185,7 +115,7 @@ const fn waker_vtable<W: ArcTask>() -> &'static RawWakerVTable {
     )
 }
 
-/// Creates a reference to the [`Waker`] from a reference to a [`Task<T>`].
+/// Creates a reference to the [`Waker`] from a reference to a [`RemoteTask`].
 fn waker_ref<W: ArcTask>(arc_self: &Arc<W>) -> WakerRef<'_> {
     let data = Arc::as_ptr(arc_self).cast();
 
@@ -199,7 +129,7 @@ fn waker_ref<W: ArcTask>(arc_self: &Arc<W>) -> WakerRef<'_> {
 ///
 /// # Returns
 ///
-/// Poll::Pending` if the task has not yet completed, or `Poll::Ready(result)` if the task has
+/// `Poll::Pending` if the task has not yet completed, or `Poll::Ready(result)` if the task has
 /// completed and produced a result.
 unsafe fn join_handle_poll_result<J: ArcTask>(
     data: *const (),
@@ -219,7 +149,7 @@ static JOIN_HANDLE_VTABLE_MAP: LazyLock<RwLock<HashMap<TypeId, Box<RawJoinHandle
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Gets the [`RawJoinHandleVTable`] used by a [`JoinHandle`] to poll a task.
-fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVTable<J::Output> {
+pub(crate) fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVTable<J::Output> {
     if let Some(vtable) = JOIN_HANDLE_VTABLE_MAP
         .read()
         .get(&TypeId::of::<J>())
@@ -247,62 +177,45 @@ fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVTable<J::Output> {
     vtable.as_ref()
 }
 
-/// Orchestrates the execution of a [`Future`].
-pub(crate) struct Task<E, F, T>
+/// Orchestrates the execution of a [`Future`] on another [`Reactor`] or [`Thread`].
+pub(crate) struct RemoteTask<E, F, T>
 where
     E: Executor + 'static,
     F: Future<Output = T> + 'static,
-    T: 'static,
+    T: Send + 'static,
 {
     executor: Option<E>,
     result: Mutex<ResultState<T>>,
     future: RefCell<F>,
 }
 
-unsafe impl<E, F, T> Send for Task<E, F, T>
+unsafe impl<E, F, T> Send for RemoteTask<E, F, T>
 where
     E: Executor + 'static,
     F: Future<Output = T> + 'static,
-    T: 'static,
+    T: Send + 'static,
 {
 }
 
-impl<F, T> Task<Thread, F, T>
+impl<F, T> RemoteTask<Thread, F, T>
 where
     F: Future<Output = T> + 'static,
-    T: 'static,
+    T: Send + 'static,
 {
-    /// Constructs a new task from a [`Future`] to be scheduled on a [`Thread`].
-    ///
-    /// If `executor` is `None`, the task will be scheduled to run on the application thread.
-    ///
-    /// # Return
-    ///
-    /// This function returns both a newly constructed [`Task`] and a [`JoinHandle`] that can be
-    /// used to await the result of executing the `Future`.
-    pub(crate) fn with_future(executor: Option<Thread>, fut: F) -> (Arc<Self>, JoinHandle<T>) {
-        let task = Arc::new(Self {
+    /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Thread`].
+    pub(crate) fn with_future(executor: Option<Thread>, fut: F) -> Arc<Self> {
+        Arc::new(Self {
             executor,
             result: Mutex::new(ResultState::Empty),
             future: RefCell::new(fut),
-        });
-
-        let cloned_task = task.clone();
-        let join_handle = unsafe {
-            JoinHandle::new(
-                Arc::into_raw(cloned_task) as *mut _,
-                join_handle_vtable::<Self>(),
-            )
-        };
-
-        (task, join_handle)
+        })
     }
 }
 
-impl<F, T> ArcTaskBase for Task<Thread, F, T>
+impl<F, T> TaskBase for RemoteTask<Thread, F, T>
 where
     F: Future<Output = T> + 'static,
-    T: 'static,
+    T: Send + 'static,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor
@@ -312,39 +225,24 @@ where
     }
 }
 
-impl<F, T> Task<Reactor, F, T>
+impl<F, T> RemoteTask<Reactor, F, T>
 where
-    T: 'static,
+    T: Send + 'static,
     F: Future<Output = T> + 'static,
 {
-    /// Constructs a new task from a [`Future`] to be scheduled on the given [`Reactor`]
-    ///
-    /// # Return
-    ///
-    /// This function returns both a newly constructed [`Task`] and a [`JoinHandle`] that can be
-    /// used to await the result of executing the `Future`.
-    pub(crate) fn with_future(executor: Reactor, fut: F) -> (Arc<Self>, JoinHandle<T>) {
-        let task = Arc::new(Self {
+    /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Reactor`].
+    pub(crate) fn with_future(executor: Reactor, fut: F) -> Arc<Self> {
+        Arc::new(Self {
             executor: Some(executor),
             result: Mutex::new(ResultState::Empty),
             future: RefCell::new(fut),
-        });
-
-        let cloned_task = task.clone();
-        let join_handle = unsafe {
-            JoinHandle::new(
-                Arc::into_raw(cloned_task) as *mut _,
-                join_handle_vtable::<Self>(),
-            )
-        };
-
-        (task, join_handle)
+        })
     }
 }
 
-impl<F, T> ArcTaskBase for Task<Reactor, F, T>
+impl<F, T> TaskBase for RemoteTask<Reactor, F, T>
 where
-    T: 'static,
+    T: Send + 'static,
     F: Future<Output = T> + 'static,
 {
     fn executor(&self) -> impl Executor + 'static {
@@ -352,12 +250,12 @@ where
     }
 }
 
-impl<E, F, T> ArcTask for Task<E, F, T>
+impl<E, F, T> ArcTask for RemoteTask<E, F, T>
 where
     E: Executor + 'static,
-    T: 'static,
+    T: Send + 'static,
     F: Future<Output = T> + 'static,
-    Task<E, F, T>: ArcTaskBase,
+    RemoteTask<E, F, T>: TaskBase,
 {
     type Output = T;
 
@@ -407,25 +305,11 @@ where
     F: Future<Output = T> + 'static,
     T: Send + 'static,
 {
-    let (task, join_handle) = Task::<Thread, F, T>::with_future(Some(thread), fut_gen());
+    let task = RemoteTask::<Thread, F, T>::with_future(Some(thread), fut_gen());
 
-    ArcTask::schedule(task);
+    ArcTask::schedule_by_ref(&task);
 
-    join_handle
-}
-
-/// Schedules a new asynchronous task to be executed on the current [`Thread`] and returns a
-/// [`JoinHandle`] to await results.
-pub(crate) fn spawn_on_current_thread<F, T>(fut: F) -> JoinHandle<T>
-where
-    F: Future<Output = T> + 'static,
-    T: 'static,
-{
-    let (task, join_handle) = Task::<Thread, F, T>::with_future(Thread::try_current(), fut);
-
-    ArcTask::schedule(task);
-
-    join_handle
+    task.into()
 }
 
 /// Schedules a new asynchronous task to be executed on the given [`Reactor`] and returns a
@@ -439,23 +323,9 @@ where
     F: Future<Output = T> + 'static,
     T: Send + 'static,
 {
-    let (task, join_handle) = Task::<Reactor, F, T>::with_future(reactor, fut_gen());
+    let task = RemoteTask::<Reactor, F, T>::with_future(reactor, fut_gen());
 
-    ArcTask::schedule(task);
+    ArcTask::schedule_by_ref(&task);
 
-    join_handle
-}
-
-/// Schedules a new asynchronous task to be executed on the current [`Reactor`] and returns a
-/// [`JoinHandle`] to await results.
-pub(crate) fn spawn_on_current_reactor<F, T>(fut: F) -> JoinHandle<T>
-where
-    F: Future<Output = T> + 'static,
-    T: 'static,
-{
-    let (task, join_handle) = Task::<Reactor, F, T>::with_future(Reactor::current(), fut);
-
-    ArcTask::schedule(task);
-
-    join_handle
+    task.into()
 }

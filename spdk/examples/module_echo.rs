@@ -94,10 +94,7 @@ impl EchoChannel {
         }
 
         // SAFETY: We will wait for the reader to consume the buffer before returning.
-        unsafe {
-            *src_buf =
-                Some(transmute::<&[std::io::IoSlice<'_>], &[std::io::IoSlice<'_>]>(io.buffers()))
-        };
+        unsafe { *src_buf = Some(transmute::<&[IoSlice<'_>], &[IoSlice<'_>]>(io.buffers())) };
 
         self.device.reader.notify_one();
 

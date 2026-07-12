@@ -6,7 +6,8 @@ use std::{
     mem::{size_of, MaybeUninit},
     os::raw::{c_char, c_int},
     ptr::{addr_of_mut, null},
-    sync::{atomic::AtomicBool, Arc},
+    rc::Rc,
+    sync::atomic::AtomicBool,
 };
 
 use spdk_sys::{
@@ -18,7 +19,7 @@ use static_init::dynamic;
 use crate::{
     errors::{Errno, EINVAL},
     runtime::{reactors, Reactor},
-    task::{ArcTask, Task},
+    task::{LocalTask, RcTask},
     thread::Thread,
     to_result,
 };
@@ -212,9 +213,9 @@ impl Runtime {
         F: Future<Output = ()> + 'static,
         F::Output: 'static,
     {
-        let task = Arc::from_raw(ctx.cast::<Task<Thread, F, ()>>());
+        let task = Rc::from_raw(ctx.cast::<LocalTask<Thread, F, ()>>());
 
-        ArcTask::schedule_by_ref(&task);
+        RcTask::schedule(task);
     }
 
     /// Starts the SPDK Application Framework with the given future.
@@ -222,8 +223,8 @@ impl Runtime {
     where
         F: Future<Output = ()> + 'static,
     {
-        let (task, _) = Task::<Thread, F, ()>::with_future(None, fut);
-        let ctx = Arc::into_raw(task).cast_mut();
+        let task = LocalTask::<Thread, F, ()>::with_future(fut);
+        let ctx = Rc::into_raw(task).cast_mut();
 
         unsafe {
             to_result!(spdk_app_start(
