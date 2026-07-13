@@ -22,32 +22,14 @@ pub(crate) struct RawJoinHandleVTable<T>
 where
     T: 'static,
 {
-    poll_result: unsafe fn(*const (), &mut Context<'_>) -> Poll<T>,
-    drop: unsafe fn(*mut ()),
-}
-
-impl<T> RawJoinHandleVTable<T>
-where
-    T: 'static,
-{
-    /// Creates a new `RawJoinHandleVTable` with the specified `poll_result` and `drop` functions.
-    ///
-    /// `poll_result`
-    ///
     /// This function is called when a [`JoinHandle`] is polled through its [`Future`] trait
     /// implementation. It returns a [`Poll<T>`] value indicating whether the task has completed
     /// and, if so, the result of the task.
-    ///
-    /// `drop`
-    ///
+    pub(crate) poll_result: unsafe fn(*const (), &mut Context<'_>) -> Poll<T>,
+
     /// This function is called when a [`JoinHandle`] is dropped. It should perform any necessary
     /// cleanup for the task.
-    pub(crate) const fn new(
-        poll_result: unsafe fn(*const (), &mut Context<'_>) -> Poll<T>,
-        drop: unsafe fn(*mut ()),
-    ) -> Self {
-        Self { poll_result, drop }
-    }
+    pub(crate) drop: unsafe fn(*mut ()),
 }
 
 /// A raw handle to a task that can be used to await the result of the task.

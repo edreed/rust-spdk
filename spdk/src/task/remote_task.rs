@@ -1,16 +1,14 @@
 use std::{
-    any::TypeId,
     cell::RefCell,
-    collections::HashMap,
     future::Future,
-    mem::{self, ManuallyDrop},
+    mem::ManuallyDrop,
     pin::Pin,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 use futures::task::WakerRef;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 
 use crate::{
     runtime::Reactor,
@@ -145,36 +143,12 @@ unsafe fn join_handle_drop<J: ArcTask>(data: *mut ()) {
     drop(Arc::<J>::from_raw(data.cast()));
 }
 
-static JOIN_HANDLE_VTABLE_MAP: LazyLock<RwLock<HashMap<TypeId, Box<RawJoinHandleVTable<()>>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
 /// Gets the [`RawJoinHandleVTable`] used by a [`JoinHandle`] to poll a task.
-pub(crate) fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVTable<J::Output> {
-    if let Some(vtable) = JOIN_HANDLE_VTABLE_MAP
-        .read()
-        .get(&TypeId::of::<J>())
-        .map(|v| unsafe {
-            &*(v as *const Box<RawJoinHandleVTable<()>>
-                as *const Box<RawJoinHandleVTable<J::Output>>)
-        })
-    {
-        return vtable.as_ref();
+pub(crate) const fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVTable<J::Output> {
+    &RawJoinHandleVTable {
+        poll_result: join_handle_poll_result::<J>,
+        drop: join_handle_drop::<J>,
     }
-
-    let vtable = unsafe {
-        &*(JOIN_HANDLE_VTABLE_MAP
-            .write()
-            .entry(TypeId::of::<J>())
-            .or_insert_with(|| {
-                mem::transmute(Box::new(RawJoinHandleVTable::new(
-                    join_handle_poll_result::<J>,
-                    join_handle_drop::<J>,
-                )))
-            }) as *const Box<RawJoinHandleVTable<()>>
-            as *const Box<RawJoinHandleVTable<J::Output>>)
-    };
-
-    vtable.as_ref()
 }
 
 /// Orchestrates the execution of a [`Future`] on another [`Reactor`] or [`Thread`].
