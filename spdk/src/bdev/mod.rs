@@ -17,8 +17,6 @@ mod bdev;
 mod module;
 
 #[cfg(feature = "bdev-module")]
-pub(crate) use bdev::BDevIoCtx;
-#[cfg(feature = "bdev-module")]
 pub use bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevIoChannelOps, BDevOps, IoStatus};
 
 #[cfg(feature = "bdev-module")]

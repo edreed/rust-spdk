@@ -109,7 +109,11 @@ impl From<IoStatus> for spdk_bdev_io_status {
 /// A trait for implementing the I/O channel operations for a BDev.
 #[async_trait(?Send)]
 pub trait BDevIoChannelOps: 'static {
-    /// The I/O context type for the BDev.
+    /// A per-I/O context type accessed through the [`BDevIo::ctx()`] and
+    /// [`BDevIo::ctx_mut()`] methods.
+    ///
+    /// [`BDevIo::ctx()`]: method@super::BDevIo::ctx
+    /// [`BDevIo::ctx_mut()`]: method@super::BDevIo::ctx_mut
     type IoContext: Default + 'static;
 
     /// Submit an I/O request to the BDev.
@@ -185,7 +189,7 @@ where
 ///
 /// The type parameter `T` is the I/O context type for the BDev implementation.
 #[derive(Default)]
-pub(crate) struct BDevIoCtx<T>
+struct BDevIoCtx<T>
 where
     T: Default + 'static,
 {
@@ -412,6 +416,11 @@ pub trait BDevOps: Send + Sync + 'static {
 
     /// Creates a new I/O channel for the BDev.
     fn new_io_channel(&mut self) -> Result<Self::IoChannel, Errno>;
+
+    /// Returns the size in bytes of the per-I/O context.
+    fn get_io_context_size() -> usize {
+        size_of::<BDevIoCtx<<<Self as BDevOps>::IoChannel as BDevIoChannelOps>::IoContext>>()
+    }
 }
 
 /// A BDev implementation.
