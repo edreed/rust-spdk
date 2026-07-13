@@ -26,7 +26,7 @@ struct EchoModule;
 
 #[async_trait(?Send)]
 impl ModuleOps for EchoModule {
-    type IoContext = ();
+    type BDev = Echo;
 
     async fn init(&self) {
         task::yield_now().await;

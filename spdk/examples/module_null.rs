@@ -15,7 +15,7 @@ struct NullRsModule;
 
 #[async_trait(?Send)]
 impl ModuleOps for NullRsModule {
-    type IoContext = ();
+    type BDev = NullRs;
 }
 
 /// Implements the NullRs block device I/O channel. It ignores write requests

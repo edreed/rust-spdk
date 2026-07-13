@@ -1,4 +1,4 @@
-use std::{ffi::CStr, fmt::Debug, mem::size_of};
+use std::{ffi::CStr, fmt::Debug};
 
 use async_trait::async_trait;
 use spdk_sys::{
@@ -11,17 +11,13 @@ use crate::{
     thread::{self},
 };
 
-use super::{BDevImpl, BDevIoCtx, BDevOps};
+use super::{BDevImpl, BDevOps};
 
 /// A trait defining BDev module operations.
 #[async_trait(?Send)]
 pub trait ModuleOps {
-    /// A per-I/O context type accessed through the [`BDevIo::ctx()`] and
-    /// [`BDevIo::ctx_mut()`] methods.
-    ///
-    /// [`BDevIo::ctx()`]: method@super::BDevIo::ctx
-    /// [`BDevIo::ctx_mut()`]: method@super::BDevIo::ctx_mut
-    type IoContext: Default + 'static;
+    /// The BDev type implemented by the module.
+    type BDev: BDevOps;
 
     /// Initializes the module.
     async fn init(&self) {}
@@ -29,9 +25,9 @@ pub trait ModuleOps {
     /// Finalizes the module.
     async fn fini(&self) {}
 
-    /// Returns the size of the per-I/O context.
+    /// Returns the size in bytes of the per-I/O context.
     fn get_io_context_size(&self) -> usize {
-        size_of::<BDevIoCtx<Self::IoContext>>()
+        Self::BDev::get_io_context_size()
     }
 
     /// Examines the specified block device to determine whether it should be
@@ -165,7 +161,7 @@ where
         });
     }
 
-    /// Returns the size of the per-I/O context.
+    /// Returns the size in bytes of the per-I/O context.
     unsafe extern "C" fn get_io_context_size() -> i32 {
         T::instance().get_io_context_size() as i32
     }

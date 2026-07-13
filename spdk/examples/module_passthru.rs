@@ -19,7 +19,7 @@ struct PassthruRsModule;
 
 #[async_trait(?Send)]
 impl ModuleOps for PassthruRsModule {
-    type IoContext = ();
+    type BDev = PassthruRs;
 }
 
 struct PassthruRsChannel {
