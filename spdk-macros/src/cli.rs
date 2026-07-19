@@ -1,4 +1,4 @@
-use std::{cell::Cell, ffi::CString, os::raw::c_int};
+use std::{cell::Cell, ffi::CString, iter::once, os::raw::c_int};
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
@@ -308,6 +308,7 @@ impl DeriveParser {
     ///
     /// [`Parser`]: ../../spdk/cli/trait.Parser.html
     pub(crate) fn derive(&mut self, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+        // Parse the input structure to extract the field definitions into a `Vec` of `Arg` structures.
         let input = syn::parse_macro_input!(input as syn::DeriveInput);
 
         let fields = match input.data {
@@ -338,10 +339,23 @@ impl DeriveParser {
         let uppername = type_ident.to_string().to_uppercase();
         let current_value_ident = format_ident!("{}_CURRENT_VALUE", uppername);
 
+        // Generate the initializers for the default value of each arg.
         let field_inits = args.iter().map(Arg::field_init);
+
+        // Generate the parse options match clauses.
         let parse_opts = args.iter().map(Arg::parse_option);
-        let long_opt = args.iter().map(Arg::long_opt);
-        let long_opts_count = long_opt.len();
+
+        // Generate the long options array, appending a zeroed structure at the end.
+        let long_opts: Vec<_> = args
+            .iter()
+            .map(Arg::long_opt)
+            .chain(once(quote! {
+                unsafe { std::mem::MaybeUninit::zeroed().assume_init() }
+            }))
+            .collect();
+        let long_opts_count = long_opts.len();
+
+        // Generate the `getopts` string for short options.
         let getopts_str = CString::new(args.iter().map(Arg::getopts_str).fold(
             String::new(),
             |mut acc, s| {
@@ -352,9 +366,14 @@ impl DeriveParser {
         ))
         .unwrap();
         let getopts_str_lit = LitCStr::new(&getopts_str, type_ident.span());
+
+        // Generate the help text.
         let help = args.iter().flat_map(Arg::help);
+
+        // Accumulate the errors encountered while parsing the input.
         let errors = args.iter().flat_map(Arg::errors);
 
+        // Render the output token stream.
         let output = quote! {
             #(#errors)*
 
@@ -409,7 +428,7 @@ impl DeriveParser {
                         .collect();
 
                     let custom_opts: [spdk_sys::option; #long_opts_count] = [
-                        #(#long_opt),*
+                        #(#long_opts),*
                     ];
 
                     unsafe {
