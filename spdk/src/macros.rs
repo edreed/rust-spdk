@@ -23,9 +23,9 @@ macro_rules! to_result {
 #[macro_export]
 macro_rules! to_result_size {
     ($r:expr) => {
-        match $crate::errors::Errno($r) {
-            $crate::errors::Errno(e) if e < 0 => Err($crate::errors::Errno(-e)),
-            $crate::errors::Errno(s) => Ok(s as usize),
+        match { $r } {
+            r if r >= 0 => Ok(r as usize),
+            e => Err($crate::errors::Errno(-e as i32)),
         }
     };
 }
