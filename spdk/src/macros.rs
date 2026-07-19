@@ -6,10 +6,12 @@
 #[macro_export]
 macro_rules! to_result {
     ($r:expr) => {
-        match $crate::errors::Errno($r) {
-            $crate::errors::Errno(0) => Ok(()),
-            $crate::errors::Errno(e) if e < 0 => Err($crate::errors::Errno(-e)),
-            _ => unreachable!(),
+        match $r {
+            0 => Ok(()),
+            e if e < 0 => Err($crate::errors::Errno::new(-e)),
+            _ => unreachable!(
+                "unexpected postive error value; perhaps you meant to use to_result_size here"
+            ),
         }
     };
 }
@@ -25,7 +27,7 @@ macro_rules! to_result_size {
     ($r:expr) => {
         match { $r } {
             r if r >= 0 => Ok(r as usize),
-            e => Err($crate::errors::Errno(-e as i32)),
+            e => Err($crate::errors::Errno::new(-e as i32)),
         }
     };
 }
