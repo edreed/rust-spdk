@@ -32,7 +32,7 @@ impl Descriptor {
         let res = if_else!(
             status == 0,
             Descriptor::try_from(desc).map_err(|_| EINVAL),
-            Err(Errno(-status))
+            Err(Errno::new(-status))
         );
 
         Promissory::set_result(p, res);

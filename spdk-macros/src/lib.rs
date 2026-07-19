@@ -1,5 +1,6 @@
 //! Procedural macros for the spdk crate.
 mod cli;
+mod define_errno;
 mod main_attr;
 
 #[cfg(feature = "bdev-module")]
@@ -311,4 +312,24 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     module::GenerateModule::new().generate(attr, item)
+}
+
+/// Generates `Errno` constant definitions for the `errors` module of the `spdk` crate.
+///
+/// The macro takes a comma-delimited list of simple expression assignments given by the
+/// regular expression, `((?P<name>\w+)\s+=\s+(?P<value>\d+),?)*`, and generates `Errno` constant
+/// definitions. The definitions include automatically generated documentation by passing the value
+/// to the [`strerror`] function.
+///
+/// <div class="warning">
+///
+/// **NOTE:** This macro is intended only for use by the `spdk` crate for its `Errno` definitions.
+/// The macro defintion and usage is subject to change without notice.
+///
+/// </div>
+///
+/// [`strerror`]: https://www.man7.org/linux/man-pages/man3/strerror.3.html
+#[proc_macro]
+pub fn define_errno(item: TokenStream) -> TokenStream {
+    define_errno::DefineErrno::new().generate(item)
 }

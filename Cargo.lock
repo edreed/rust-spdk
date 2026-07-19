@@ -340,16 +340,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 
 [[package]]
-name = "errno"
-version = "0.3.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
-dependencies = [
- "libc",
- "windows-sys",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -949,7 +939,6 @@ dependencies = [
  "aquamarine",
  "async-condvar-fair",
  "async-trait",
- "errno",
  "futures",
  "laboratory",
  "libc",
@@ -966,6 +955,7 @@ name = "spdk-macros"
 version = "0.1.0"
 dependencies = [
  "convert_case 0.11.0",
+ "libc",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

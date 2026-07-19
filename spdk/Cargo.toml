@@ -10,7 +10,6 @@ all-features = true
 [dependencies]
 aquamarine = "0.6.0"
 async-trait = "0.1.89"
-errno = "0.3.14"
 futures = "0.3.32"
 libc = "0.2.186"
 parking_lot = "0.12.5"
