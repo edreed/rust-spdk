@@ -1,9 +1,10 @@
 use std::{
     ffi::c_void,
-    marker::PhantomData,
-    mem::MaybeUninit,
-    ops::Deref,
-    ptr::{addr_of_mut, NonNull},
+    future::Future,
+    mem::{transmute, MaybeUninit},
+    pin::Pin,
+    ptr::null_mut,
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -17,64 +18,151 @@ pub trait Polled {
     /// Polls the type.
     ///
     /// Returns `true` if work was done on this invocation, `false` otherwise.
-    fn poll(&mut self) -> bool;
+    fn poll(self: Pin<&mut Self>) -> bool;
 }
 
-/// A poller that can be registered with the SPDK event framework to poll a type
-/// implemented the [`Polled`] trait.
-pub struct Poller<'a, T>
+/// A poller that can be registered with the SPDK event framework to poll a type implemented the
+/// [`Polled`] trait.
+struct PollerInner<T>
 where
     T: Polled,
 {
-    poller: NonNull<spdk_poller>,
-    polled: PhantomData<&'a mut T>,
+    poller: *mut spdk_poller,
+    polled: T,
 }
 
-impl<'a, T> Poller<'a, T>
+impl<T> Polled for MaybeUninit<T>
 where
     T: Polled,
 {
-    /// Creates a new poller that will repeatedly poll `polled` as fast as
-    /// possible on the current SPDK thread.
+    fn poll(self: Pin<&mut Self>) -> bool {
+        unreachable!("poll called on uninitialized data")
+    }
+}
+
+pub struct Poller<T>(Box<PollerInner<T>>)
+where
+    T: Polled;
+
+impl<T> Poller<T>
+where
+    T: Polled,
+{
+    /// Creates a new poller that will repeatedly poll `polled` as fast as possible on the current
+    /// SPDK thread.
     #[inline]
-    pub fn new(polled: &'a mut T) -> Self {
-        Self::with_period(polled, Duration::ZERO)
+    pub fn new(polled: T) -> Self {
+        Self::with_period(Duration::ZERO, polled)
     }
 
-    /// Creates a new poller that will periodically poll `polled` with the
-    /// specified period on the current SPDK thread.
+    /// Creates a new poller that will periodically poll `polled` with the specified period on the
+    /// current SPDK thread.
     ///
     /// # Notes
     ///
-    /// The granularity of `period` is microseconds. If the period is zero or
-    /// less than 1μs, the `polled` will be polled as fast as possible.
+    /// The granularity of `period` is microseconds. If the period is zero or less than 1μs, the
+    /// `polled` will be polled as fast as possible.
     ///
     /// # Panics
     ///
-    /// This function panics if the duration cannot be represented as a unsigned
-    /// 64-bit integer.
-    pub fn with_period(polled: &'a mut T, period: Duration) -> Self {
-        let poller = NonNull::new(unsafe {
+    /// This function panics if the duration cannot be represented as a unsigned 64-bit integer.
+    pub fn with_period(period: Duration, polled: T) -> Self {
+        let mut inner = Box::new(PollerInner {
+            poller: null_mut(),
+            polled,
+        });
+
+        inner.poller = unsafe {
             spdk_poller_register(
                 Some(Self::poll),
-                polled as *mut T as *mut _,
+                Box::as_mut(&mut inner) as *mut _ as *mut c_void,
                 period
                     .as_micros()
                     .try_into()
-                    .expect("period in range 0..2^64"),
+                    .expect("period in range 0..2^64 - 1"),
             )
-        })
-        .expect("poller created");
+        };
 
-        Self {
-            poller,
-            polled: PhantomData,
-        }
+        assert!(!inner.poller.is_null());
+
+        Self(inner)
+    }
+
+    /// Creates a new poller initializing a polled object, `T`, in place. The polled object will be
+    /// polled as fast as possible on the current SPDK thread.
+    ///
+    /// `T` is pinned in memory making it safe to pass a reference or pointer to itself to other
+    /// functions.
+    pub fn new_in_place<F>(init_fn: F) -> Self
+    where
+        F: FnOnce(Pin<&mut MaybeUninit<T>>),
+    {
+        Self::with_period_in_place(Duration::ZERO, init_fn)
+    }
+
+    /// Creates a new poller initializing a polled object, `T`, in place. The polled object will be
+    /// polled with the specified period on the current SPDK thread.
+    ///
+    /// `T` is pinned in memory making it safe to pass a reference or pointer to itself to other
+    /// functions.
+    ///
+    /// # Notes
+    ///
+    /// The granularity of `period` is microseconds. If the period is zero or less than 1μs, the
+    /// `polled` will be polled as fast as possible.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the duration cannot be represented as a unsigned 64-bit integer.
+    pub fn with_period_in_place<F>(period: Duration, init_fn: F) -> Self
+    where
+        F: FnOnce(Pin<&mut MaybeUninit<T>>),
+    {
+        let mut inner = Box::new(PollerInner {
+            poller: null_mut(),
+            polled: MaybeUninit::<T>::zeroed(),
+        });
+
+        init_fn(unsafe { Pin::new_unchecked(&mut inner.polled) });
+
+        // SAFETY: The polled object was just initialized by the initialization function.
+        let mut inner: Box<PollerInner<T>> = unsafe { transmute(inner) };
+
+        inner.poller = unsafe {
+            spdk_poller_register(
+                Some(Self::poll),
+                Box::as_mut(&mut inner) as *mut _ as *mut c_void,
+                period
+                    .as_micros()
+                    .try_into()
+                    .expect("period in range 0..2^64 - 1"),
+            )
+        };
+
+        assert!(!inner.poller.is_null());
+
+        Self(inner)
+    }
+
+    /// Returns a reference to the polled type.
+    #[inline]
+    pub fn polled(&self) -> &T {
+        &self.0.polled
+    }
+
+    /// Returns a mutable reference to the polled type.
+    #[inline]
+    pub fn polled_mut(&mut self) -> &mut T {
+        &mut self.0.polled
     }
 
     /// A callback function invoked to poll the `polled` type.
     unsafe extern "C" fn poll(arg: *mut c_void) -> i32 {
-        let polled = unsafe { &mut *(arg as *mut T) };
+        let this = unsafe { &mut *(arg as *mut PollerInner<T>) };
+
+        // SAFETY: The poller inner state is a heap allocation that is guaranteed not to move for
+        // its lifetime. It is safe to pin its `polled` field here.
+        let polled = unsafe { Pin::new_unchecked(&mut this.polled) };
 
         if polled.poll() {
             return SPDK_POLLER_BUSY as i32;
@@ -83,13 +171,13 @@ where
         SPDK_POLLER_IDLE as i32
     }
 
-    /// Pauses the poller. The polled object with not be polled until the poller
-    /// is resumed by a call to the [`resume`] method.
+    /// Pauses the poller. The polled object with not be polled until the poller is resumed by a
+    /// call to the [`resume`] method.
     ///
     /// [`resume`]: method@Poller::resume
     #[inline]
     pub fn pause(&self) {
-        unsafe { spdk_poller_pause(self.poller.as_ptr()) }
+        unsafe { spdk_poller_pause(self.0.poller) }
     }
 
     /// Resumes a poller paused by the [`pause`] method.
@@ -97,107 +185,70 @@ where
     /// [`pause`]: method@Poller::pause
     #[inline]
     pub fn resume(&self) {
-        unsafe { spdk_poller_resume(self.poller.as_ptr()) }
+        unsafe { spdk_poller_resume(self.0.poller) }
     }
 }
 
-impl<'a, T> Drop for Poller<'a, T>
+impl<T> Drop for Poller<T>
 where
     T: Polled,
 {
     fn drop(&mut self) {
-        unsafe { spdk_poller_unregister(&mut self.poller.as_ptr()) }
+        unsafe { spdk_poller_unregister(&mut self.0.poller) }
     }
 }
 
-/// A poller that polls a function.
-pub struct PolledFn<'a, T: FnMut() -> bool> {
-    fun: T,
-    poller: Poller<'a, Self>,
-}
-
-impl<'a, T> PolledFn<'a, T>
+impl<T, U> Future for Poller<T>
 where
-    T: FnMut() -> bool,
+    T: Polled + Future<Output = U>,
 {
-    /// Creates a new poller that will repeatedly poll `fun` as fast as possible
-    /// on the current SPDK thread.
-    #[inline]
-    pub fn new(fun: T) -> Box<Self> {
-        Self::with_period(fun, Duration::ZERO)
-    }
+    type Output = U;
 
-    /// Creates a new poller that will periodically poll `fun` with the
-    /// specified period on the current SPDK thread.
-    ///
-    /// # Notes
-    ///
-    /// The granularity of `period` is microseconds. If the period is zero or
-    /// less than 1μs, the `polled` will be polled as fast as possible.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the duration cannot be represented as a unsigned
-    /// 64-bit integer.
-    pub fn with_period(fun: T, period: Duration) -> Box<Self> {
-        let this = Box::new(MaybeUninit::<Self>::uninit());
-        let this = Box::into_raw(this) as *mut Self;
-
-        unsafe {
-            addr_of_mut!((*this).fun).write(fun);
-            addr_of_mut!((*this).poller).write(Poller::with_period(&mut *this, period));
-
-            Box::from_raw(this)
-        }
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: `polled_mut` returns a mutable reference to a field of `self` and is therefore
+        // safe to pin.
+        Future::poll(unsafe { self.map_unchecked_mut(|p| p.polled_mut()) }, cx)
     }
 }
 
-impl<'a, T> Polled for PolledFn<'a, T>
+/// A Newtype that enables a function to be called by the poller.
+pub struct PolledFn<T>(T)
 where
-    T: FnMut() -> bool,
+    T: FnMut() -> bool + Unpin;
+
+impl<T> Polled for PolledFn<T>
+where
+    T: FnMut() -> bool + Unpin,
 {
     #[inline]
-    fn poll(&mut self) -> bool {
-        (self.fun)()
+    fn poll(self: Pin<&mut Self>) -> bool {
+        (self.get_mut().0)()
     }
 }
 
-impl<'a, T> Deref for PolledFn<'a, T>
+/// Creates a new poller that will repeatedly poll `fun` as fast as possible on the current SPDK
+/// thread.
+pub fn polled_fn<T>(fun: T) -> Poller<PolledFn<T>>
 where
-    T: FnMut() -> bool,
+    T: FnMut() -> bool + Unpin,
 {
-    type Target = Poller<'a, Self>;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.poller
-    }
+    Poller::new(PolledFn(fun))
 }
 
-/// Creates a new poller that will repeatedly poll `fun` as fast as possible on
-/// the current SPDK thread.
-pub fn polled_fn<T>(fun: T) -> Box<PolledFn<'static, T>>
-where
-    T: FnMut() -> bool + 'static,
-{
-    PolledFn::new(fun)
-}
-
-/// Creates a new poller that will periodically poll `fun` with the specified
-/// period on the current SPDK thread.
+/// Creates a new poller that will periodically poll `fun` with the specified period on the current
+/// SPDK thread.
 ///
 /// # Notes
 ///
-/// The granularity of `period` is microseconds. If the period is zero or
-/// less than 1μs, the `polled` will be polled as fast as possible.
+/// The granularity of `period` is microseconds. If the period is zero or less than 1μs, the
+/// `polled` will be polled as fast as possible.
 ///
 /// # Panics
 ///
-/// This function panics if the duration cannot be represented as a unsigned
-/// 64-bit integer.
-pub fn polled_fn_with_period<T>(fun: T, period: Duration) -> Box<PolledFn<'static, T>>
+/// This function panics if the duration cannot be represented as a unsigned 64-bit integer.
+pub fn polled_fn_with_period<T>(period: Duration, fun: T) -> Poller<PolledFn<T>>
 where
-    T: FnMut() -> bool + 'static,
+    T: FnMut() -> bool + Unpin,
 {
-    PolledFn::with_period(fun, period)
+    Poller::with_period(period, PolledFn(fun))
 }
