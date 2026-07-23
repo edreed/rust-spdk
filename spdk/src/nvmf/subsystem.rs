@@ -195,46 +195,50 @@ impl Subsystem {
     ///
     /// This method transitions of the subsystem from the Inactive to Active state.
     pub async fn start(&self) -> Result<(), Errno> {
-        Promise::new(|p| {
-            let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) =
+                    (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok! {
-                unsafe {
-                    spdk_nvmf_subsystem_start(
-                        self.as_ptr(),
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _
-                    )
+                to_poll_pending_on_ok! {
+                    unsafe {
+                        spdk_nvmf_subsystem_start(
+                            self.as_ptr(),
+                            Some(cb_fn),
+                            cb_arg.cast_mut() as *mut _
+                        )
+                    }
+                    => on ready {
+                        unsafe { drop(Promissory::from_raw(cb_arg)) };
+                    }
                 }
-                => on ready {
-                    unsafe { drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+            })
+            .await
     }
 
     /// Stops the subsystem.
     ///
     /// This method transitions of the subsystem from the Active to Inactive state.
     pub async fn stop(&self) -> Result<(), Errno> {
-        Promise::new(|p| {
-            let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) =
+                    (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok! {
-                unsafe {
-                        spdk_nvmf_subsystem_stop(
-                        self.as_ptr(),
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _
-                    )
+                to_poll_pending_on_ok! {
+                    unsafe {
+                            spdk_nvmf_subsystem_stop(
+                            self.as_ptr(),
+                            Some(cb_fn),
+                            cb_arg.cast_mut() as *mut _
+                        )
+                    }
+                    => on ready {
+                        unsafe { drop(Promissory::from_raw(cb_arg)) };
+                    }
                 }
-                => on ready {
-                    unsafe { drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+            })
+            .await
     }
 
     /// Pauses the subsystem.
@@ -247,47 +251,51 @@ impl Subsystem {
     /// subsystem is resumed. A namespace identifier of 0 indicates that no
     /// namespace is paused while `SPDK_NVME_GLOBAL_NS_TAG` pauses all namespaces.
     pub async fn pause(&self, ns: u32) -> Result<(), Errno> {
-        Promise::new(|p| {
-            let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) =
+                    (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok! {
-                unsafe {
-                    spdk_nvmf_subsystem_pause(
-                        self.as_ptr(),
-                        ns,
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _
-                    )
+                to_poll_pending_on_ok! {
+                    unsafe {
+                        spdk_nvmf_subsystem_pause(
+                            self.as_ptr(),
+                            ns,
+                            Some(cb_fn),
+                            cb_arg.cast_mut() as *mut _
+                        )
+                    }
+                    => on ready {
+                        unsafe { drop(Promissory::from_raw(cb_arg)) };
+                    }
                 }
-                => on ready {
-                    unsafe { drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+            })
+            .await
     }
 
     /// Resumes the subsystem.
     ///
     /// This method transitions of the subsystem from the Inactive to Paused state.
     pub async fn resume(&self) -> Result<(), Errno> {
-        Promise::new(|p| {
-            let (cb_fn, cb_arg) = (Self::complete_state_change, Promissory::into_raw(p.clone()));
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) =
+                    (Self::complete_state_change, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok! {
-                unsafe {
-                    spdk_nvmf_subsystem_resume(
-                        self.as_ptr(),
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _
-                    )
+                to_poll_pending_on_ok! {
+                    unsafe {
+                        spdk_nvmf_subsystem_resume(
+                            self.as_ptr(),
+                            Some(cb_fn),
+                            cb_arg.cast_mut() as *mut _
+                        )
+                    }
+                    => on ready {
+                        unsafe { drop(Promissory::from_raw(cb_arg)) };
+                    }
                 }
-                => on ready {
-                    unsafe { drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+            })
+            .await
     }
 
     /// Adds the given block device as a namespace on the subsystem.
@@ -332,21 +340,22 @@ impl Subsystem {
     /// The subsystem must be in the Paused or Inactive states to add a
     /// listener.
     pub async fn add_listener(&self, transport_id: &TransportId) -> Result<(), Errno> {
-        Promise::new(|p| {
-            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
-            unsafe {
-                spdk_nvmf_subsystem_add_listener(
-                    self.as_ptr(),
-                    transport_id.as_ptr() as *mut _,
-                    Some(cb_fn),
-                    cb_arg.cast_mut() as *mut _,
-                );
-            }
+                unsafe {
+                    spdk_nvmf_subsystem_add_listener(
+                        self.as_ptr(),
+                        transport_id.as_ptr() as *mut _,
+                        Some(cb_fn),
+                        cb_arg.cast_mut() as *mut _,
+                    );
+                }
 
-            Poll::Pending
-        })
-        .await
+                Poll::Pending
+            })
+            .await
     }
 
     /// Removes a listener on the specified transport from the subsystem.

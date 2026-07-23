@@ -196,22 +196,23 @@ impl Target {
     pub async fn destroy(mut self) -> Result<(), Errno> {
         match self.0 {
             OwnershipState::Owned(_) => {
-                Promise::new(move |p| {
-                    let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+                Promise::new()
+                    .request(move |p| {
+                        let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
-                    unsafe {
-                        spdk_nvmf_tgt_destroy(
-                            self.as_ptr(),
-                            Some(cb_fn),
-                            cb_arg.cast_mut() as *mut _,
-                        );
-                    }
+                        unsafe {
+                            spdk_nvmf_tgt_destroy(
+                                self.as_ptr(),
+                                Some(cb_fn),
+                                cb_arg.cast_mut() as *mut _,
+                            );
+                        }
 
-                    mem::forget(self.take());
+                        mem::forget(self.take());
 
-                    Poll::Pending
-                })
-                .await
+                        Poll::Pending
+                    })
+                    .await
             }
             OwnershipState::Borrowed(_) => Err(EPERM),
             OwnershipState::None => Err(EBADF),
@@ -220,21 +221,22 @@ impl Target {
 
     /// Adds a transport to the target.
     pub async fn add_transport(&mut self, transport: Transport) -> Result<(), Errno> {
-        let res = Promise::new(|p| {
-            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+        let res = Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
-            unsafe {
-                spdk_nvmf_tgt_add_transport(
-                    self.as_ptr(),
-                    transport.as_ptr(),
-                    Some(cb_fn),
-                    cb_arg.cast_mut() as *mut _,
-                );
-            }
+                unsafe {
+                    spdk_nvmf_tgt_add_transport(
+                        self.as_ptr(),
+                        transport.as_ptr(),
+                        Some(cb_fn),
+                        cb_arg.cast_mut() as *mut _,
+                    );
+                }
 
-            Poll::Pending
-        })
-        .await;
+                Poll::Pending
+            })
+            .await;
 
         match res {
             Ok(()) => {
@@ -298,24 +300,25 @@ impl Target {
 
     /// Removes a subsystem from the target.
     pub async fn remove_subsystem(&mut self, subsys: Subsystem) -> Result<(), Errno> {
-        Promise::new(|p| {
-            let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
 
-            to_poll_pending_on_err! {
-                EINPROGRESS,
-                unsafe {
-                    spdk_nvmf_subsystem_destroy(
-                        subsys.as_ptr(),
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _,
-                    )
+                to_poll_pending_on_err! {
+                    EINPROGRESS,
+                    unsafe {
+                        spdk_nvmf_subsystem_destroy(
+                            subsys.as_ptr(),
+                            Some(cb_fn),
+                            cb_arg.cast_mut() as *mut _,
+                        )
+                    }
+                    => on ready {
+                        unsafe { drop(Promissory::from_raw(cb_arg)) };
+                    }
                 }
-                => on ready {
-                    unsafe { drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+            })
+            .await
     }
 
     /// Returns an iterator over the subsystems on this target.

@@ -90,27 +90,28 @@ pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}
 
-#[async_trait]
+#[async_trait(?Send)]
 impl OwnedOps for Malloc {
     fn as_ptr(&self) -> *mut spdk_bdev {
         self.0.as_ptr()
     }
 
     async fn destroy(self) -> Result<(), Errno> {
-        Promise::new(move |p| {
-            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+        Promise::new()
+            .request(move |p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
-            unsafe {
-                delete_malloc_disk(
-                    spdk_bdev_get_name(self.as_ptr()),
-                    Some(cb_fn),
-                    cb_arg.cast_mut() as *mut _,
-                );
-            }
+                unsafe {
+                    delete_malloc_disk(
+                        spdk_bdev_get_name(self.as_ptr()),
+                        Some(cb_fn),
+                        cb_arg.cast_mut() as *mut _,
+                    );
+                }
 
-            Poll::Pending
-        })
-        .await
+                Poll::Pending
+            })
+            .await
     }
 }
 

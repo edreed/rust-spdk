@@ -10,7 +10,7 @@ pub struct Any;
 
 unsafe impl Send for Any {}
 
-#[async_trait]
+#[async_trait(?Send)]
 impl OwnedOps for Any {
     fn as_ptr(&self) -> *mut spdk_bdev {
         unreachable!("Any::as_ptr() should never be called")
