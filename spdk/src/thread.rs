@@ -345,7 +345,7 @@ impl Drop for Thread {
             // `spdk_thread` object until the sent message calls `spdk_thread_exit`.
             let mut t = self.borrow();
 
-            // SAFTEY: The `spdk_thread_exit` function must be called from a
+            // SAFETY: The `spdk_thread_exit` function must be called from a
             // poller or thread message. We dispatch the call via thread message
             // to ensure this invariant is satisfied.
             self.send_msg(move || unsafe { _ = spdk_thread_exit(t.as_mut_ptr()) })
@@ -387,8 +387,8 @@ where
 /// associated with other threads, otherwise a deadlock will occur.
 pub fn block_on<F, T>(fut: F) -> T
 where
-    F: Future<Output = T> + Send + 'static,
-    T: Send + 'static,
+    F: Future<Output = T> + 'static,
+    T: 'static,
 {
     let current_thread = Thread::current();
     let mut join_handle = task::spawn_on_current_thread(fut);

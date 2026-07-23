@@ -1,10 +1,10 @@
 use std::{
     fmt::{self, Debug, Formatter},
     io::{IoSlice, IoSliceMut},
-    mem::zeroed,
+    mem,
     os::raw::c_void,
     ptr::{addr_of, addr_of_mut, NonNull},
-    rc::Rc,
+    rc::{Rc, Weak},
     task::Poll,
 };
 
@@ -28,6 +28,31 @@ use crate::{
 };
 
 use super::{Any, Descriptor, Device};
+
+/// A wrapper around [`spdk_bdev_io_wait_entry`] that manages ownership of a weak pointer to the
+/// [`Promissory`] instance awaiting availability of an [`spdk_bdev_io`] structure.
+struct IoWait(spdk_bdev_io_wait_entry);
+
+impl IoWait {
+    /// Creates a new instance of an `IoWait` structure.
+    fn new(p: &Weak<Promissory<(), IoWait>>, channel: &IoChannel) -> Self {
+        let mut wait: spdk_bdev_io_wait_entry = unsafe { mem::zeroed() };
+
+        wait.bdev = channel.bdev();
+        wait.cb_fn = Some(IoChannel::wait_io_complete);
+        wait.cb_arg = p.clone().into_raw() as *mut _;
+
+        Self(wait)
+    }
+}
+
+impl Drop for IoWait {
+    fn drop(&mut self) {
+        drop(unsafe {
+            Rc::from_raw(self.0.cb_arg as *const Promissory<(), spdk_bdev_io_wait_entry>)
+        });
+    }
+}
 
 /// A handle to a block device I/O channel.
 pub struct IoChannel {
@@ -79,15 +104,15 @@ impl IoChannel {
         self.channel.as_ptr()
     }
 
-    /// A callback invoked when a block device I/O operation completes.
-    unsafe extern "C" fn io_complete(io: *mut spdk_bdev_io, success: bool, cx: *mut c_void) {
-        unsafe {
-            spdk_bdev_free_io(io);
-        }
+    /// A callback invoked when an [`spdk_bdev_io`] structure is available to satisfy the request
+    /// queued by [`spdk_bdev_queue_io_wait`].
+    unsafe extern "C" fn wait_io_complete(ctx: *mut c_void) {
+        let w = Weak::from_raw(ctx as *const _ as *const Promissory<(), IoWait>);
 
-        let p = Promissory::<()>::from_raw(cx.cast());
-
-        Promissory::set_result(p, if_else!(success, Ok(()), Err(EIO)));
+        Promissory::set_result(
+            w.upgrade().expect("promissory has strong references"),
+            Ok(()),
+        );
     }
 
     /// Waits for an I/O to become available.
@@ -102,38 +127,32 @@ impl IoChannel {
     /// This function returns `Err(EINVAL)` if the I/O channel an I/O buffer is
     /// available on the current thread..
     async fn wait_io_available(&self) -> Result<(), Errno> {
-        Promise::with_context(unsafe { zeroed::<spdk_bdev_io_wait_entry>() }, |p| {
-            // SAFETY: The caller guarantees that there are no other
-            // references to the `Promissory` instance, so we can safely get
-            // a mutable reference to the user context. We convert the
-            // mutable reference to a pointer so we can get the callback and
-            // context from the `Rc<Promissory>` instance to store in the
-            // context.
-            let wait = addr_of_mut!(*Promissory::user_context_mut(p).expect("sole reference"));
-            let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
+        Promise::with_context_cyclic(|w| IoWait::new(w, self))
+            .request(|p| {
+                let wait: &IoWait = Promissory::user_context(p);
 
-            // SAFETY: The memory referenced by `wait` has been zeroed, so
-            // overwriting its field is safe.
-            unsafe {
-                addr_of_mut!((*wait).bdev).write(self.bdev());
-                addr_of_mut!((*wait).cb_fn).write(Some(cb_fn));
-                addr_of_mut!((*wait).cb_arg).write(cb_arg.cast_mut() as *mut _);
-            }
+                to_poll_pending_on_ok! {
+                    unsafe {
+                        spdk_bdev_queue_io_wait(
+                            self.bdev(),
+                            self.channel.as_ptr(),
+                            &wait.0 as *const _ as *mut _
+                        )
+                    }
+                }
+            })
+            .await
+    }
 
-            to_poll_pending_on_ok! {
-                unsafe {
-                    spdk_bdev_queue_io_wait(
-                        self.bdev(),
-                        self.channel.as_ptr(),
-                        wait
-                    )
-                }
-                => on ready {
-                    unsafe { drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+    /// A callback invoked when a block device I/O operation completes.
+    unsafe extern "C" fn io_complete(io: *mut spdk_bdev_io, success: bool, cx: *mut c_void) {
+        unsafe {
+            spdk_bdev_free_io(io);
+        }
+
+        let p = Promissory::<()>::from_raw(cx.cast());
+
+        Promissory::set_result(p, if_else!(success, Ok(()), Err(EIO)));
     }
 
     /// Executes an I/O operation, queuing the I/O for later execution if there
@@ -143,7 +162,7 @@ impl IoChannel {
         F: FnMut(&mut Rc<Promissory<()>>) -> Poll<Result<(), Errno>>,
     {
         loop {
-            match Promise::new(|p| (start_fn)(p)).await {
+            match Promise::new().request(|p| (start_fn)(p)).await {
                 Ok(()) => return Ok(()),
                 Err(e) if e != ENOMEM => return Err(e),
                 Err(_) => self.wait_io_available().await?,

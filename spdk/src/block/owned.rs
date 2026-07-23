@@ -7,7 +7,7 @@ use spdk_sys::spdk_bdev;
 use crate::{block::Device, errors::Errno};
 
 /// A trait for owned block devices.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait OwnedOps: From<Owned> + Send + 'static {
     /// Returns a pointer to the underlying `spdk_bdev` structure.
     fn as_ptr(&self) -> *mut spdk_bdev;
@@ -16,10 +16,10 @@ pub trait OwnedOps: From<Owned> + Send + 'static {
     async fn destroy(self) -> Result<(), Errno>;
 }
 
-type DestroyFn = fn(Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>> + Send>>;
+type DestroyFn = fn(Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>>>>;
 
 /// Destroys the type-erased device managed by the specified [`Owned`] instance.
-fn destroy_device<T>(owned: Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>> + Send>>
+fn destroy_device<T>(owned: Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>>>>
 where
     T: OwnedOps,
 {
@@ -66,7 +66,7 @@ impl Owned {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl OwnedOps for Owned {
     fn as_ptr(&self) -> *mut spdk_bdev {
         self.bdev.as_ptr()

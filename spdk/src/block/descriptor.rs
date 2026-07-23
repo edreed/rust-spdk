@@ -40,27 +40,28 @@ impl Descriptor {
 
     /// Open a block device by its name.
     pub async fn open(name: &CStr, write: bool) -> Result<Descriptor, Errno> {
-        Promise::new(|p| {
-            let (cb_fn, cb_arg) = (Self::open_complete, Promissory::into_raw(p.clone()));
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) = (Self::open_complete, Promissory::into_raw(p.clone()));
 
-            to_poll_pending_on_ok! {
-                unsafe {
-                    spdk_bdev_open_async(
-                        name.as_ptr(),
-                        write,
-                        Some(Self::handle_event),
-                        null_mut(),
-                        null_mut(),
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _,
-                    )
+                to_poll_pending_on_ok! {
+                    unsafe {
+                        spdk_bdev_open_async(
+                            name.as_ptr(),
+                            write,
+                            Some(Self::handle_event),
+                            null_mut(),
+                            null_mut(),
+                            Some(cb_fn),
+                            cb_arg.cast_mut() as *mut _,
+                        )
+                    }
+                    => on ready {
+                        unsafe {drop(Promissory::from_raw(cb_arg)) };
+                    }
                 }
-                => on ready {
-                    unsafe {drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+            })
+            .await
     }
 
     /// Returns a pointer to the underlying `spdk_bdev_desc` struct.

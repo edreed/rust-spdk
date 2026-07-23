@@ -352,14 +352,17 @@ where
     /// Any buffers allocated by this method will automatically be freed on
     /// completion of this I/O request.
     pub async fn allocate_buffers(&mut self, length: u64) -> Result<(), Errno> {
-        Promise::new(move |p| {
-            self.internal_ctx_mut().buf_promissory.replace(p.clone());
+        Promise::new()
+            .request(move |p| {
+                self.internal_ctx_mut().buf_promissory.replace(p.clone());
 
-            unsafe { spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length) };
+                unsafe {
+                    spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length)
+                };
 
-            Poll::Pending
-        })
-        .await
+                Poll::Pending
+            })
+            .await
     }
 
     /// Completes the I/O request with the specified status.
@@ -497,16 +500,17 @@ where
     pub async fn unregister(self: Box<Self>) -> Result<(), Errno> {
         let bdev_ptr = self.into_bdev_ptr();
 
-        Promise::new(move |p| {
-            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+        Promise::new()
+            .request(move |p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
-            unsafe {
-                spdk_bdev_unregister(bdev_ptr, Some(cb_fn), cb_arg.cast_mut() as *mut _);
-            }
+                unsafe {
+                    spdk_bdev_unregister(bdev_ptr, Some(cb_fn), cb_arg.cast_mut() as *mut _);
+                }
 
-            Poll::Pending
-        })
-        .await
+                Poll::Pending
+            })
+            .await
     }
 
     /// Consumes the boxed instance and returns a [`Device<Owned>`] instance
@@ -658,7 +662,7 @@ impl<T: BDevOps> OwnedImpl<T> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
     fn as_ptr(&self) -> *mut spdk_bdev {
         addr_of!(self.0.bdev) as *mut _
@@ -670,16 +674,17 @@ impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
         // avoid dropping the box here to prevent double-free.
         let bdev = ManuallyDrop::new(self);
 
-        Promise::new(move |p| {
-            let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+        Promise::new()
+            .request(move |p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
-            unsafe {
-                spdk_bdev_unregister(bdev.as_ptr(), Some(cb_fn), cb_arg.cast_mut() as *mut _);
-            }
+                unsafe {
+                    spdk_bdev_unregister(bdev.as_ptr(), Some(cb_fn), cb_arg.cast_mut() as *mut _);
+                }
 
-            Poll::Pending
-        })
-        .await
+                Poll::Pending
+            })
+            .await
     }
 }
 
