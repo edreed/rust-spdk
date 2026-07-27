@@ -2,7 +2,7 @@
 name = "spdk-sys"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.83.0"
+rust-version = "1.93.0"
 links = "spdk"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,6 +23,7 @@ bdev = []
 bdev-malloc = ["bdev"]
 bdev-module = ["bdev"]
 json = []
+net = []
 nvmf = ["bdev"]
 
 [dependencies]

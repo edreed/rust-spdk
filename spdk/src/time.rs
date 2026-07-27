@@ -65,6 +65,7 @@ use std::{
 use crate::task::{Polled, Poller};
 
 /// Encapsulates the execution state of an [`Interval`].
+#[derive(Debug)]
 struct IntervalInner {
     ticker: u32,
     waker: Option<Waker>,

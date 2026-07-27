@@ -1,3 +1,3 @@
 [workspace]
-members = ["spdk", "spdk-macros", "spdk-sys"]
+members = ["libanl","spdk", "spdk-macros", "spdk-sys"]
 resolver = "2"

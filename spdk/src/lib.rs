@@ -9,6 +9,8 @@ pub mod dma;
 pub mod errors;
 pub mod json;
 pub mod macros;
+#[cfg(feature = "net")]
+pub mod net;
 pub mod nvme;
 pub mod nvmf;
 pub mod runtime;

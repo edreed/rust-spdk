@@ -2,13 +2,13 @@
 use std::{
     cell::{RefCell, UnsafeCell},
     fmt::Debug,
+    future::Future,
     mem::{self, transmute, MaybeUninit},
     pin::Pin,
     rc::{Rc, Weak},
     task::{Context, Poll, Waker},
 };
 
-use futures::Future;
 use libc::c_void;
 
 use crate::{

@@ -1,5 +1,6 @@
 use std::{
     ffi::c_void,
+    fmt::{self, Debug},
     future::Future,
     mem::{transmute, MaybeUninit},
     pin::Pin,
@@ -21,11 +22,12 @@ pub trait Polled {
     fn poll(self: Pin<&mut Self>) -> bool;
 }
 
-/// A poller that can be registered with the SPDK event framework to poll a type implemented the
-/// [`Polled`] trait.
+/// The internal state of a poller registered with the SPDK Event Framework to poll a type
+/// implementing the [`Polled`] trait.
+#[derive(Debug)]
 struct PollerInner<T>
 where
-    T: Polled,
+    T: Polled + Debug + Debug,
 {
     poller: *mut spdk_poller,
     polled: T,
@@ -33,20 +35,23 @@ where
 
 impl<T> Polled for MaybeUninit<T>
 where
-    T: Polled,
+    T: Polled + Debug,
 {
     fn poll(self: Pin<&mut Self>) -> bool {
         unreachable!("poll called on uninitialized data")
     }
 }
 
+/// A poller that can be registered with the SPDK Event Framework to poll a type implementing the
+/// [`Polled`] trait.
+#[derive(Debug)]
 pub struct Poller<T>(Box<PollerInner<T>>)
 where
-    T: Polled;
+    T: Polled + Debug;
 
 impl<T> Poller<T>
 where
-    T: Polled,
+    T: Polled + Debug + Unpin,
 {
     /// Creates a new poller that will repeatedly poll `polled` as fast as possible on the current
     /// SPDK thread.
@@ -87,7 +92,12 @@ where
 
         Self(inner)
     }
+}
 
+impl<T> Poller<T>
+where
+    T: Polled + Debug,
+{
     /// Creates a new poller initializing a polled object, `T`, in place. The polled object will be
     /// polled as fast as possible on the current SPDK thread.
     ///
@@ -191,7 +201,7 @@ where
 
 impl<T> Drop for Poller<T>
 where
-    T: Polled,
+    T: Polled + Debug,
 {
     fn drop(&mut self) {
         unsafe { spdk_poller_unregister(&mut self.0.poller) }
@@ -200,7 +210,7 @@ where
 
 impl<T, U> Future for Poller<T>
 where
-    T: Polled + Future<Output = U>,
+    T: Polled + Debug + Future<Output = U>,
 {
     type Output = U;
 
@@ -223,6 +233,17 @@ where
     #[inline]
     fn poll(self: Pin<&mut Self>) -> bool {
         (self.get_mut().0)()
+    }
+}
+
+impl<T> Debug for PolledFn<T>
+where
+    T: FnMut() -> bool + Unpin,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("PolledFn")
+            .field(&fmt::from_fn(|f| f.write_str("_")))
+            .finish()
     }
 }
 

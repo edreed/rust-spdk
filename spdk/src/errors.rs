@@ -2,7 +2,7 @@
 use std::{
     error::Error,
     ffi::CStr,
-    fmt::{Debug, Display},
+    fmt::{self, Debug, Display},
     io::ErrorKind,
 };
 
@@ -40,7 +40,11 @@ impl Display for Errno {
 
 impl Debug for Errno {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Errno").field(&self.0).finish()
+        f.debug_tuple("Errno")
+            .field(&fmt::from_fn(|f| {
+                write!(f, "code: {}, description: \"{}\"", self.0, self)
+            }))
+            .finish()
     }
 }
 
@@ -183,6 +187,27 @@ define_errno! {
 impl From<i32> for Errno {
     fn from(i: i32) -> Self {
         Self(i)
+    }
+}
+
+#[cfg(feature = "net")]
+impl From<libanl::Error> for Errno {
+    fn from(e: libanl::Error) -> Self {
+        match e {
+            libanl::EAI_BADFLAGS => EINVAL,
+            libanl::EAI_NONAME => ENOENT,
+            libanl::EAI_AGAIN => EAGAIN,
+            libanl::EAI_FAIL => EIO,
+            libanl::EAI_NODATA => ENODATA,
+            libanl::EAI_FAMILY => EAFNOSUPPORT,
+            libanl::EAI_SOCKTYPE => EPROTOTYPE,
+            libanl::EAI_SERVICE => ESOCKTNOSUPPORT,
+            libanl::EAI_ADDRFAMILY => EAFNOSUPPORT,
+            libanl::EAI_MEMORY => ENOMEM,
+            libanl::EAI_SYSTEM => errno(),
+            libanl::EAI_INPROGRESS => EINPROGRESS,
+            _ => EINVAL,
+        }
     }
 }
 
