@@ -1,9 +1,9 @@
 use std::{
     ffi::{CStr, CString},
     fmt::Display,
-    future::{ready, Future},
+    future::{Future, ready},
     marker::PhantomPinned,
-    mem::{self, replace, MaybeUninit},
+    mem::{self, MaybeUninit, replace},
     option::{self},
     pin::Pin,
     ptr::{self, addr_of},
@@ -12,12 +12,12 @@ use std::{
 };
 
 use lazy_regex::{regex_captures, regex_is_match};
-use libanl::{self, eai_to_result, gai_error, gaicb, getaddrinfo_a, EAI_INPROGRESS, GAI_NOWAIT};
-use libc::{addrinfo, getnameinfo, AF_INET, AF_INET6, NI_NUMERICHOST, NI_NUMERICSERV};
+use libanl::{self, EAI_INPROGRESS, GAI_NOWAIT, eai_to_result, gai_error, gaicb, getaddrinfo_a};
+use libc::{AF_INET, AF_INET6, NI_NUMERICHOST, NI_NUMERICSERV, addrinfo, getnameinfo};
 use ternary_rs::if_else;
 
 use crate::{
-    errors::{Errno, EINVAL},
+    errors::{EINVAL, Errno},
     task::{Polled, Poller},
 };
 
@@ -105,18 +105,21 @@ impl SocketAddr {
     ///
     /// [`addrinfo`]: https://www.man7.org/linux/man-pages/man3/getaddrinfo.3.html
     unsafe fn from_raw(addr: *mut addrinfo) -> Self {
+        let addr = unsafe { &*addr };
         let mut host = [0u8; 1025];
         let mut serv = [0u8; 32];
 
-        eai_to_result!(getnameinfo(
-            (*addr).ai_addr,
-            (*addr).ai_addrlen,
-            host.as_mut_ptr().cast(),
-            1025,
-            serv.as_mut_ptr().cast(),
-            32,
-            NI_NUMERICHOST | NI_NUMERICSERV,
-        ))
+        eai_to_result!(unsafe {
+            getnameinfo(
+                addr.ai_addr,
+                addr.ai_addrlen,
+                host.as_mut_ptr().cast(),
+                1025,
+                serv.as_mut_ptr().cast(),
+                32,
+                NI_NUMERICHOST | NI_NUMERICSERV,
+            )
+        })
         .expect("valid IP address");
 
         let host = CStr::from_bytes_until_nul(&host)
@@ -128,7 +131,7 @@ impl SocketAddr {
             .parse()
             .expect("valid numeric port");
 
-        match (*addr).ai_family {
+        match addr.ai_family {
             AF_INET => SocketAddr::V4(SocketAddrV4::new(host, serv)),
             AF_INET6 => SocketAddr::V6(SocketAddrV6::new(host, serv)),
             _ => unreachable!(),

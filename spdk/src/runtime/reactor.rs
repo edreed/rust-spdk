@@ -1,19 +1,19 @@
 use std::{ffi::CString, iter::Map, os::raw::c_void, ptr::null_mut};
 
 use futures::{
-    channel::oneshot::{self, Sender},
     Future,
+    channel::oneshot::{self, Sender},
 };
 
 use spdk_sys::{spdk_event_allocate, spdk_event_call};
 
 use crate::{
-    errors::{Errno, ENOMEM},
+    errors::{ENOMEM, Errno},
     task::{self, Executor, JoinHandle},
     thread::Thread,
 };
 
-use super::{cpu_cores, CpuCore, CpuCores, CpuSet};
+use super::{CpuCore, CpuCores, CpuSet, cpu_cores};
 
 /// Represents an event loop running in a OS thread bound to a dedicated CPU
 /// core that drives execution of asynchronous tasks.
@@ -112,7 +112,7 @@ impl Reactor {
             arg1: *mut c_void,
             _arg2: *mut c_void,
         ) {
-            let f = Box::from_raw(arg1.cast::<F>());
+            let f = unsafe { Box::from_raw(arg1.cast::<F>()) };
 
             f();
         }

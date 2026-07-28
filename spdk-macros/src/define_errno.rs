@@ -2,11 +2,11 @@ use std::ffi::CStr;
 
 use quote::{quote, quote_spanned};
 use syn::{
+    Expr, ExprAssign, Token,
     parse::Parse,
     parse_macro_input,
     punctuated::{IntoIter, Punctuated},
     spanned::Spanned,
-    Expr, ExprAssign, Token,
 };
 
 struct ErrnoList(Punctuated<ExprAssign, Token![,]>);
@@ -64,7 +64,7 @@ impl DefineErrno {
                         return Err(
                             syn::Error::new(e.right.span(), "expected a numeric literal")
                                 .to_compile_error(),
-                        )
+                        );
                     }
                 };
 

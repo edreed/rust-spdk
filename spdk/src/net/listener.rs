@@ -9,7 +9,7 @@ use futures::{Stream, StreamExt};
 use spdk_sys::{spdk_sock, spdk_sock_accept, spdk_sock_close, spdk_sock_listen};
 
 use crate::{
-    errors::{self, errno, Errno, EAGAIN, EBADF, EINVAL},
+    errors::{self, EAGAIN, EBADF, EINVAL, Errno, errno},
     task::{Polled, Poller},
     to_result,
 };

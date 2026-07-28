@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, spanned::Spanned, ItemFn, Meta};
+use syn::{ItemFn, Meta, parse_macro_input, spanned::Spanned};
 
 /// Generates the `main` function for an application using the SPDK Application
 /// Framework.

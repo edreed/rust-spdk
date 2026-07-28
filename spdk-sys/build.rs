@@ -77,14 +77,16 @@ fn main() {
 
     let old_pkg_config_path = env::var("PKG_CONFIG_PATH").unwrap_or("".into());
 
-    env::set_var(
-        "PKG_CONFIG_PATH",
-        format!(
-            "{}:{}",
-            old_pkg_config_path,
-            spdk_pkgconfig_dir.to_str().unwrap()
-        ),
-    );
+    unsafe {
+        env::set_var(
+            "PKG_CONFIG_PATH",
+            format!(
+                "{}:{}",
+                old_pkg_config_path,
+                spdk_pkgconfig_dir.to_str().unwrap()
+            ),
+        )
+    };
 
     let mut pkg_config = pkg_config::Config::new();
     pkg_config

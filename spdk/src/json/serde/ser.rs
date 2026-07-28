@@ -4,14 +4,14 @@ use std::{
     ptr::NonNull,
 };
 
-use serde::{ser, Serialize};
+use serde::{Serialize, ser};
 use spdk_sys::{
     spdk_json_write_array_begin, spdk_json_write_array_end, spdk_json_write_begin,
     spdk_json_write_bool, spdk_json_write_bytearray, spdk_json_write_ctx, spdk_json_write_double,
     spdk_json_write_end, spdk_json_write_int32, spdk_json_write_int64, spdk_json_write_name_raw,
     spdk_json_write_null, spdk_json_write_object_begin, spdk_json_write_object_end,
-    spdk_json_write_string_raw, spdk_json_write_uint16, spdk_json_write_uint32,
-    spdk_json_write_uint64, spdk_json_write_uint8,
+    spdk_json_write_string_raw, spdk_json_write_uint8, spdk_json_write_uint16,
+    spdk_json_write_uint32, spdk_json_write_uint64,
 };
 
 use crate::to_write_result;
@@ -273,11 +273,13 @@ impl SerializerInner {
 
     /// A callback function invoked to write data to the buffer.
     unsafe extern "C" fn write_buffer(ctx: *mut c_void, data: *const c_void, size: usize) -> c_int {
-        let inner = &mut *(ctx as *mut SerializerInner);
-        let slice = std::slice::from_raw_parts(data as *const u8, size);
-        let s = std::str::from_utf8_unchecked(slice);
-        inner.buffer.push_str(s);
-        0
+        unsafe {
+            let inner = &mut *(ctx as *mut SerializerInner);
+            let slice = std::slice::from_raw_parts(data as *const u8, size);
+            let s = std::str::from_utf8_unchecked(slice);
+            inner.buffer.push_str(s);
+            0
+        }
     }
 }
 
@@ -327,9 +329,11 @@ impl Serializer {
     /// the returned instance.
     #[allow(dead_code)]
     pub(crate) unsafe fn from_ptr(writer: *mut spdk_json_write_ctx) -> Self {
-        let writer = OwnershipState::Borrowed(NonNull::new_unchecked(writer));
+        unsafe {
+            let writer = OwnershipState::Borrowed(NonNull::new_unchecked(writer));
 
-        Self { writer }
+            Self { writer }
+        }
     }
 
     /// Begins writing an object.
@@ -748,7 +752,7 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use laboratory::{describe, expect, LabResult, NullState};
+    use laboratory::{LabResult, NullState, describe, expect};
 
     use crate::json::serde::test::{
         TestEnum, TestNewTypeStruct, TestStruct, TestTupleStruct, TestUnitStruct,

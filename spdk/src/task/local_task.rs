@@ -72,7 +72,7 @@ pub(crate) trait RcTask: TaskBase {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_clone<W: RcTask>(data: *const ()) -> RawWaker {
-    Rc::<W>::increment_strong_count(data.cast());
+    unsafe { Rc::<W>::increment_strong_count(data.cast()) };
 
     RawWaker::new(data, waker_vtable::<W>())
 }
@@ -82,7 +82,7 @@ unsafe fn waker_clone<W: RcTask>(data: *const ()) -> RawWaker {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_wake<W: RcTask>(data: *const ()) {
-    let rc_task = Rc::<W>::from_raw(data.cast());
+    let rc_task = unsafe { Rc::<W>::from_raw(data.cast()) };
 
     RcTask::schedule(rc_task);
 }
@@ -92,7 +92,7 @@ unsafe fn waker_wake<W: RcTask>(data: *const ()) {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_wake_by_ref<W: RcTask>(data: *const ()) {
-    let rc_task = ManuallyDrop::new(Rc::<W>::from_raw(data.cast()));
+    let rc_task = unsafe { ManuallyDrop::new(Rc::<W>::from_raw(data.cast())) };
 
     RcTask::schedule_by_ref(&rc_task);
 }
@@ -102,7 +102,7 @@ unsafe fn waker_wake_by_ref<W: RcTask>(data: *const ()) {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_drop<W: RcTask>(data: *const ()) {
-    drop(Rc::<W>::from_raw(data.cast()));
+    drop(unsafe { Rc::<W>::from_raw(data.cast()) });
 }
 
 /// Gets the [`RawWakerVTable`] used by a [`RawWaker`] to awaken a task.
@@ -135,14 +135,14 @@ unsafe fn join_handle_poll_result<J: RcTask>(
     data: *const (),
     cx: &mut Context<'_>,
 ) -> Poll<J::Output> {
-    let rc_task = ManuallyDrop::new(Rc::<J>::from_raw(data.cast()));
+    let rc_task = unsafe { ManuallyDrop::new(Rc::<J>::from_raw(data.cast())) };
 
     RcTask::poll_result(&rc_task, cx)
 }
 
 /// Drops the task referenced by the given pointer, releasing its resources.
 unsafe fn join_handle_drop<J: RcTask>(data: *mut ()) {
-    drop(Rc::<J>::from_raw(data.cast()));
+    drop(unsafe { Rc::<J>::from_raw(data.cast()) });
 }
 
 /// Gets the [`RawJoinHandleVTable`] used by a [`JoinHandle`] to poll a task.

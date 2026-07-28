@@ -1,24 +1,24 @@
 use std::{
     ffi::CStr,
     fmt::{Debug, Display},
-    mem::{self, size_of_val, MaybeUninit},
+    mem::{self, MaybeUninit, size_of_val},
     ptr::NonNull,
     time::Duration,
 };
 
 use spdk_sys::{
+    SPDK_NVME_TRANSPORT_CUSTOM, SPDK_NVME_TRANSPORT_FC, SPDK_NVME_TRANSPORT_NAME_CUSTOM,
+    SPDK_NVME_TRANSPORT_NAME_FC, SPDK_NVME_TRANSPORT_NAME_PCIE, SPDK_NVME_TRANSPORT_NAME_RDMA,
+    SPDK_NVME_TRANSPORT_NAME_TCP, SPDK_NVME_TRANSPORT_NAME_VFIOUSER, SPDK_NVME_TRANSPORT_PCIE,
+    SPDK_NVME_TRANSPORT_RDMA, SPDK_NVME_TRANSPORT_TCP, SPDK_NVME_TRANSPORT_VFIOUSER,
     spdk_nvme_transport_type, spdk_nvmf_get_transport_name, spdk_nvmf_get_transport_type,
     spdk_nvmf_transport, spdk_nvmf_transport_create_async, spdk_nvmf_transport_destroy,
     spdk_nvmf_transport_get_first, spdk_nvmf_transport_get_next, spdk_nvmf_transport_opts,
-    spdk_nvmf_transport_opts_init, SPDK_NVME_TRANSPORT_CUSTOM, SPDK_NVME_TRANSPORT_FC,
-    SPDK_NVME_TRANSPORT_NAME_CUSTOM, SPDK_NVME_TRANSPORT_NAME_FC, SPDK_NVME_TRANSPORT_NAME_PCIE,
-    SPDK_NVME_TRANSPORT_NAME_RDMA, SPDK_NVME_TRANSPORT_NAME_TCP, SPDK_NVME_TRANSPORT_NAME_VFIOUSER,
-    SPDK_NVME_TRANSPORT_PCIE, SPDK_NVME_TRANSPORT_RDMA, SPDK_NVME_TRANSPORT_TCP,
-    SPDK_NVME_TRANSPORT_VFIOUSER,
+    spdk_nvmf_transport_opts_init,
 };
 
 use crate::{
-    errors::{Errno, EINVAL, ENODEV, ENOMEM, EPERM},
+    errors::{EINVAL, ENODEV, ENOMEM, EPERM, Errno},
     task::{Promise, Promissory},
     thread, to_poll_pending_on_ok,
 };

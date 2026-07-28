@@ -8,7 +8,7 @@
 //! Space](https://spdk.io/doc/memory.html) for more information on the SPDK
 //! memory management.
 use std::{
-    alloc::{handle_alloc_error, Layout},
+    alloc::{Layout, handle_alloc_error},
     cmp,
     io::{Cursor, IoSlice, IoSliceMut},
     ptr::{copy_nonoverlapping, null_mut, write_bytes},
@@ -19,7 +19,7 @@ use spdk_sys::{
     iovec as IoVec, spdk_dma_free, spdk_dma_malloc, spdk_dma_realloc, spdk_dma_zmalloc,
 };
 
-use crate::errors::{Errno, EINVAL};
+use crate::errors::{EINVAL, Errno};
 
 /// Allocates memory using the SPDK memory allocator.
 pub fn alloc(layout: Layout) -> *mut u8 {

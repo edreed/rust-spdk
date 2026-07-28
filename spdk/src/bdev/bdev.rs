@@ -2,9 +2,9 @@ use std::{
     ffi::{CStr, CString},
     io::{IoSlice, IoSliceMut},
     marker::PhantomData,
-    mem::{self, offset_of, size_of, ManuallyDrop},
+    mem::{self, ManuallyDrop, offset_of, size_of},
     os::raw::{c_int, c_void},
-    ptr::{self, addr_of, addr_of_mut, drop_in_place, NonNull},
+    ptr::{self, NonNull, addr_of, addr_of_mut, drop_in_place},
     rc::{Rc, Weak},
     slice,
     task::Poll,
@@ -12,21 +12,21 @@ use std::{
 
 use async_trait::async_trait;
 use spdk_sys::{
-    spdk_bdev, spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
+    SPDK_BDEV_IO_STATUS_ABORTED, SPDK_BDEV_IO_STATUS_AIO_ERROR, SPDK_BDEV_IO_STATUS_FAILED,
+    SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED, SPDK_BDEV_IO_STATUS_MISCOMPARE,
+    SPDK_BDEV_IO_STATUS_NOMEM, SPDK_BDEV_IO_STATUS_NVME_ERROR, SPDK_BDEV_IO_STATUS_PENDING,
+    SPDK_BDEV_IO_STATUS_SCSI_ERROR, SPDK_BDEV_IO_STATUS_SUCCESS, spdk_bdev,
+    spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
     spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread, spdk_bdev_io_status,
     spdk_bdev_io_type, spdk_bdev_module, spdk_bdev_register, spdk_bdev_unregister,
     spdk_get_io_channel, spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread,
-    spdk_io_device_register, spdk_io_device_unregister, SPDK_BDEV_IO_STATUS_ABORTED,
-    SPDK_BDEV_IO_STATUS_AIO_ERROR, SPDK_BDEV_IO_STATUS_FAILED,
-    SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED, SPDK_BDEV_IO_STATUS_MISCOMPARE,
-    SPDK_BDEV_IO_STATUS_NOMEM, SPDK_BDEV_IO_STATUS_NVME_ERROR, SPDK_BDEV_IO_STATUS_PENDING,
-    SPDK_BDEV_IO_STATUS_SCSI_ERROR, SPDK_BDEV_IO_STATUS_SUCCESS,
+    spdk_io_device_register, spdk_io_device_unregister,
 };
 use ternary_rs::if_else;
 
 use crate::{
     block::{Any, Device, IoType, Owned, OwnedOps},
-    errors::{Errno, ECANCELED, EINPROGRESS, EINVAL, ENOMEM},
+    errors::{ECANCELED, EINPROGRESS, EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
     thread::{self, Thread},
     to_result,
@@ -147,7 +147,7 @@ where
     /// The caller must guarantee that the raw pointer is non-null and valid.
     unsafe fn from_raw(channel: *mut spdk_io_channel) -> Self {
         Self {
-            channel: NonNull::new_unchecked(channel),
+            channel: unsafe { NonNull::new_unchecked(channel) },
             _ctx: PhantomData,
         }
     }
@@ -224,11 +224,13 @@ where
     /// initialize a newly submitted I/O request. It initializes the driver
     /// context to a default value.
     unsafe fn new(io: *mut spdk_bdev_io) -> Self {
-        (*io)
-            .driver_ctx
-            .as_mut_ptr()
-            .cast::<BDevIoCtx<T>>()
-            .write(Default::default());
+        unsafe {
+            (*io)
+                .driver_ctx
+                .as_mut_ptr()
+                .cast::<BDevIoCtx<T>>()
+                .write(Default::default())
+        };
 
         Self {
             io: NonNull::new(io).unwrap(),
@@ -479,7 +481,7 @@ where
     /// to a `BDevImpl<T>` instance. This function does not perform any
     /// validation on the pointer.
     pub unsafe fn from_raw(bdev: *mut spdk_bdev) -> &'static BDevImpl<T> {
-        &*bdev.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast()
+        unsafe { &*bdev.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast() }
     }
 
     /// Registers the BDev with the SPDK subsystem. This function must be called
@@ -537,7 +539,7 @@ where
 
     /// Constructs a boxed BDev instance from a raw pointer to the BDev.
     unsafe fn from_ctx_ptr(ctx_ptr: *mut T) -> Box<Self> {
-        Box::from_raw(ctx_ptr.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast())
+        unsafe { Box::from_raw(ctx_ptr.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast()) }
     }
 
     /// Returns a reference to the BDev context.
@@ -558,7 +560,7 @@ where
     /// Destroys the BDev instance.
     unsafe extern "C" fn destruct(ctx: *mut c_void) -> i32 {
         thread::spawn_local(async move {
-            let mut this = Self::from_ctx_ptr(ctx as *mut T);
+            let mut this = unsafe { Self::from_ctx_ptr(ctx as *mut T) };
 
             let rc = match this.ctx.destruct().await {
                 Ok(_) => 0,
@@ -583,12 +585,14 @@ where
 
     /// Creates an I/O channel for the BDev.
     unsafe extern "C" fn create_io_channel(io_device: *mut c_void, ctx_buf: *mut c_void) -> c_int {
-        let this = &mut *io_device.cast::<T>();
+        let this = unsafe { &mut *io_device.cast::<T>() };
         let ctx = ctx_buf as *mut T::IoChannel;
 
         match this.new_io_channel() {
             Ok(channel) => {
-                ctx.write(channel);
+                unsafe {
+                    ctx.write(channel);
+                }
                 0
             }
             Err(e) => e.into(),
@@ -597,22 +601,22 @@ where
 
     /// Destroys an I/O channel for the BDev.
     unsafe extern "C" fn destroy_io_channel(_io_device: *mut c_void, ctx_buf: *mut c_void) {
-        let ctx = ctx_buf as *mut T::IoChannel;
-
-        drop_in_place(ctx);
+        unsafe {
+            drop_in_place(ctx_buf as *mut T::IoChannel);
+        }
     }
 
     /// Returns whether the specified I/O type is supported by the BDev.
     unsafe extern "C" fn io_type_supported(ctx: *mut c_void, io_type: spdk_bdev_io_type) -> bool {
-        let this = &*ctx.cast::<T>();
+        let this = unsafe { &*ctx.cast::<T>() };
 
         this.io_type_supported(io_type.into())
     }
 
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
-        let mut io_channel = BDevIoChannel::<T::IoChannel>::from_raw(io_channel);
-        let mut io = BDevIo::new(io);
+        let mut io_channel = unsafe { BDevIoChannel::<T::IoChannel>::from_raw(io_channel) };
+        let mut io = unsafe { BDevIo::new(io) };
 
         thread::spawn_local(async move {
             let res = io_channel.ctx_mut().submit_request(&mut io).await;
@@ -623,10 +627,9 @@ where
 
     /// Gets an I/O channel for the BDev for the calling thread.
     unsafe extern "C" fn get_io_channel(ctx: *mut c_void) -> *mut spdk_io_channel {
-        let this = ctx.cast::<T>();
+        let this = unsafe { &mut *ctx.cast::<T>() };
 
-        (*this)
-            .get_io_channel()
+        this.get_io_channel()
             .map_or(ptr::null_mut(), |channel| channel.into_raw())
     }
 

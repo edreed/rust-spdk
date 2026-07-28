@@ -8,11 +8,11 @@ use std::{
 
 use serde::de::{self, IntoDeserializer};
 use spdk_sys::{
-    spdk_json_decode_bool, spdk_json_decode_int32, spdk_json_decode_uint16,
-    spdk_json_decode_uint32, spdk_json_decode_uint64, spdk_json_decode_uint8, spdk_json_parse,
-    spdk_json_val, spdk_json_val_type, SPDK_JSON_VAL_ARRAY_BEGIN, SPDK_JSON_VAL_ARRAY_END,
-    SPDK_JSON_VAL_FALSE, SPDK_JSON_VAL_NAME, SPDK_JSON_VAL_NULL, SPDK_JSON_VAL_NUMBER,
-    SPDK_JSON_VAL_OBJECT_BEGIN, SPDK_JSON_VAL_OBJECT_END, SPDK_JSON_VAL_STRING, SPDK_JSON_VAL_TRUE,
+    SPDK_JSON_VAL_ARRAY_BEGIN, SPDK_JSON_VAL_ARRAY_END, SPDK_JSON_VAL_FALSE, SPDK_JSON_VAL_NAME,
+    SPDK_JSON_VAL_NULL, SPDK_JSON_VAL_NUMBER, SPDK_JSON_VAL_OBJECT_BEGIN, SPDK_JSON_VAL_OBJECT_END,
+    SPDK_JSON_VAL_STRING, SPDK_JSON_VAL_TRUE, spdk_json_decode_bool, spdk_json_decode_int32,
+    spdk_json_decode_uint8, spdk_json_decode_uint16, spdk_json_decode_uint32,
+    spdk_json_decode_uint64, spdk_json_parse, spdk_json_val, spdk_json_val_type,
 };
 
 use crate::{
@@ -716,7 +716,7 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use laboratory::{describe, expect, LabResult, NullState};
+    use laboratory::{LabResult, NullState, describe, expect};
 
     use crate::json::serde::test::{
         TestEnum, TestNewTypeStruct, TestStruct, TestTupleStruct, TestUnitStruct,

@@ -1,9 +1,9 @@
 use std::{
     cell::Cell,
     env,
-    ffi::{c_void, CStr, CString},
+    ffi::{CStr, CString, c_void},
     future::Future,
-    mem::{size_of, MaybeUninit},
+    mem::{MaybeUninit, size_of},
     os::raw::{c_char, c_int},
     ptr::{addr_of_mut, null},
     rc::Rc,
@@ -11,15 +11,15 @@ use std::{
 };
 
 use spdk_sys::{
-    spdk_app_opts, spdk_app_opts_init, spdk_app_parse_args, spdk_app_shutdown_cb, spdk_app_start,
-    spdk_app_stop, SPDK_APP_PARSE_ARGS_SUCCESS,
+    SPDK_APP_PARSE_ARGS_SUCCESS, spdk_app_opts, spdk_app_opts_init, spdk_app_parse_args,
+    spdk_app_shutdown_cb, spdk_app_start, spdk_app_stop,
 };
 use static_init::dynamic;
 use ternary_rs::if_else;
 
 use crate::{
-    errors::{Errno, EINVAL},
-    runtime::{reactors, Reactor},
+    errors::{EINVAL, Errno},
+    runtime::{Reactor, reactors},
     task::{LocalTask, RcTask},
     thread::Thread,
 };
@@ -213,7 +213,7 @@ impl Runtime {
         F: Future<Output = ()> + 'static,
         F::Output: 'static,
     {
-        let task = Rc::from_raw(ctx.cast::<LocalTask<Thread, F, ()>>());
+        let task = unsafe { Rc::from_raw(ctx.cast::<LocalTask<Thread, F, ()>>()) };
 
         RcTask::schedule(task);
     }

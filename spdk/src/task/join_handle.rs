@@ -6,9 +6,8 @@ use std::{
 };
 
 use crate::task::{
-    local_task,
+    RcTask, local_task,
     remote_task::{self, ArcTask},
-    RcTask,
 };
 
 /// A virtual function table (vtable) that specifies the operations that can be performed on a

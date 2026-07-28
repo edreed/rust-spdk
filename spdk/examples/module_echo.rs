@@ -13,7 +13,7 @@ use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
-    errors::{Errno, ENOTSUP},
+    errors::{ENOTSUP, Errno},
     runtime::reactors,
     task::{self},
     thread::Thread,

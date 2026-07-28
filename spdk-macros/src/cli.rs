@@ -3,14 +3,14 @@ use std::{cell::Cell, ffi::CString, iter::once, os::raw::c_int};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    spanned::Spanned,
-    visit::{self, Visit},
     Data::Struct,
     Expr, Field,
     Fields::Named,
     Ident,
     Lit::{self, Char, Str},
     LitCStr, Type,
+    spanned::Spanned,
+    visit::{self, Visit},
 };
 use ternary_rs::if_else;
 
@@ -160,12 +160,12 @@ impl Arg {
     fn getopts_str(&self) -> String {
         let mut res = String::new();
 
-        if let Some(short_opt) = self.short_opt.as_ref() {
-            if short_opt.is_ascii_alphabetic() {
-                res.push(*short_opt);
-                for _ in 0..self.has_arg {
-                    res.push(':');
-                }
+        if let Some(short_opt) = self.short_opt.as_ref()
+            && short_opt.is_ascii_alphabetic()
+        {
+            res.push(*short_opt);
+            for _ in 0..self.has_arg {
+                res.push(':');
             }
         }
 
@@ -230,7 +230,7 @@ impl<'ast> Visit<'ast> for Arg {
         self.r#type = Some(ty.clone());
 
         self.has_arg = match ty {
-            syn::Type::Path(ref p) => {
+            syn::Type::Path(p) => {
                 if_else!(
                     p.path.is_ident("bool"),
                     OPTIONAL_ARGUMENT,
@@ -243,10 +243,10 @@ impl<'ast> Visit<'ast> for Arg {
 
     fn visit_meta_name_value(&mut self, name_value: &'ast syn::MetaNameValue) {
         if name_value.path.is_ident("doc") {
-            if let Expr::Lit(s) = &name_value.value {
-                if let Lit::Str(s) = &s.lit {
-                    self.help = Some(s.value().trim().to_string());
-                }
+            if let Expr::Lit(s) = &name_value.value
+                && let Lit::Str(s) = &s.lit
+            {
+                self.help = Some(s.value().trim().to_string());
             };
 
             visit::visit_meta_name_value(self, name_value);
@@ -320,7 +320,7 @@ impl DeriveParser {
                         "cannot derive macro `Parser` for tuple or unit struct types",
                     )
                     .into_compile_error()
-                    .into()
+                    .into();
                 }
             },
             _ => {
@@ -329,7 +329,7 @@ impl DeriveParser {
                     "cannot derive macro `Parser` for non-struct types",
                 )
                 .into_compile_error()
-                .into()
+                .into();
             }
         };
 

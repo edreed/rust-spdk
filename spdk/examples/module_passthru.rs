@@ -6,10 +6,10 @@ use std::{
 
 use async_trait::async_trait;
 use spdk::{
-    bdev::{malloc, BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
     block::{Any, Descriptor, Device, IoChannel, IoType, Owned},
     dma::{self},
-    errors::{Errno, ENOTSUP},
+    errors::{ENOTSUP, Errno},
     thread,
 };
 

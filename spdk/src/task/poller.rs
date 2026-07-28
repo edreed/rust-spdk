@@ -2,7 +2,7 @@ use std::{
     ffi::c_void,
     fmt::{self, Debug},
     future::Future,
-    mem::{transmute, MaybeUninit},
+    mem::{MaybeUninit, transmute},
     pin::Pin,
     ptr::null_mut,
     task::{Context, Poll},
@@ -10,8 +10,8 @@ use std::{
 };
 
 use spdk_sys::{
-    spdk_poller, spdk_poller_pause, spdk_poller_register, spdk_poller_resume,
-    spdk_poller_unregister, SPDK_POLLER_BUSY, SPDK_POLLER_IDLE,
+    SPDK_POLLER_BUSY, SPDK_POLLER_IDLE, spdk_poller, spdk_poller_pause, spdk_poller_register,
+    spdk_poller_resume, spdk_poller_unregister,
 };
 
 /// A trait for types that can be polled.
@@ -174,7 +174,7 @@ where
         // its lifetime. It is safe to pin its `polled` field here.
         let polled = unsafe { Pin::new_unchecked(&mut this.polled) };
 
-        if polled.poll() {
+        if Polled::poll(polled) {
             return SPDK_POLLER_BUSY as i32;
         }
 

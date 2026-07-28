@@ -1,6 +1,6 @@
 use std::{
-    ffi::{c_int, c_void, CStr},
-    ptr::{null_mut, NonNull},
+    ffi::{CStr, c_int, c_void},
+    ptr::{NonNull, null_mut},
 };
 
 use spdk_sys::{
@@ -10,7 +10,7 @@ use ternary_rs::if_else;
 
 use crate::{
     block::Any,
-    errors::{Errno, EINVAL, ENOMEM},
+    errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
     to_poll_pending_on_ok,
 };
@@ -28,7 +28,7 @@ impl Descriptor {
     unsafe extern "C" fn handle_event(_type: u32, _bdev: *mut spdk_bdev, _ctx: *mut c_void) {}
 
     unsafe extern "C" fn open_complete(desc: *mut spdk_bdev_desc, status: c_int, ctx: *mut c_void) {
-        let p = Promissory::<Descriptor>::from_raw(ctx.cast());
+        let p = unsafe { Promissory::<Descriptor>::from_raw(ctx.cast()) };
         let res = if_else!(
             status == 0,
             Descriptor::try_from(desc).map_err(|_| EINVAL),

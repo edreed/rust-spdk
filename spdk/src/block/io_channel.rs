@@ -4,25 +4,25 @@ use std::{
     marker::PhantomData,
     mem,
     os::raw::c_void,
-    ptr::{addr_of, addr_of_mut, NonNull},
+    ptr::{NonNull, addr_of, addr_of_mut},
     rc::{Rc, Weak},
     task::Poll,
 };
 
 use spdk_sys::{
-    iovec as IoVec, spdk_bdev, spdk_bdev_copy_blocks, spdk_bdev_desc, spdk_bdev_desc_get_bdev,
-    spdk_bdev_flush, spdk_bdev_free_io, spdk_bdev_get_io_channel, spdk_bdev_io,
-    spdk_bdev_io_wait_entry, spdk_bdev_queue_io_wait, spdk_bdev_read, spdk_bdev_read_blocks,
-    spdk_bdev_readv, spdk_bdev_readv_blocks, spdk_bdev_reset, spdk_bdev_unmap,
-    spdk_bdev_unmap_blocks, spdk_bdev_write, spdk_bdev_write_blocks, spdk_bdev_write_zeroes,
-    spdk_bdev_write_zeroes_blocks, spdk_bdev_writev, spdk_bdev_writev_blocks,
-    spdk_bdev_zone_management, spdk_io_channel, spdk_io_channel_get_thread, spdk_put_io_channel,
-    SPDK_BDEV_ZONE_RESET,
+    SPDK_BDEV_ZONE_RESET, iovec as IoVec, spdk_bdev, spdk_bdev_copy_blocks, spdk_bdev_desc,
+    spdk_bdev_desc_get_bdev, spdk_bdev_flush, spdk_bdev_free_io, spdk_bdev_get_io_channel,
+    spdk_bdev_io, spdk_bdev_io_wait_entry, spdk_bdev_queue_io_wait, spdk_bdev_read,
+    spdk_bdev_read_blocks, spdk_bdev_readv, spdk_bdev_readv_blocks, spdk_bdev_reset,
+    spdk_bdev_unmap, spdk_bdev_unmap_blocks, spdk_bdev_write, spdk_bdev_write_blocks,
+    spdk_bdev_write_zeroes, spdk_bdev_write_zeroes_blocks, spdk_bdev_writev,
+    spdk_bdev_writev_blocks, spdk_bdev_zone_management, spdk_io_channel,
+    spdk_io_channel_get_thread, spdk_put_io_channel,
 };
 use ternary_rs::if_else;
 
 use crate::{
-    errors::{Errno, EINVAL, EIO, ENOMEM},
+    errors::{EINVAL, EIO, ENOMEM, Errno},
     task::{Promise, Promissory},
     thread::Thread,
     to_poll_pending_on_ok,
@@ -108,7 +108,7 @@ impl IoChannel {
     /// A callback invoked when an [`spdk_bdev_io`] structure is available to satisfy the request
     /// queued by [`spdk_bdev_queue_io_wait`].
     unsafe extern "C" fn wait_io_complete(ctx: *mut c_void) {
-        let w = Weak::from_raw(ctx as *const _ as *const Promissory<(), IoWait>);
+        let w = unsafe { Weak::from_raw(ctx as *const _ as *const Promissory<(), IoWait>) };
 
         Promissory::set_result(
             w.upgrade().expect("promissory has strong references"),
@@ -153,7 +153,7 @@ impl IoChannel {
             spdk_bdev_free_io(io);
         }
 
-        let p = Promissory::<()>::from_raw(cx.cast());
+        let p = unsafe { Promissory::<()>::from_raw(cx.cast()) };
 
         Promissory::set_result(p, if_else!(success, Ok(()), Err(EIO)));
     }

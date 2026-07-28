@@ -5,7 +5,7 @@ use std::{
     ffi::CStr,
     mem::{self},
     os::raw::c_char,
-    ptr::{null_mut, NonNull},
+    ptr::{NonNull, null_mut},
     task::Poll,
 };
 

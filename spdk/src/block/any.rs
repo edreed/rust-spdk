@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use spdk_sys::spdk_bdev;
 
-use crate::errors::{Errno, EPERM};
+use crate::errors::{EPERM, Errno};
 
 use super::{Owned, OwnedOps};
 

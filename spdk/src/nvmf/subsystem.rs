@@ -1,25 +1,24 @@
 use std::{
-    ffi::{c_void, CStr},
+    ffi::{CStr, c_void},
     marker::PhantomData,
-    ptr::{null_mut, NonNull},
+    ptr::{NonNull, null_mut},
     task::Poll,
 };
 
 use spdk_sys::{
-    spdk_nvmf_subsystem, spdk_nvmf_subsystem_add_host, spdk_nvmf_subsystem_add_listener,
-    spdk_nvmf_subsystem_add_ns_ext, spdk_nvmf_subsystem_get_allow_any_host,
-    spdk_nvmf_subsystem_get_first, spdk_nvmf_subsystem_get_mn, spdk_nvmf_subsystem_get_next,
-    spdk_nvmf_subsystem_get_nqn, spdk_nvmf_subsystem_get_ns, spdk_nvmf_subsystem_get_sn,
-    spdk_nvmf_subsystem_get_type, spdk_nvmf_subsystem_host_allowed, spdk_nvmf_subsystem_pause,
-    spdk_nvmf_subsystem_remove_host, spdk_nvmf_subsystem_remove_listener,
-    spdk_nvmf_subsystem_remove_ns, spdk_nvmf_subsystem_resume,
+    SPDK_NVMF_SUBTYPE_DISCOVERY, SPDK_NVMF_SUBTYPE_NVME, spdk_nvmf_subsystem,
+    spdk_nvmf_subsystem_add_host, spdk_nvmf_subsystem_add_listener, spdk_nvmf_subsystem_add_ns_ext,
+    spdk_nvmf_subsystem_get_allow_any_host, spdk_nvmf_subsystem_get_first,
+    spdk_nvmf_subsystem_get_mn, spdk_nvmf_subsystem_get_next, spdk_nvmf_subsystem_get_nqn,
+    spdk_nvmf_subsystem_get_ns, spdk_nvmf_subsystem_get_sn, spdk_nvmf_subsystem_get_type,
+    spdk_nvmf_subsystem_host_allowed, spdk_nvmf_subsystem_pause, spdk_nvmf_subsystem_remove_host,
+    spdk_nvmf_subsystem_remove_listener, spdk_nvmf_subsystem_remove_ns, spdk_nvmf_subsystem_resume,
     spdk_nvmf_subsystem_set_allow_any_host, spdk_nvmf_subsystem_set_mn, spdk_nvmf_subsystem_set_sn,
     spdk_nvmf_subsystem_start, spdk_nvmf_subsystem_stop, spdk_nvmf_subtype,
-    SPDK_NVMF_SUBTYPE_DISCOVERY, SPDK_NVMF_SUBTYPE_NVME,
 };
 
 use crate::{
-    errors::{Errno, EINVAL, ENOENT},
+    errors::{EINVAL, ENOENT, Errno},
     nvme::TransportId,
     task::{Promise, Promissory},
     to_poll_pending_on_ok, to_result,
@@ -187,7 +186,7 @@ impl Subsystem {
         cx: *mut c_void,
         status: i32,
     ) {
-        let p = Promissory::<()>::from_raw(cx.cast());
+        let p = unsafe { Promissory::<()>::from_raw(cx.cast()) };
 
         Promissory::set_result(p, to_result!(status));
     }
