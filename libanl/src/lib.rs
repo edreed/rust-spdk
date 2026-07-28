@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 use core::fmt;
 use std::{
-    ffi::{c_char, c_int, CStr},
+    ffi::{CStr, c_char, c_int},
     fmt::{Debug, Display, Formatter},
 };
 
@@ -89,7 +89,7 @@ unsafe extern "C" {
     /// [`getaddrinfo_a`]: https://www.man7.org/linux/man-pages/man3/getaddrinfo_a.3.html
     /// [`timespec`]: https://www.man7.org/linux/man-pages/man3/timespec.3type.html
     pub fn gai_suspend(list: *const *const gaicb, nitems: c_int, timeout: *const timespec)
-        -> c_int;
+    -> c_int;
 
     /// Returns the status of a request in a call to the [`getaddrinfo_a`] function.
     ///
