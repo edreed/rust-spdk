@@ -5,7 +5,7 @@ use std::{
     mem::{self, offset_of, size_of, ManuallyDrop},
     os::raw::{c_int, c_void},
     ptr::{self, addr_of, addr_of_mut, drop_in_place, NonNull},
-    rc::Rc,
+    rc::{Rc, Weak},
     slice,
     task::Poll,
 };
@@ -117,7 +117,7 @@ pub trait BDevIoChannelOps: 'static {
     type IoContext: Default + 'static;
 
     /// Submit an I/O request to the BDev.
-    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno>;
+    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno>;
 }
 
 /// A BDev I/O channel implementation.
@@ -185,15 +185,19 @@ where
     }
 }
 
+/// A type alias for the promissory that receives the buffer allocation from a call to the
+/// [`BDevIo<T>::allocate_buffers`] method.
+type AllocateBuffersPromissory<'a, T> = Promissory<(), PhantomData<&'a mut BDevIo<T>>>;
+
 /// Represents driver-specific context for an I/O request.
 ///
 /// The type parameter `T` is the I/O context type for the BDev implementation.
 #[derive(Default)]
-struct BDevIoCtx<T>
+struct BDevIoCtx<'a, T>
 where
     T: Default + 'static,
 {
-    buf_promissory: Option<Rc<Promissory<()>>>,
+    buf_promissory: Option<Weak<AllocateBuffersPromissory<'a, T>>>,
     inner: T,
 }
 
@@ -297,13 +301,13 @@ where
 
     /// Returns a reference to the internal context associated with the I/O
     /// request.
-    fn internal_ctx(&self) -> &BDevIoCtx<T> {
+    fn internal_ctx(&self) -> &BDevIoCtx<'_, T> {
         unsafe { &*self.io.as_ref().driver_ctx.as_ptr().cast() }
     }
 
     /// Returns a mutable reference to the internal context associated with the
     /// I/O request.
-    fn internal_ctx_mut(&mut self) -> &mut BDevIoCtx<T> {
+    fn internal_ctx_mut(&mut self) -> &mut BDevIoCtx<'_, T> {
         unsafe { &mut *self.io.as_mut().driver_ctx.as_mut_ptr().cast() }
     }
 
@@ -333,7 +337,9 @@ where
             .internal_ctx_mut()
             .buf_promissory
             .take()
-            .expect("promissory present");
+            .expect("promissory present")
+            .upgrade()
+            .expect("promissory has strong references");
 
         Promissory::set_result(p, if_else!(success, Ok(()), Err(EINVAL)));
     }
@@ -351,10 +357,12 @@ where
     ///
     /// Any buffers allocated by this method will automatically be freed on
     /// completion of this I/O request.
-    pub async fn allocate_buffers(&mut self, length: u64) -> Result<(), Errno> {
-        Promise::new()
+    pub async fn allocate_buffers<'a>(&'a mut self, length: u64) -> Result<(), Errno> {
+        Promise::with_context(PhantomData::<&'a mut Self>)
             .request(move |p| {
-                self.internal_ctx_mut().buf_promissory.replace(p.clone());
+                self.internal_ctx_mut()
+                    .buf_promissory
+                    .replace(Rc::downgrade(p));
 
                 unsafe {
                     spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length)
@@ -603,11 +611,11 @@ where
 
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
-        let io_channel = BDevIoChannel::<T::IoChannel>::from_raw(io_channel);
+        let mut io_channel = BDevIoChannel::<T::IoChannel>::from_raw(io_channel);
         let mut io = BDevIo::new(io);
 
         thread::spawn_local(async move {
-            let res = io_channel.ctx().submit_request(&mut io).await;
+            let res = io_channel.ctx_mut().submit_request(&mut io).await;
 
             io.complete(res.into());
         });

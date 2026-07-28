@@ -53,7 +53,7 @@ async fn main() {
 
     target.listen(&transport_id).unwrap();
 
-    let subsys = target.add_subsystem(NQN, SubsystemType::NVMe, 1).unwrap();
+    let mut subsys = target.add_subsystem(NQN, SubsystemType::NVMe, 1).unwrap();
 
     let malloc = malloc::Builder::new()
         .with_name(BDEV_NAME)

@@ -254,7 +254,7 @@ impl Thread {
     /// [`Thread::send_msg()`]: method@Thread::send_msg
     unsafe extern "C" fn handle_msg<F>(ctx: *mut c_void)
     where
-        F: FnOnce() + 'static,
+        F: FnOnce(),
     {
         let msg_fn = Box::from_raw(ctx as *mut F);
 
@@ -288,7 +288,7 @@ impl Thread {
     /// [`ENOMEM`]: crate::errors::ENOMEM
     pub fn send_msg<F>(&self, f: F) -> Result<(), Errno>
     where
-        F: FnOnce() + 'static,
+        F: FnOnce(),
     {
         let ctx = Box::into_raw(Box::new(f)).cast();
 

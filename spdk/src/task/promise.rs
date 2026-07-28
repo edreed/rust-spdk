@@ -34,7 +34,7 @@ use crate::{
 #[derive(Debug, Default)]
 enum PromiseState<T>
 where
-    T: Debug + 'static,
+    T: Debug,
 {
     /// The initial state of a promise.
     #[default]
@@ -72,7 +72,7 @@ unsafe impl<T> Send for PromiseState<T> where T: Debug + Send + 'static {}
 
 impl<T> PromiseState<T>
 where
-    T: Debug + 'static,
+    T: Debug,
 {
     /// Polls the state of the operation, advancing to the next state if possible.
     fn poll(&mut self, cx: &Context<'_>) -> Self {
@@ -115,8 +115,7 @@ where
 /// </div>
 pub struct Promissory<R, C = ()>
 where
-    R: Debug + 'static,
-    C: 'static,
+    R: Debug,
 {
     state: RefCell<PromiseState<R>>,
     thread: Thread,
@@ -125,8 +124,8 @@ where
 
 impl<R, C> Promissory<R, C>
 where
-    R: Debug + 'static,
-    C: Unpin + 'static,
+    R: Debug,
+    C: Unpin,
 {
     /// Returns a new `Rc<Promise>` instance with the provided context.
     pub fn with_context(ctx: C) -> Rc<Self> {
@@ -155,8 +154,7 @@ where
 
 impl<R, C> Promissory<R, C>
 where
-    R: Debug + 'static,
-    C: 'static,
+    R: Debug,
 {
     /// Constructs a new `Rc<Promissory>` instance initializing the context, `C` in place. This
     /// function also provides a `Weak<Promissory>` to the allocation allowing you to initialize the
@@ -253,7 +251,6 @@ where
     unsafe extern "C" fn complete_with_object<T>(cx: *mut c_void, obj: *mut T)
     where
         R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
-        C: 'static,
     {
         let rc_self = Self::from_raw(cx.cast());
 
@@ -347,8 +344,8 @@ impl<C> Promissory<(), C> {
 
 impl<R, C> Default for Promissory<R, C>
 where
-    R: Debug + 'static,
-    C: Default + 'static,
+    R: Debug,
+    C: Default,
 {
     fn default() -> Self {
         Self {
@@ -362,13 +359,11 @@ where
 /// A future implementation for awaiting the result of a [`Promise`].
 struct FuturePromise<R, C>(Rc<Promissory<R, C>>)
 where
-    R: Debug + 'static,
-    C: 'static;
+    R: Debug;
 
 impl<R, C> Future for FuturePromise<R, C>
 where
-    R: Debug + 'static,
-    C: 'static,
+    R: Debug,
 {
     type Output = Result<R, Errno>;
 
@@ -392,19 +387,13 @@ where
 /// </div>
 pub struct Promise<R, C = ()>(Rc<Promissory<R, C>>)
 where
-    R: Debug + 'static,
-    C: 'static;
+    R: Debug;
 
-unsafe impl<R, C> Send for Promise<R, C>
-where
-    R: Debug + Send + 'static,
-    C: 'static,
-{
-}
+unsafe impl<R, C> Send for Promise<R, C> where R: Debug + Send + 'static {}
 
 impl<R> Promise<R>
 where
-    R: Debug + 'static,
+    R: Debug,
 {
     /// Returns a new `Promise` instance.
     ///
@@ -419,7 +408,7 @@ where
 
 impl<R> Default for Promise<R>
 where
-    R: Debug + 'static,
+    R: Debug,
 {
     fn default() -> Self {
         Self::new()
@@ -428,8 +417,8 @@ where
 
 impl<R, C> Promise<R, C>
 where
-    R: Debug + 'static,
-    C: Unpin + 'static,
+    R: Debug,
+    C: Unpin,
 {
     /// Returns a new `Promise` instance with the user context of the related `Promissory`
     /// initialized to the specified value.
@@ -462,8 +451,7 @@ where
 
 impl<R, C> Promise<R, C>
 where
-    R: Debug + 'static,
-    C: 'static,
+    R: Debug,
 {
     /// Constructs a new `Promise` instance initializing the context, `C`, in place in the related
     /// `Promissory` allocation. This function also provides a `Weak<Promissory>` to the allocation
