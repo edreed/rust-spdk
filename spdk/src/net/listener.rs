@@ -66,10 +66,8 @@ pub struct Incoming<'a> {
 
 impl<'a> Incoming<'a> {
     /// Creates new `Incoming` instance for the specified [`TcpListener`].
-    fn new(listener: &'a mut TcpListener) -> Self {
-        Self {
-            listener: listener.inner_mut(),
-        }
+    fn new(listener: &'a mut TcpListenerInner) -> Self {
+        Self { listener }
     }
 }
 
@@ -268,7 +266,7 @@ impl TcpListener {
     /// [`accept`]: TcpListener::accept
     /// [`Thread`]: crate::thread::Thread
     pub fn incoming(&mut self) -> Incoming<'_> {
-        Incoming::new(self)
+        Incoming::new(self.inner_mut())
     }
 }
 

@@ -133,6 +133,44 @@ struct TcpStreamInner {
 }
 
 impl TcpStreamInner {
+    /// A callback function invoked when the connection operation is complete.
+    unsafe extern "C" fn connect_complete(cb_arg: *mut c_void, status: i32) {
+        let inner = unsafe { &mut *(cb_arg as *mut TcpStreamInner) };
+
+        match to_result!(status) {
+            Ok(_) => inner.state.set_connected(),
+            Err(e) => inner.state.set_failed(e),
+        };
+    }
+
+    /// Creates a TCP connection to the specified socket address, initializing the internal state of
+    /// a [`TcpStream`} in-place.
+    fn connect_in_place(
+        this: Pin<&mut MaybeUninit<TcpStreamInner>>,
+        addr: SocketAddr,
+        opts: &spdk_sock_opts,
+    ) {
+        let this = this.get_mut().write(TcpStreamInner {
+            sock: ptr::null_mut(),
+            state: StreamState::Connecting(None),
+        });
+
+        this.sock = unsafe {
+            spdk_sock_connect_async(
+                addr.ip().as_ptr(),
+                addr.port().into(),
+                ptr::null_mut(),
+                opts as *const _ as *mut _,
+                Some(Self::connect_complete),
+                this as *mut _ as *mut _,
+            )
+        };
+
+        if this.sock.is_null() {
+            this.state = StreamState::Failed(EINVAL);
+        }
+    }
+
     /// Polls the state of the stream.
     ///
     /// # Returns
@@ -140,6 +178,68 @@ impl TcpStreamInner {
     /// Returns `true` if a waiting [`Waker`] was awakened; `false` otherwise.
     fn poll_state(&mut self) -> bool {
         self.state.poll()
+    }
+
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let res = to_result_size! {
+            unsafe { spdk_sock_recv(self.sock, addr_of_mut!(*buf) as *mut _, buf.len()) }
+        };
+
+        match res {
+            Ok(s) => Poll::Ready(Ok(s)),
+            Err(EAGAIN) => {
+                if let StreamState::Connected(waker) = &mut self.state {
+                    *waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+
+                unreachable!("poll_read called in unexpected state: {:?}", self.state);
+            }
+            Err(e) => Poll::Ready(Err(e.into())),
+        }
+    }
+
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let iov = IoSlice::new(buf);
+        let res = to_result_size! {
+            unsafe { spdk_sock_writev(self.sock, addr_of!(iov) as *mut IoVec, 1) }
+        };
+
+        match res {
+            Ok(s) => Poll::Ready(Ok(s)),
+            Err(EAGAIN) => {
+                if let StreamState::Connected(waker) = &mut self.state {
+                    *waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+
+                unreachable!("poll_write called in unexpected state: {:?}", self.state);
+            }
+            Err(e) => Poll::Ready(Err(e.into())),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let res = to_result! {
+            unsafe { spdk_sock_close(&mut self.sock as *mut _) }
+        };
+
+        match res {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(e) => Poll::Ready(Err(e.into())),
+        }
     }
 }
 
@@ -184,38 +284,10 @@ impl TcpStream {
         self.0.polled_mut()
     }
 
-    /// A callback function invoked when the connection operation is complete.
-    unsafe extern "C" fn connect_complete(cb_arg: *mut c_void, status: i32) {
-        let inner = unsafe { &mut *(cb_arg as *mut TcpStreamInner) };
-
-        match to_result!(status) {
-            Ok(_) => inner.state.set_connected(),
-            Err(e) => inner.state.set_failed(e),
-        };
-    }
-
     /// Attempts to connect a stream to the specified socket address.
     async fn connect_one(addr: SocketAddr, opts: &spdk_sock_opts) -> Result<Self, Errno> {
-        Connector(Some(TcpStream(Poller::new_in_place(move |inner| {
-            let inner = inner.get_mut().write(TcpStreamInner {
-                sock: ptr::null_mut(),
-                state: StreamState::Connecting(None),
-            });
-
-            inner.sock = unsafe {
-                spdk_sock_connect_async(
-                    addr.ip().as_ptr(),
-                    addr.port().into(),
-                    ptr::null_mut(),
-                    opts as *const _ as *mut _,
-                    Some(Self::connect_complete),
-                    inner as *mut _ as *mut _,
-                )
-            };
-
-            if inner.sock.is_null() {
-                inner.state = StreamState::Failed(EINVAL);
-            }
+        Connector(Some(TcpStream(Poller::new_in_place(|inner| {
+            TcpStreamInner::connect_in_place(inner, addr, opts)
         }))))
         .await
     }
@@ -260,25 +332,7 @@ impl AsyncRead for TcpStream {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        let res = to_result_size! {
-            unsafe { spdk_sock_recv(self.inner().sock, addr_of_mut!(*buf) as *mut _, buf.len()) }
-        };
-
-        match res {
-            Ok(s) => Poll::Ready(Ok(s)),
-            Err(EAGAIN) => {
-                if let StreamState::Connected(waker) = &mut self.inner_mut().state {
-                    *waker = Some(cx.waker().clone());
-                    return Poll::Pending;
-                }
-
-                unreachable!(
-                    "poll_read called in unexpected state: {:?}",
-                    self.inner().state
-                );
-            }
-            Err(e) => Poll::Ready(Err(e.into())),
-        }
+        Pin::new(self.inner_mut()).poll_read(cx, buf)
     }
 }
 
@@ -288,41 +342,15 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        let iov = IoSlice::new(buf);
-        let res = to_result_size! {
-            unsafe { spdk_sock_writev(self.inner().sock, addr_of!(iov) as *mut IoVec, 1) }
-        };
-
-        match res {
-            Ok(s) => Poll::Ready(Ok(s)),
-            Err(EAGAIN) => {
-                if let StreamState::Connected(waker) = &mut self.inner_mut().state {
-                    *waker = Some(cx.waker().clone());
-                    return Poll::Pending;
-                }
-
-                unreachable!(
-                    "poll_write called in unexpected state: {:?}",
-                    self.inner().state
-                );
-            }
-            Err(e) => Poll::Ready(Err(e.into())),
-        }
+        Pin::new(self.inner_mut()).poll_write(cx, buf)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(self.inner_mut()).poll_flush(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let res = to_result! {
-            unsafe { spdk_sock_close(&mut self.inner_mut().sock as *mut _) }
-        };
-
-        match res {
-            Ok(()) => Poll::Ready(Ok(())),
-            Err(e) => Poll::Ready(Err(e.into())),
-        }
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(self.inner_mut()).poll_close(cx)
     }
 }
 
