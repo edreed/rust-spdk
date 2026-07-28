@@ -3,7 +3,7 @@ use std::{
     cell::{RefCell, UnsafeCell},
     fmt::Debug,
     future::Future,
-    mem::{self, transmute, MaybeUninit},
+    mem::{self, MaybeUninit, transmute},
     pin::Pin,
     rc::{Rc, Weak},
     task::{Context, Poll, Waker},
@@ -12,7 +12,7 @@ use std::{
 use libc::c_void;
 
 use crate::{
-    errors::{Errno, EINVAL},
+    errors::{EINVAL, Errno},
     thread::Thread,
     to_result,
 };
@@ -252,7 +252,7 @@ where
     where
         R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
     {
-        let rc_self = Self::from_raw(cx.cast());
+        let rc_self = unsafe { Self::from_raw(cx.cast()) };
 
         Self::set_result(rc_self, obj.try_into().map_err(|_| EINVAL));
     }
@@ -289,7 +289,7 @@ where
     ///
     /// See [`Rc<T>::from_raw`] for safety requirements.
     pub unsafe fn from_raw(raw: *const Self) -> Rc<Self> {
-        let rc_self = Rc::from_raw(raw);
+        let rc_self = unsafe { Rc::from_raw(raw) };
 
         assert!(
             rc_self.thread.is_current(),
@@ -306,7 +306,7 @@ impl<C> Promissory<(), C> {
     /// This callback receives a status code. If the status code is 0, the result is `Ok(())`.
     /// Otherwise, the status is converted to a suitable `Err(Errno)` value.
     unsafe extern "C" fn complete_with_status(cx: *mut c_void, status: i32) {
-        let rc_self = Self::from_raw(cx.cast());
+        let rc_self = unsafe { Self::from_raw(cx.cast()) };
 
         Self::set_result(rc_self, to_result!(status));
     }
@@ -326,7 +326,7 @@ impl<C> Promissory<(), C> {
     ///
     /// This callback always sets the result to `Ok(())`.
     unsafe extern "C" fn complete_with_ok(cx: *mut c_void) {
-        let rc_self = Self::from_raw(cx.cast());
+        let rc_self = unsafe { Self::from_raw(cx.cast()) };
 
         Self::set_result(rc_self, Ok(()));
     }

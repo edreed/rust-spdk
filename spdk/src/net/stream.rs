@@ -16,7 +16,7 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::{Errno, EAGAIN, EBADF, EINVAL},
+    errors::{EAGAIN, EBADF, EINVAL, Errno},
     task::{Polled, Poller},
     to_result, to_result_size,
 };
@@ -186,7 +186,7 @@ impl TcpStream {
 
     /// A callback function invoked when the connection operation is complete.
     unsafe extern "C" fn connect_complete(cb_arg: *mut c_void, status: i32) {
-        let inner = &mut *(cb_arg as *mut TcpStreamInner);
+        let inner = unsafe { &mut *(cb_arg as *mut TcpStreamInner) };
 
         match to_result!(status) {
             Ok(_) => inner.state.set_connected(),

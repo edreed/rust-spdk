@@ -2,30 +2,30 @@ use std::{
     ffi::CStr,
     io::Write,
     marker::PhantomData,
-    mem::{self, size_of_val, MaybeUninit},
-    ptr::{copy_nonoverlapping, NonNull},
+    mem::{self, MaybeUninit, size_of_val},
+    ptr::{NonNull, copy_nonoverlapping},
     task::Poll,
 };
 
 use spdk_sys::{
-    spdk_nvmf_get_first_tgt, spdk_nvmf_get_next_tgt, spdk_nvmf_listen_opts_init,
-    spdk_nvmf_subsystem_create, spdk_nvmf_subsystem_destroy, spdk_nvmf_target_opts, spdk_nvmf_tgt,
-    spdk_nvmf_tgt_add_transport, spdk_nvmf_tgt_create, spdk_nvmf_tgt_destroy,
-    spdk_nvmf_tgt_discovery_filter, spdk_nvmf_tgt_get_name, spdk_nvmf_tgt_listen_ext,
-    SPDK_NVMF_DISCOVERY_NQN,
+    SPDK_NVMF_DISCOVERY_NQN, spdk_nvmf_get_first_tgt, spdk_nvmf_get_next_tgt,
+    spdk_nvmf_listen_opts_init, spdk_nvmf_subsystem_create, spdk_nvmf_subsystem_destroy,
+    spdk_nvmf_target_opts, spdk_nvmf_tgt, spdk_nvmf_tgt_add_transport, spdk_nvmf_tgt_create,
+    spdk_nvmf_tgt_destroy, spdk_nvmf_tgt_discovery_filter, spdk_nvmf_tgt_get_name,
+    spdk_nvmf_tgt_listen_ext,
 };
 
 use crate::{
-    errors::{Errno, EBADF, EINPROGRESS, ENOMEM, EPERM},
-    nvme::{TransportId, SPDK_NVME_GLOBAL_NS_TAG},
+    errors::{EBADF, EINPROGRESS, ENOMEM, EPERM, Errno},
+    nvme::{SPDK_NVME_GLOBAL_NS_TAG, TransportId},
     task::{Promise, Promissory},
     thread, to_poll_pending_on_err, to_result,
 };
 
 use super::{
+    Subsystem, Transport,
     subsystem::{SubsystemType, Subsystems},
     transport::Transports,
-    Subsystem, Transport,
 };
 
 /// Builds a [`Target`] instance using the NVMe over Fabrics (NVMe-oF) target

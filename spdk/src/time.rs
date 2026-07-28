@@ -117,7 +117,7 @@ pub struct Interval(Poller<IntervalInner>);
 
 impl Interval {
     /// Completes when the next instant in the interval has been reached.
-    pub fn tick(&mut self) -> &mut impl Future<Output = Instant> {
+    pub fn tick(&mut self) -> &mut (impl Future<Output = Instant> + use<'_>) {
         &mut self.0
     }
 }

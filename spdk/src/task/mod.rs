@@ -15,11 +15,11 @@ use std::{
 };
 
 pub(crate) use join_handle::RawJoinHandleVTable;
-pub(crate) use local_task::{spawn_on_current_reactor, spawn_on_current_thread, LocalTask, RcTask};
+pub(crate) use local_task::{LocalTask, RcTask, spawn_on_current_reactor, spawn_on_current_thread};
 pub(crate) use remote_task::{spawn_on_reactor, spawn_on_thread};
 
 pub use join_handle::JoinHandle;
-pub use poller::{polled_fn, polled_fn_with_period, Polled, PolledFn, Poller};
+pub use poller::{Polled, PolledFn, Poller, polled_fn, polled_fn_with_period};
 pub use promise::{Promise, Promissory};
 pub use yield_now::yield_now;
 

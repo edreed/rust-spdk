@@ -14,7 +14,7 @@
 //!
 //! [Message Passing and Concurrency]: https://spdk.io/doc/concurrency.html
 use std::{
-    ffi::{c_void, CStr},
+    ffi::{CStr, c_void},
     fmt::{self, Debug, Formatter},
     future::Future,
     mem::MaybeUninit,
@@ -32,7 +32,7 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::{Errno, ENOMEM},
+    errors::{ENOMEM, Errno},
     runtime::CpuSet,
     task::{self, Executor, JoinHandle},
     to_result,
@@ -102,7 +102,9 @@ impl Thread {
     /// The caller must ensure that `thread` is non-null and points to a valid
     /// `spdk_thread` object.
     pub unsafe fn from_ptr_unchecked(thread: *mut spdk_thread) -> Self {
-        Self(OwnershipState::Borrowed(NonNull::new_unchecked(thread)))
+        Self(OwnershipState::Borrowed(unsafe {
+            NonNull::new_unchecked(thread)
+        }))
     }
 
     /// Returns the borrowed thread with the specified unique identifier.
@@ -256,7 +258,7 @@ impl Thread {
     where
         F: FnOnce(),
     {
-        let msg_fn = Box::from_raw(ctx as *mut F);
+        let msg_fn = unsafe { Box::from_raw(ctx as *mut F) };
 
         (*msg_fn)();
     }

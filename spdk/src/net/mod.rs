@@ -9,7 +9,7 @@ mod listener;
 mod socket;
 mod stream;
 
-pub use addr::{resolve, SocketAddr, SocketAddrIter, ToSocketAddrs};
+pub use addr::{SocketAddr, SocketAddrIter, ToSocketAddrs, resolve};
 pub use listener::{Accepted, Incoming, TcpListener};
 pub(crate) use socket::AsRawSock;
 pub use socket::{TcpSocketExt, TcpSocketRemote};

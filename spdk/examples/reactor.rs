@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use futures::future::join_all;
 use spdk::{
-    runtime::{reactors, Reactor},
+    runtime::{Reactor, reactors},
     time,
 };
 

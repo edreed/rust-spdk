@@ -1,7 +1,7 @@
 #![cfg(test)]
 use std::collections::BTreeMap;
 
-use laboratory::{describe, expect, LabResult, NullState};
+use laboratory::{LabResult, NullState, describe, expect};
 use serde::{Deserialize, Serialize};
 
 use super::{de::from_str, ser::to_string};

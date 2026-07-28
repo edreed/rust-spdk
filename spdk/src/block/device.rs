@@ -7,24 +7,23 @@ use std::{
 };
 
 use spdk_sys::{
-    spdk_bdev, spdk_bdev_first, spdk_bdev_get_block_size, spdk_bdev_get_buf_align,
-    spdk_bdev_get_by_name, spdk_bdev_get_name, spdk_bdev_get_num_blocks,
-    spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
-    spdk_bdev_get_product_name, spdk_bdev_get_write_unit_size, spdk_bdev_has_write_cache,
-    spdk_bdev_io_type, spdk_bdev_io_type_supported, spdk_bdev_is_zoned, spdk_bdev_next,
     SPDK_BDEV_IO_TYPE_ABORT, SPDK_BDEV_IO_TYPE_COMPARE, SPDK_BDEV_IO_TYPE_COMPARE_AND_WRITE,
     SPDK_BDEV_IO_TYPE_COPY, SPDK_BDEV_IO_TYPE_FLUSH, SPDK_BDEV_IO_TYPE_GET_ZONE_INFO,
     SPDK_BDEV_IO_TYPE_INVALID, SPDK_BDEV_IO_TYPE_NVME_ADMIN, SPDK_BDEV_IO_TYPE_NVME_IO,
-    SPDK_BDEV_IO_TYPE_NVME_IOV_MD, SPDK_BDEV_IO_TYPE_NVME_IO_MD, SPDK_BDEV_IO_TYPE_NVME_NSSR,
+    SPDK_BDEV_IO_TYPE_NVME_IO_MD, SPDK_BDEV_IO_TYPE_NVME_IOV_MD, SPDK_BDEV_IO_TYPE_NVME_NSSR,
     SPDK_BDEV_IO_TYPE_READ, SPDK_BDEV_IO_TYPE_RESET, SPDK_BDEV_IO_TYPE_SEEK_DATA,
     SPDK_BDEV_IO_TYPE_SEEK_HOLE, SPDK_BDEV_IO_TYPE_UNMAP, SPDK_BDEV_IO_TYPE_WRITE,
     SPDK_BDEV_IO_TYPE_WRITE_UNCORRECTABLE, SPDK_BDEV_IO_TYPE_WRITE_ZEROES, SPDK_BDEV_IO_TYPE_ZCOPY,
-    SPDK_BDEV_IO_TYPE_ZONE_APPEND, SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT,
+    SPDK_BDEV_IO_TYPE_ZONE_APPEND, SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT, spdk_bdev, spdk_bdev_first,
+    spdk_bdev_get_block_size, spdk_bdev_get_buf_align, spdk_bdev_get_by_name, spdk_bdev_get_name,
+    spdk_bdev_get_num_blocks, spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
+    spdk_bdev_get_product_name, spdk_bdev_get_write_unit_size, spdk_bdev_has_write_cache,
+    spdk_bdev_io_type, spdk_bdev_io_type_supported, spdk_bdev_is_zoned, spdk_bdev_next,
 };
 
 use crate::{
     block::{Any, Owned, OwnedOps},
-    errors::{Errno, ENODEV, EPERM},
+    errors::{ENODEV, EPERM, Errno},
     thread,
 };
 
@@ -161,7 +160,9 @@ impl<T: OwnedOps> Device<T> {
     ///
     /// `bdev` must be non-null.
     pub unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Device<Any> {
-        Device::<Any>(OwnershipState::Borrowed(NonNull::new_unchecked(bdev)))
+        Device::<Any>(OwnershipState::Borrowed(unsafe {
+            NonNull::new_unchecked(bdev)
+        }))
     }
 
     /// Get a pointer to the underlying `spdk_bdev` struct.

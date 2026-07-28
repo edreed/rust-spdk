@@ -3,5 +3,5 @@
 mod serde;
 
 pub use serde::{
-    de::from_str, de::Deserializer, error::Error, error::Result, ser::to_string, ser::Serializer,
+    de::Deserializer, de::from_str, error::Error, error::Result, ser::Serializer, ser::to_string,
 };

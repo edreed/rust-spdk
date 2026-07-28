@@ -70,7 +70,7 @@ pub(crate) trait ArcTask: TaskBase {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_clone<W: ArcTask>(data: *const ()) -> RawWaker {
-    Arc::<W>::increment_strong_count(data.cast());
+    unsafe { Arc::<W>::increment_strong_count(data.cast()) };
 
     RawWaker::new(data, waker_vtable::<W>())
 }
@@ -80,7 +80,7 @@ unsafe fn waker_clone<W: ArcTask>(data: *const ()) -> RawWaker {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_wake<W: ArcTask>(data: *const ()) {
-    let arc_task = Arc::<W>::from_raw(data.cast());
+    let arc_task = unsafe { Arc::<W>::from_raw(data.cast()) };
 
     ArcTask::schedule(arc_task);
 }
@@ -90,7 +90,7 @@ unsafe fn waker_wake<W: ArcTask>(data: *const ()) {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_wake_by_ref<W: ArcTask>(data: *const ()) {
-    let arc_task = ManuallyDrop::new(Arc::<W>::from_raw(data.cast()));
+    let arc_task = unsafe { ManuallyDrop::new(Arc::<W>::from_raw(data.cast())) };
 
     ArcTask::schedule_by_ref(&arc_task);
 }
@@ -100,7 +100,7 @@ unsafe fn waker_wake_by_ref<W: ArcTask>(data: *const ()) {
 /// This function is invoked through the [`RawWakerVTable`] created by the [`waker_ref<W>`]
 /// function.
 unsafe fn waker_drop<W: ArcTask>(data: *const ()) {
-    drop(Arc::<W>::from_raw(data.cast()));
+    drop(unsafe { Arc::<W>::from_raw(data.cast()) });
 }
 
 /// Gets the [`RawWakerVTable`] used by a [`RawWaker`] to awaken a task.
@@ -133,14 +133,14 @@ unsafe fn join_handle_poll_result<J: ArcTask>(
     data: *const (),
     cx: &mut Context<'_>,
 ) -> Poll<J::Output> {
-    let arc_task = ManuallyDrop::new(Arc::<J>::from_raw(data.cast()));
+    let arc_task = unsafe { ManuallyDrop::new(Arc::<J>::from_raw(data.cast())) };
 
     ArcTask::poll_result(&arc_task, cx)
 }
 
 /// Drops the task referenced by the given pointer, releasing its resources.
 unsafe fn join_handle_drop<J: ArcTask>(data: *mut ()) {
-    drop(Arc::<J>::from_raw(data.cast()));
+    drop(unsafe { Arc::<J>::from_raw(data.cast()) });
 }
 
 /// Gets the [`RawJoinHandleVTable`] used by a [`JoinHandle`] to poll a task.
