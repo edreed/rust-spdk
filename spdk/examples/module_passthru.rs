@@ -30,7 +30,7 @@ struct PassthruRsChannel {
 impl BDevIoChannelOps for PassthruRsChannel {
     type IoContext = ();
 
-    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
+    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
         match io.io_type() {
             IoType::Read => {
                 let num_blocks = io.num_blocks();
@@ -157,7 +157,7 @@ async fn main() {
     let devname = passthru.name().to_string_lossy().to_string();
 
     thread::spawn_local(async move {
-        let io_chan = passthru_desc.io_channel().unwrap();
+        let mut io_chan = passthru_desc.io_channel().unwrap();
         let layout = passthru_desc.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 

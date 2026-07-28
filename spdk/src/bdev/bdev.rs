@@ -117,7 +117,7 @@ pub trait BDevIoChannelOps: 'static {
     type IoContext: Default + 'static;
 
     /// Submit an I/O request to the BDev.
-    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno>;
+    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno>;
 }
 
 /// A BDev I/O channel implementation.
@@ -603,11 +603,11 @@ where
 
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
-        let io_channel = BDevIoChannel::<T::IoChannel>::from_raw(io_channel);
+        let mut io_channel = BDevIoChannel::<T::IoChannel>::from_raw(io_channel);
         let mut io = BDevIo::new(io);
 
         thread::spawn_local(async move {
-            let res = io_channel.ctx().submit_request(&mut io).await;
+            let res = io_channel.ctx_mut().submit_request(&mut io).await;
 
             io.complete(res.into());
         });
