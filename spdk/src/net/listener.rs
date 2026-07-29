@@ -1,5 +1,4 @@
 use std::{
-    mem,
     pin::Pin,
     ptr,
     task::{Context, Poll, Waker},
@@ -10,44 +9,13 @@ use spdk_sys::{spdk_sock, spdk_sock_accept, spdk_sock_close, spdk_sock_listen};
 
 use crate::{
     errors::{self, EAGAIN, EBADF, EINVAL, Errno, errno},
-    task::{Polled, Poller},
+    task::Polled,
     to_result,
 };
 
-use super::{AsRawSock, SocketAddr, TcpSocketExt, TcpSocketRemote, ToSocketAddrs};
-
-/// The state of a [`TcpListener`].
-#[derive(Debug)]
-enum ListenerState {
-    /// The listener is idle, i.e. it has not been bound with a [`Waker`] to receive connection
-    /// result notifications.
-    Idle,
-
-    /// The listener has been bound with a [`Waker`] to receive connection result notifications.
-    Waiting(Waker),
-
-    /// A result is available.
-    Available(Result<Accepted, Errno>),
-}
-
-impl ListenerState {
-    /// Polls the state of the listener, advancing to the next state if possible.
-    fn poll(&mut self, cx: &Context<'_>) -> Self {
-        match self {
-            Self::Idle => mem::replace(self, Self::Waiting(cx.waker().clone())),
-            Self::Waiting(waker) => Self::Waiting(waker.clone()),
-            Self::Available(_) => mem::replace(self, Self::Idle),
-        }
-    }
-
-    /// Sets the state of the listener with an available result.
-    fn set_available(&mut self, res: Result<Accepted, Errno>) -> Self {
-        match self {
-            Self::Idle | Self::Waiting(_) => mem::replace(self, Self::Available(res)),
-            _ => unreachable!("set_available called in unexpected state: {:?}", self),
-        }
-    }
-}
+use super::{
+    AsRawSock, SocketAddr, TcpSocketExt, TcpSocketRemote, ToSocketAddrs, bind_polled_listener,
+};
 
 /// An iterator created by calling the [`TcpListener::incoming()`] method that infinitely accepts
 /// connections asynchronously on a [`TcpListener`].
@@ -61,12 +29,12 @@ impl ListenerState {
 /// [`accept`]: TcpListener::accept
 /// [`Thread`]: crate::thread::Thread
 pub struct Incoming<'a> {
-    listener: &'a mut TcpListenerInner,
+    listener: &'a mut RawTcpListener,
 }
 
 impl<'a> Incoming<'a> {
     /// Creates new `Incoming` instance for the specified [`TcpListener`].
-    fn new(listener: &'a mut TcpListenerInner) -> Self {
+    fn new(listener: &'a mut RawTcpListener) -> Self {
         Self { listener }
     }
 }
@@ -75,9 +43,10 @@ impl<'a> Stream for Incoming<'a> {
     type Item = Result<Accepted, Errno>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.get_mut().listener.poll_state(cx) {
-            ListenerState::Idle | ListenerState::Waiting(_) => Poll::Pending,
-            ListenerState::Available(res) => Poll::Ready(Some(res)),
+        unsafe {
+            Pin::map_unchecked_mut(self, |s| s.listener)
+                .poll_accept(cx)
+                .map(Option::Some)
         }
     }
 }
@@ -115,44 +84,62 @@ impl TcpSocketExt for Accepted {}
 
 impl TcpSocketRemote for Accepted {}
 
-/// The internal state of a [`TcpListener`].
 #[derive(Debug)]
-struct TcpListenerInner {
+pub(crate) struct TcpListenerSocket {
     sock: *mut spdk_sock,
-    state: ListenerState,
+    waker: Option<Waker>,
 }
 
-impl TcpListenerInner {
-    /// Attempts to accept a new incoming connection.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Poll::Ready(Ok(Accepted(_)))` if there is a new incoming connection,
-    /// `Poll::Pending` if there is none, and `Poll::Ready(Err(Errno))` if the listener failed to
-    /// bind.
-    fn poll_accept(&self) -> Poll<Result<Accepted, Errno>> {
-        let sock = unsafe { spdk_sock_accept(self.sock) };
+impl TcpListenerSocket {
+    pub(crate) fn bind(addr: SocketAddr) -> Result<Self, Errno> {
+        let sock = unsafe { spdk_sock_listen(addr.ip().as_ptr(), addr.port() as i32, ptr::null()) };
 
         if !sock.is_null() {
-            return Poll::Ready(Ok(Accepted(sock)));
+            return Ok(Self { sock, waker: None });
+        }
+
+        Err(EINVAL)
+    }
+
+    pub(crate) fn poll_accept(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Accepted, Errno>> {
+        let accepted = unsafe { spdk_sock_accept(self.sock) };
+
+        if !accepted.is_null() {
+            return Poll::Ready(Ok(Accepted(accepted)));
         }
 
         let err = errno();
 
         if err == EAGAIN {
+            self.waker = Some(cx.waker().clone());
             return Poll::Pending;
         }
 
         Poll::Ready(Err(err))
     }
+}
 
-    /// Polls the state of the listener, advancing to the next state if possible.
-    fn poll_state(&mut self, cx: &mut Context<'_>) -> ListenerState {
-        self.state.poll(cx)
+impl AsRawSock for TcpListenerSocket {
+    fn as_raw_sock(&self) -> *mut spdk_sock {
+        self.sock
     }
 }
 
-impl Drop for TcpListenerInner {
+impl Polled for TcpListenerSocket {
+    fn poll(mut self: Pin<&mut Self>) -> bool {
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
+            return true;
+        }
+
+        false
+    }
+}
+
+impl Drop for TcpListenerSocket {
     fn drop(&mut self) {
         let res = to_result! {
             unsafe { spdk_sock_close(&mut self.sock as *mut _) }
@@ -163,17 +150,38 @@ impl Drop for TcpListenerInner {
     }
 }
 
-impl Polled for TcpListenerInner {
-    fn poll(mut self: Pin<&mut Self>) -> bool {
-        if let Poll::Ready(res) = self.poll_accept() {
-            if let ListenerState::Waiting(waker) = self.state.set_available(res) {
-                waker.wake();
-            }
+#[derive(Debug)]
+pub(crate) struct RawTcpListenerVtable {
+    pub(crate) as_raw_sock: unsafe fn(*const ()) -> *mut spdk_sock,
+    pub(crate) poll_accept: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<Accepted, Errno>>,
+    pub(crate) drop: unsafe fn(*const ()),
+}
 
-            return true;
-        }
+#[derive(Debug)]
+pub(crate) struct RawTcpListener {
+    data: *const (),
+    vtable: &'static RawTcpListenerVtable,
+}
 
-        false
+impl RawTcpListener {
+    pub(crate) fn new(data: *const (), vtable: &'static RawTcpListenerVtable) -> Self {
+        Self { data, vtable }
+    }
+
+    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Accepted, Errno>> {
+        unsafe { (self.vtable.poll_accept)(self.data, cx) }
+    }
+}
+
+impl AsRawSock for RawTcpListener {
+    fn as_raw_sock(&self) -> *mut spdk_sock {
+        unsafe { (self.vtable.as_raw_sock)(self.data) }
+    }
+}
+
+impl Drop for RawTcpListener {
+    fn drop(&mut self) {
+        unsafe { (self.vtable.drop)(self.data) };
     }
 }
 
@@ -188,29 +196,9 @@ impl Polled for TcpListenerInner {
 /// [`incoming`]: TcpListener::incoming
 /// [`TcpStream`]: super::TcpStream
 #[derive(Debug)]
-pub struct TcpListener(Poller<TcpListenerInner>);
+pub struct TcpListener(RawTcpListener);
 
 impl TcpListener {
-    /// Returns a mutable reference to the inner listener state.
-    fn inner_mut(&mut self) -> &mut TcpListenerInner {
-        self.0.polled_mut()
-    }
-
-    /// Attempts to bind a listener to the specified socket address.
-    fn bind_one(addr: SocketAddr) -> Option<Self> {
-        let raw_sock =
-            unsafe { spdk_sock_listen(addr.ip().as_ptr(), addr.port() as i32, ptr::null()) };
-
-        if !raw_sock.is_null() {
-            return Some(Self(Poller::new(TcpListenerInner {
-                sock: raw_sock,
-                state: ListenerState::Idle,
-            })));
-        }
-
-        None
-    }
-
     /// Creates a new [`TcpListener`] bound to the specified socket address.
     ///
     /// If the port number of the socket address is omitted or `0`, the operating system will assign
@@ -222,7 +210,7 @@ impl TcpListener {
     /// returned.
     pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<Self, errors::Errno> {
         for addr in addrs.to_socket_addr().await? {
-            match Self::bind_one(addr) {
+            match bind_polled_listener(addr).map(TcpListener).ok() {
                 Some(listener) => return Ok(listener),
                 None => continue,
             }
@@ -266,13 +254,13 @@ impl TcpListener {
     /// [`accept`]: TcpListener::accept
     /// [`Thread`]: crate::thread::Thread
     pub fn incoming(&mut self) -> Incoming<'_> {
-        Incoming::new(self.inner_mut())
+        Incoming::new(&mut self.0)
     }
 }
 
 impl AsRawSock for TcpListener {
     fn as_raw_sock(&self) -> *mut spdk_sock {
-        self.0.polled().sock
+        self.0.as_raw_sock()
     }
 }
 

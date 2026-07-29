@@ -5,7 +5,9 @@ use std::{
 
 use spdk_sys::{spdk_sock, spdk_sock_getaddr};
 
-use crate::{errors::Errno, net::SocketAddr, to_result};
+use crate::{errors::Errno, to_result};
+
+use super::SocketAddr;
 
 /// A trait providing access to the raw `spdk_sock` pointer.
 pub(crate) trait AsRawSock {

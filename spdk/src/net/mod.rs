@@ -6,12 +6,17 @@
 //! services for converting and resolving socket addresses.
 mod addr;
 mod listener;
+mod polled;
 mod socket;
 mod stream;
 
+pub(crate) use listener::{RawTcpListener, RawTcpListenerVtable, TcpListenerSocket};
+pub(crate) use polled::{bind_polled_listener, connect_polled_stream, new_polled_stream};
+pub(crate) use socket::AsRawSock;
+pub(crate) use stream::{RawTcpStream, RawTcpStreamVtable, TcpStreamSocket};
+
 pub use addr::{SocketAddr, SocketAddrIter, ToSocketAddrs, resolve};
 pub use listener::{Accepted, Incoming, TcpListener};
-pub(crate) use socket::AsRawSock;
 pub use socket::{TcpSocketExt, TcpSocketRemote};
 #[allow(unused_imports)]
 use spdk_sys::spdk_sock;

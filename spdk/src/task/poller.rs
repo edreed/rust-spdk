@@ -2,7 +2,7 @@ use std::{
     ffi::c_void,
     fmt::{self, Debug},
     future::Future,
-    mem::{MaybeUninit, transmute},
+    mem::{ManuallyDrop, MaybeUninit, transmute},
     pin::Pin,
     ptr::null_mut,
     task::{Context, Poll},
@@ -152,6 +152,16 @@ where
         assert!(!inner.poller.is_null());
 
         Self(inner)
+    }
+
+    pub(crate) fn into_raw(p: Self) -> *mut Self {
+        let mut p = ManuallyDrop::new(p);
+
+        (&mut *p.0) as *mut _ as *mut Self
+    }
+
+    pub(crate) unsafe fn from_raw(p: *const Self) -> Self {
+        unsafe { transmute(Box::from_raw(p as *mut PollerInner<T>)) }
     }
 
     /// Returns a reference to the polled type.
