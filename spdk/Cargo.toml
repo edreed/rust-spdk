@@ -53,6 +53,10 @@ name = "module_passthru"
 required-features = ["bdev-malloc", "bdev-module"]
 
 [[example]]
+name = "net_group"
+required-features = ["net"]
+
+[[example]]
 name = "net_hello_world"
 required-features = ["net"]
 

@@ -1,5 +1,7 @@
+//! Common operations that can be performed on TCP listeners and streams.
 use std::{
     ffi::CStr,
+    mem::MaybeUninit,
     ptr::{self, addr_of_mut},
 };
 
@@ -11,7 +13,17 @@ use super::SocketAddr;
 
 /// A trait providing access to the raw `spdk_sock` pointer.
 pub(crate) trait AsRawSock {
+    /// Returns the socket's raw `spdk_sock` pointer.
     fn as_raw_sock(&self) -> *mut spdk_sock;
+}
+
+impl<T> AsRawSock for MaybeUninit<T>
+where
+    T: AsRawSock,
+{
+    fn as_raw_sock(&self) -> *mut spdk_sock {
+        unreachable!("as_raw_sock called on uninitialized data");
+    }
 }
 
 /// A trait defining methods common to TCP sockets.

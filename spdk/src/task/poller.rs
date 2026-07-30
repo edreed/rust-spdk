@@ -154,13 +154,22 @@ where
         Self(inner)
     }
 
-    pub(crate) fn into_raw(p: Self) -> *mut Self {
+    /// Consumes an `Poller<T>` instance and returns the wrapped pointer.
+    ///
+    /// To avoid a memory leak, the pointer must be converted back to a
+    /// `Poller<T>` using the [`Poller::from_raw()`] function.
+    pub fn into_raw(p: Self) -> *mut Self {
         let mut p = ManuallyDrop::new(p);
 
         (&mut *p.0) as *mut _ as *mut Self
     }
 
-    pub(crate) unsafe fn from_raw(p: *const Self) -> Self {
+    /// Constructs a `Poller<T>` from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that the raw pointer is non-null and valid.
+    pub unsafe fn from_raw(p: *const Self) -> Self {
         unsafe { transmute(Box::from_raw(p as *mut PollerInner<T>)) }
     }
 

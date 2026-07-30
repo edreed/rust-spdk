@@ -51,6 +51,7 @@ impl Debug for Errno {
 impl Error for Errno {}
 
 define_errno! {
+    SUCCESS = 0,
     EPERM = 1,
     ENOENT = 2,
     ESRCH = 3,
