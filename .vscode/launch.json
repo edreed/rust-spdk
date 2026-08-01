@@ -204,6 +204,57 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'net_group (Server)'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=net_group",
+                    "--package=spdk",
+                    "--features=net"
+                ],
+                "filter": {
+                    "name": "net_group",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all",
+                "--no-rpc-server",
+                "--lcores=0",
+                "--server-mode"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'net_group (Client)'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=net_group",
+                    "--package=spdk",
+                    "--features=net"
+                ],
+                "filter": {
+                    "name": "net_group",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all",
+                "--lcores=1",
+                "--no-rpc-server"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'net_hello_world (Server)'",
             "cargo": {
                 "args": [

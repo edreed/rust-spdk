@@ -1,7 +1,8 @@
+//! The implementation of a TCP connection between local and remote sockets.
 use std::{
     future::Future,
     io::IoSlice,
-    mem::{self, ManuallyDrop, MaybeUninit},
+    mem::MaybeUninit,
     os::raw::c_void,
     pin::Pin,
     ptr::{self, addr_of, addr_of_mut},
@@ -10,108 +11,46 @@ use std::{
 
 use futures::{AsyncRead, AsyncWrite};
 use spdk_sys::{
-    iovec as IoVec, spdk_sock, spdk_sock_close, spdk_sock_connect_async,
+    iovec as IoVec, spdk_sock, spdk_sock_close, spdk_sock_connect_async, spdk_sock_flush,
     spdk_sock_get_default_opts, spdk_sock_is_connected, spdk_sock_opts, spdk_sock_recv,
     spdk_sock_writev,
 };
 
 use crate::{
-    errors::{EAGAIN, EBADF, EINVAL, Errno},
-    task::{Polled, Poller},
+    errors::{EAGAIN, EBADF, EINPROGRESS, EINVAL, Errno, SUCCESS},
+    task::Polled,
     to_result, to_result_size,
 };
 
-use super::{Accepted, AsRawSock, SocketAddr, TcpSocketExt, TcpSocketRemote, ToSocketAddrs};
-
-/// The state of a [`TcpStream`].
-#[derive(Debug)]
-enum StreamState {
-    /// The stream is connecting. The optional [`Waker`] receives notification of the connection result.
-    Connecting(Option<Waker>),
-
-    /// The stream is connected. The optional [`Waker`] receives notification of read or write
-    /// operation completions.
-    Connected(Option<Waker>),
-
-    /// The stream failed and is no longer functional. The [`Errno`] value describes the reason for
-    /// the failure.
-    Failed(Errno),
-}
-
-impl StreamState {
-    /// Polls the state of the stream.
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if a waiting [`Waker`] was awakened; `false` otherwise.
-    fn poll(&mut self) -> bool {
-        match self {
-            Self::Connecting(maybe_waker) | Self::Connected(maybe_waker) => {
-                if let Some(waker) = maybe_waker.take() {
-                    waker.wake();
-                    return true;
-                }
-
-                false
-            }
-            Self::Failed(_) => false,
-        }
-    }
-
-    /// Sets the state to [`Connected`].
-    ///
-    /// [`Connected`]: Self::Connected
-    fn set_connected(&mut self) {
-        let prev_state = mem::replace(self, Self::Connected(None));
-
-        match prev_state {
-            Self::Connecting(maybe_waker) => {
-                if let Some(waker) = maybe_waker {
-                    waker.wake();
-                }
-            }
-            _ => unreachable!("set_connected called in unexpected state: {:?}", prev_state),
-        }
-    }
-
-    /// Sets the state to [`Failed`].
-    ///
-    /// [`Failed`]: Self::Failed
-    fn set_failed(&mut self, e: Errno) {
-        let mut prev_state = mem::replace(self, Self::Failed(e));
-
-        prev_state.poll();
-    }
-}
+use super::{
+    AsRawSock, SocketAddr, SocketGroupEvent, TcpSocketExt, TcpSocketRemote, ToSocketAddrs,
+    connect_polled_stream,
+};
 
 /// A future implementation for awaiting the connection of a [`TcpStream`].
 #[derive(Debug)]
-struct Connector(Option<TcpStream>);
+pub(crate) struct Connector(Option<RawTcpStream>);
 
 impl Connector {
-    /// Polls the connection state of the stream.
-    fn poll_connected(&mut self, _cx: &mut Context<'_>) -> Poll<Result<TcpStream, Errno>> {
-        self.0
-            .as_mut()
-            .map(|stream| {
-                // Poll the `spdk_sock`'s connection state to update its internal state and invoke
-                // the callback passed to `spdk_sock_connect_async` if the connection operation is
-                // complete. The callback will update the internal `TcpStream` state with the result
-                // if invoked.
-                if stream.is_connected() {
-                    assert!(matches!(stream.inner().state, StreamState::Connected(_)));
-                    return Poll::Ready(Ok(()));
-                }
+    /// Creates a new `Connector` instance for specified [`TcpStream`].
+    pub(crate) fn new(stream: RawTcpStream) -> Self {
+        Self(Some(stream))
+    }
 
-                // If the `spdk_sock` was connected, the result was already returned above. We need
-                // only be concerened with two possibilities now: either the connection is still
-                // pending or it failed.
-                match stream.inner().state {
-                    StreamState::Connecting(_) => Poll::Pending,
-                    StreamState::Failed(e) => Poll::Ready(Err(e)),
-                    StreamState::Connected(_) => unreachable!(),
-                }
-            })
+    /// Polls the connection state of the stream.
+    ///
+    /// # Returns
+    ///
+    /// This method returns `Poll::Ready(Ok())` if the stream is connected, `Poll::Pending` if the
+    /// outgoing connection is pending, and `Poll::Ready(Err(`[`Errno`]`))` if the connection failed.
+    fn poll_connected(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<RawTcpStream, Errno>> {
+        // SAFETY: We're mapping to a field of a pinned object.
+        unsafe { Pin::map_unchecked_mut(self.as_mut(), |s| &mut s.0) }
+            .as_pin_mut()
+            .map(|stream| stream.poll_connected(cx))
             .unwrap_or(Poll::Ready(Err(EBADF)))
             .map_ok(|_| self.0.take().unwrap())
     }
@@ -120,30 +59,208 @@ impl Connector {
 impl Future for Connector {
     type Output = Result<TcpStream, Errno>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.poll_connected(cx)
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.poll_connected(cx).map_ok(TcpStream::new)
     }
 }
 
-/// The internal state of a [`TcpStream`].
+/// The internal socket implementation for a [`TcpStream`].
 #[derive(Debug)]
-struct TcpStreamInner {
+pub(crate) struct TcpStreamSocket {
+    /// A pointer to an `spdk_sock` returned by the [`spdk_sock_connect_async`] or [`spdk_sock_accept`] functions.
+    ///
+    /// [`spdk_sock_accept`]: spdk_sys::spdk_sock_accept
     sock: *mut spdk_sock,
-    state: StreamState,
+
+    /// The [`Waker`] awaiting an I/O operation.
+    waker: Option<Waker>,
+
+    /// The connection status.
+    conn_status: Errno,
 }
 
-impl TcpStreamInner {
-    /// Polls the state of the stream.
+impl TcpStreamSocket {
+    /// Creates a new `TcpStreamSocket` instance from an `spdk_sock` returned by the
+    /// [`spdk_sock_connect_async`] or [`spdk_sock_accept`] functions.
+    ///
+    /// [`spdk_sock_accept`]: spdk_sys::spdk_sock_accept
+    pub(crate) fn new(sock: *mut spdk_sock) -> Self {
+        Self {
+            sock,
+            waker: None,
+            conn_status: SUCCESS,
+        }
+    }
+
+    /// A callback function invoked when the connection operation is complete.
+    unsafe extern "C" fn connect_complete(cb_arg: *mut c_void, status: i32) {
+        let inner = unsafe { &mut *(cb_arg as *mut TcpStreamSocket) };
+
+        inner.conn_status = Errno::new(-status);
+
+        if let Some(waker) = inner.waker.take() {
+            waker.wake();
+        }
+    }
+
+    /// Creates a TCP connection to the specified socket address, initializing the
+    /// [`TcpStreamSocket`] in-place.
+    pub(crate) fn connect_in_place(
+        this: Pin<&mut MaybeUninit<TcpStreamSocket>>,
+        addr: SocketAddr,
+        opts: &spdk_sock_opts,
+    ) {
+        let this = this.get_mut().write(TcpStreamSocket {
+            sock: ptr::null_mut(),
+            waker: None,
+            conn_status: EINPROGRESS,
+        });
+
+        this.sock = unsafe {
+            spdk_sock_connect_async(
+                addr.ip().as_ptr(),
+                addr.port().into(),
+                ptr::null_mut(),
+                opts as *const _ as *mut _,
+                Some(Self::connect_complete),
+                this as *mut _ as *mut _,
+            )
+        };
+    }
+
+    /// Polls the connection state of the [`TcpStreamSocket`].
     ///
     /// # Returns
     ///
-    /// Returns `true` if a waiting [`Waker`] was awakened; `false` otherwise.
-    fn poll_state(&mut self) -> bool {
-        self.state.poll()
+    /// This method returns `Poll::Ready(Ok())` if the stream is connected, `Poll::Pending` if the
+    /// outgoing connection is pending, and `Poll::Ready(Err(`[`Errno`]`))` if the connection failed.
+    pub(crate) fn poll_connected(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Errno>> {
+        // Call `spdk_sock_flush` to get an indication whether the connection is in-progress,
+        // complete or failed.
+        let res = to_result!(unsafe { spdk_sock_flush(self.sock) });
+
+        match res {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(EAGAIN) => {
+                self.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+            Err(_) => Poll::Ready(Err(self.conn_status)),
+        }
+    }
+
+    /// Attempts to read from the [`TcpStreamSocket`].
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes read in `Poll::Ready(Ok(num_bytes_read))` if data was
+    /// available and `Poll::Pending` if no data was available.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+    pub(crate) fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, Errno>> {
+        let res = to_result_size!(unsafe {
+            spdk_sock_recv(self.sock, addr_of_mut!(*buf) as *mut _, buf.len())
+        });
+
+        match res {
+            Ok(bytes_read) => Poll::Ready(Ok(bytes_read)),
+            Err(EAGAIN) => {
+                self.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+
+    /// Attempts to write to the [`TcpStreamSocket`].
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes written in `Poll::Ready(Ok(num_bytes_written))` if data was
+    /// written and `Poll::Pending` data cannot currently be written.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+    pub(crate) fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, Errno>> {
+        let iov = IoSlice::new(buf);
+        let res =
+            to_result_size!(unsafe { spdk_sock_writev(self.sock, addr_of!(iov) as *mut IoVec, 1) });
+
+        match res {
+            Ok(bytes_written) => Poll::Ready(Ok(bytes_written)),
+            Err(EAGAIN) => {
+                self.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+
+    /// Attempts to flush buffered data from the [`TcpStreamSocket`].
+    ///
+    /// # Returns
+    ///
+    /// The SPDK does not expose a means explicitly flush the buffer data in the socket, so this
+    /// method always returns `Poll::Ready(Ok())`.
+    pub(crate) fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Errno>> {
+        Poll::Ready(Ok(()))
+    }
+
+    /// Attempts to close the [`TcpStreamSocket`].
+    ///
+    /// # Returns
+    ///
+    /// This method returns `Poll::Ready(Ok())` if the socket was successfully closed, and
+    /// `Poll::Ready(Err(`[`Errno`]`))` otherwise.
+    pub(crate) fn poll_close(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Errno>> {
+        Poll::Ready(to_result!(unsafe {
+            spdk_sock_close(&mut self.sock as *mut _)
+        }))
     }
 }
 
-impl Drop for TcpStreamInner {
+impl AsRawSock for TcpStreamSocket {
+    fn as_raw_sock(&self) -> *mut spdk_sock {
+        self.sock
+    }
+}
+
+impl SocketGroupEvent for TcpStreamSocket {
+    fn handle_event(mut self: Pin<&mut Self>) {
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
+        }
+    }
+}
+
+impl Polled for TcpStreamSocket {
+    fn poll(mut self: Pin<&mut Self>) -> bool {
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
+            return true;
+        }
+
+        false
+    }
+}
+
+impl Drop for TcpStreamSocket {
     fn drop(&mut self) {
         let res = to_result! {
             unsafe { spdk_sock_close(&mut self.sock as *mut _) }
@@ -154,9 +271,125 @@ impl Drop for TcpStreamInner {
     }
 }
 
-impl Polled for TcpStreamInner {
-    fn poll(mut self: Pin<&mut Self>) -> bool {
-        self.poll_state()
+/// A virtual function pointer table (vtable) that specifies the methods that can be invoked on a
+/// [`RawTcpStream`] instance.
+#[derive(Debug)]
+pub(crate) struct RawTcpStreamVtable {
+    /// Returns the [`RawTcpStream`]'s raw `spdk_sock` pointer.
+    pub(crate) as_raw_sock: unsafe fn(*const ()) -> *mut spdk_sock,
+
+    /// Polls the connection state of the [`RawTcpStream`].
+    pub(crate) poll_connected: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<(), Errno>>,
+
+    /// Attempts to read from the [`RawTcpStream`].
+    #[allow(clippy::type_complexity)]
+    pub(crate) poll_read:
+        unsafe fn(*const (), &mut Context<'_>, &mut [u8]) -> Poll<Result<usize, Errno>>,
+
+    /// Attempts to write to the [`RawTcpStream`].
+    #[allow(clippy::type_complexity)]
+    pub(crate) poll_write:
+        unsafe fn(*const (), &mut Context<'_>, &[u8]) -> Poll<Result<usize, Errno>>,
+
+    /// Attempts to flush buffered data in the [`RawTcpStream`].
+    pub(crate) poll_flush: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<(), Errno>>,
+
+    /// Attempts to close the [`RawTcpStream`].
+    pub(crate) poll_close: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<(), Errno>>,
+
+    /// Drops the [`RawTcpStream`].
+    pub(crate) drop: unsafe fn(*const ()),
+}
+
+/// Enables dynamic dispatch to a TCP socket stream implementation.
+#[derive(Debug)]
+pub(crate) struct RawTcpStream {
+    data: *const (),
+    vtable: &'static RawTcpStreamVtable,
+}
+
+impl RawTcpStream {
+    /// Creates a new `RawTcpStream` instance with the specified virtual function table.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the `vtable` is correct for the `data` pointer.
+    pub(crate) unsafe fn new(data: *const (), vtable: &'static RawTcpStreamVtable) -> Self {
+        Self { data, vtable }
+    }
+
+    /// Polls the connection state of the TCP stream.
+    ///
+    /// # Returns
+    ///
+    /// This method returns `Poll::Ready(Ok())` if the stream is connected, `Poll::Pending` if the
+    /// outgoing connection is pending, and `Poll::Ready(Err(`[`Errno`]`))` if the connection failed.
+    fn poll_connected(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+        unsafe { (self.vtable.poll_connected)(self.data, cx) }
+    }
+
+    /// Attempts to read from the [`TcpStreamSocket`].
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes read in `Poll::Ready(Ok(num_bytes_read))` if data was
+    /// available and `Poll::Pending` if no data was available.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, Errno>> {
+        unsafe { (self.vtable.poll_read)(self.data, cx, buf) }
+    }
+
+    /// Attempts to write to the TCP stream.
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes written in `Poll::Ready(Ok(num_bytes_written))` if data was
+    /// written and `Poll::Pending` data cannot currently be written.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, Errno>> {
+        unsafe { (self.vtable.poll_write)(self.data, cx, buf) }
+    }
+
+    /// Attempts to flush buffered data from the TCP stream.
+    ///
+    /// # Returns
+    ///
+    /// The SPDK does not expose a means explicitly flush the buffer data in the socket, so this
+    /// method always returns `Poll::Ready(Ok())`.
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+        unsafe { (self.vtable.poll_flush)(self.data, cx) }
+    }
+
+    /// Attempts to close the TCP stream.
+    ///
+    /// # Returns
+    ///
+    /// This method returns `Poll::Ready(Ok())` if the socket was successfully closed, and
+    /// `Poll::Ready(Err(`[`Errno`]`))` otherwise.
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+        unsafe { (self.vtable.poll_close)(self.data, cx) }
+    }
+}
+
+impl AsRawSock for RawTcpStream {
+    fn as_raw_sock(&self) -> *mut spdk_sock {
+        unsafe { (self.vtable.as_raw_sock)(self.data) }
+    }
+}
+
+impl Drop for RawTcpStream {
+    fn drop(&mut self) {
+        unsafe { (self.vtable.drop)(self.data) }
     }
 }
 
@@ -169,55 +402,11 @@ impl Polled for TcpStreamInner {
 /// [`TcpListener::accept`]: crate::net::TcpListener::accept
 /// [`TcpListener::incoming`]: crate::net::TcpListener::incoming
 #[derive(Debug)]
-pub struct TcpStream(Poller<TcpStreamInner>);
+pub struct TcpStream(RawTcpStream);
 
 impl TcpStream {
-    /// Returns an immutable reference to the internal state of the stream.
-    #[inline]
-    fn inner(&self) -> &TcpStreamInner {
-        self.0.polled()
-    }
-
-    /// Returns an mutable reference to the internal state of the stream.
-    #[inline]
-    fn inner_mut(&mut self) -> &mut TcpStreamInner {
-        self.0.polled_mut()
-    }
-
-    /// A callback function invoked when the connection operation is complete.
-    unsafe extern "C" fn connect_complete(cb_arg: *mut c_void, status: i32) {
-        let inner = unsafe { &mut *(cb_arg as *mut TcpStreamInner) };
-
-        match to_result!(status) {
-            Ok(_) => inner.state.set_connected(),
-            Err(e) => inner.state.set_failed(e),
-        };
-    }
-
-    /// Attempts to connect a stream to the specified socket address.
-    async fn connect_one(addr: SocketAddr, opts: &spdk_sock_opts) -> Result<Self, Errno> {
-        Connector(Some(TcpStream(Poller::new_in_place(move |inner| {
-            let inner = inner.get_mut().write(TcpStreamInner {
-                sock: ptr::null_mut(),
-                state: StreamState::Connecting(None),
-            });
-
-            inner.sock = unsafe {
-                spdk_sock_connect_async(
-                    addr.ip().as_ptr(),
-                    addr.port().into(),
-                    ptr::null_mut(),
-                    opts as *const _ as *mut _,
-                    Some(Self::connect_complete),
-                    inner as *mut _ as *mut _,
-                )
-            };
-
-            if inner.sock.is_null() {
-                inner.state = StreamState::Failed(EINVAL);
-            }
-        }))))
-        .await
+    pub(crate) fn new(stream: RawTcpStream) -> Self {
+        Self(stream)
     }
 
     /// Creates a TCP connection to the specified socket address.
@@ -238,7 +427,7 @@ impl TcpStream {
         let mut last_err = EINVAL;
 
         for addr in addrs.to_socket_addr().await? {
-            match Self::connect_one(addr, &opts).await {
+            match connect_polled_stream(addr, &opts).await {
                 Ok(stream) => return Ok(stream),
                 Err(e) => last_err = e,
             }
@@ -260,25 +449,7 @@ impl AsyncRead for TcpStream {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        let res = to_result_size! {
-            unsafe { spdk_sock_recv(self.inner().sock, addr_of_mut!(*buf) as *mut _, buf.len()) }
-        };
-
-        match res {
-            Ok(s) => Poll::Ready(Ok(s)),
-            Err(EAGAIN) => {
-                if let StreamState::Connected(waker) = &mut self.inner_mut().state {
-                    *waker = Some(cx.waker().clone());
-                    return Poll::Pending;
-                }
-
-                unreachable!(
-                    "poll_read called in unexpected state: {:?}",
-                    self.inner().state
-                );
-            }
-            Err(e) => Poll::Ready(Err(e.into())),
-        }
+        Pin::new(&mut self.0).poll_read(cx, buf).map_err(Into::into)
     }
 }
 
@@ -288,63 +459,26 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        let iov = IoSlice::new(buf);
-        let res = to_result_size! {
-            unsafe { spdk_sock_writev(self.inner().sock, addr_of!(iov) as *mut IoVec, 1) }
-        };
-
-        match res {
-            Ok(s) => Poll::Ready(Ok(s)),
-            Err(EAGAIN) => {
-                if let StreamState::Connected(waker) = &mut self.inner_mut().state {
-                    *waker = Some(cx.waker().clone());
-                    return Poll::Pending;
-                }
-
-                unreachable!(
-                    "poll_write called in unexpected state: {:?}",
-                    self.inner().state
-                );
-            }
-            Err(e) => Poll::Ready(Err(e.into())),
-        }
+        Pin::new(&mut self.0)
+            .poll_write(cx, buf)
+            .map_err(Into::into)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx).map_err(Into::into)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let res = to_result! {
-            unsafe { spdk_sock_close(&mut self.inner_mut().sock as *mut _) }
-        };
-
-        match res {
-            Ok(()) => Poll::Ready(Ok(())),
-            Err(e) => Poll::Ready(Err(e.into())),
-        }
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_close(cx).map_err(Into::into)
     }
 }
 
 impl AsRawSock for TcpStream {
     fn as_raw_sock(&self) -> *mut spdk_sock {
-        self.inner().sock
+        self.0.as_raw_sock()
     }
 }
 
 impl TcpSocketExt for TcpStream {}
 
 impl TcpSocketRemote for TcpStream {}
-
-impl From<Accepted> for TcpStream {
-    fn from(value: Accepted) -> Self {
-        let value = ManuallyDrop::new(value);
-
-        assert!(!value.0.is_null());
-
-        Self(Poller::new(TcpStreamInner {
-            sock: value.0,
-            state: StreamState::Connected(None),
-        }))
-    }
-}

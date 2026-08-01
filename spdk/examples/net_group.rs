@@ -6,7 +6,7 @@ use spdk::{
     self,
     cli::Parser,
     errors::Errno,
-    net::{Accepted, TcpListener, TcpSocketExt, TcpSocketRemote, TcpStream},
+    net::{Accepted, SocketGroup, TcpSocketExt, TcpSocketRemote, TcpStream},
     task::JoinHandle,
     thread::{self, Thread},
 };
@@ -32,7 +32,8 @@ async fn handle_client(client: Accepted) -> Result<(), Errno> {
 
     Thread::new(&name, &Thread::current().cpuset())?
         .spawn(move || async {
-            let mut client = client.into_stream();
+            let group = SocketGroup::new();
+            let mut client = group.add(client)?;
             let mut msg = String::new();
 
             client.read_to_string(&mut msg).await?;
@@ -50,7 +51,8 @@ async fn handle_client(client: Accepted) -> Result<(), Errno> {
 
 fn run_server(args: &'static Args) -> JoinHandle<Result<(), Errno>> {
     thread::spawn_local(async move {
-        let mut listener = TcpListener::bind(args.host.as_str()).await?;
+        let group = SocketGroup::new();
+        let mut listener = group.bind(args.host.as_str()).await?;
 
         println!(
             "SERVER: Listening on {}",

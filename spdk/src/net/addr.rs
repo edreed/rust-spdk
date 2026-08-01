@@ -1,3 +1,4 @@
+//! Facilities for resolving IPv4 and IPv6 addresses asynchronously.
 use std::{
     ffi::{CStr, CString},
     fmt::Display,
@@ -104,7 +105,7 @@ impl SocketAddr {
     /// The caller must ensure that `addr` points to a valid `addrinfo` structure.
     ///
     /// [`addrinfo`]: https://www.man7.org/linux/man-pages/man3/getaddrinfo.3.html
-    unsafe fn from_raw(addr: *mut addrinfo) -> Self {
+    unsafe fn from_addrinfo(addr: *mut addrinfo) -> Self {
         let addr = unsafe { &*addr };
         let mut host = [0u8; 1025];
         let mut serv = [0u8; 32];
@@ -236,7 +237,7 @@ impl Iterator for SocketAddrIter {
             return None;
         }
 
-        let addr = unsafe { SocketAddr::from_raw(self.current) };
+        let addr = unsafe { SocketAddr::from_addrinfo(self.current) };
         self.current = unsafe { (*self.current).ai_next };
 
         Some(addr)
