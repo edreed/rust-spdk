@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use spdk_sys::spdk_bdev;
 
 use crate::errors::{EPERM, Errno};
@@ -8,9 +7,6 @@ use super::{Owned, OwnedOps};
 /// A placeholder type that represents any block device.
 pub struct Any;
 
-unsafe impl Send for Any {}
-
-#[async_trait(?Send)]
 impl OwnedOps for Any {
     fn as_ptr(&self) -> *mut spdk_bdev {
         unreachable!("Any::as_ptr() should never be called")

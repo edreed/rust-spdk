@@ -9,7 +9,6 @@ all-features = true
 
 [dependencies]
 aquamarine = "0.6.0"
-async-trait = "0.1.91"
 futures = "0.3.33"
 libc = "0.2.189"
 lazy-regex = "3.6.0"

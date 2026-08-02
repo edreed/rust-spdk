@@ -9,7 +9,6 @@ use std::{
     task::Poll,
 };
 
-use async_trait::async_trait;
 use spdk_sys::{
     create_malloc_disk, delete_malloc_disk, malloc_bdev_opts, spdk_bdev, spdk_bdev_get_name,
 };
@@ -90,7 +89,6 @@ pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}
 
-#[async_trait(?Send)]
 impl OwnedOps for Malloc {
     fn as_ptr(&self) -> *mut spdk_bdev {
         self.0.as_ptr()

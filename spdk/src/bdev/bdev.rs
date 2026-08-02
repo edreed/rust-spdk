@@ -1,5 +1,6 @@
 use std::{
     ffi::{CStr, CString},
+    future::Future,
     io::{IoSlice, IoSliceMut},
     marker::PhantomData,
     mem::{self, ManuallyDrop, offset_of, size_of},
@@ -10,7 +11,6 @@ use std::{
     task::Poll,
 };
 
-use async_trait::async_trait;
 use spdk_sys::{
     SPDK_BDEV_IO_STATUS_ABORTED, SPDK_BDEV_IO_STATUS_AIO_ERROR, SPDK_BDEV_IO_STATUS_FAILED,
     SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED, SPDK_BDEV_IO_STATUS_MISCOMPARE,
@@ -107,7 +107,6 @@ impl From<IoStatus> for spdk_bdev_io_status {
 }
 
 /// A trait for implementing the I/O channel operations for a BDev.
-#[async_trait(?Send)]
 pub trait BDevIoChannelOps: 'static {
     /// A per-I/O context type accessed through the [`BDevIo::ctx()`] and
     /// [`BDevIo::ctx_mut()`] methods.
@@ -117,7 +116,10 @@ pub trait BDevIoChannelOps: 'static {
     type IoContext: Default + 'static;
 
     /// Submit an I/O request to the BDev.
-    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno>;
+    fn submit_request(
+        &mut self,
+        io: &mut BDevIo<Self::IoContext>,
+    ) -> impl Future<Output = Result<(), Errno>>;
 }
 
 /// A BDev I/O channel implementation.
@@ -406,12 +408,11 @@ where
 /// A trait for implementing the BDev operations.
 ///
 /// The type parameter `IoChannel` is the I/O channel type for the BDev.
-#[async_trait]
 pub trait BDevOps: Send + Sync + 'static {
     type IoChannel: BDevIoChannelOps;
 
     /// Destroys the BDev.
-    async fn destruct(&mut self) -> Result<(), Errno>;
+    fn destruct(&mut self) -> impl Future<Output = Result<(), Errno>>;
 
     /// Returns whether the specified I/O type is supported by the BDev.
     fn io_type_supported(&self, io_type: IoType) -> bool;
@@ -448,9 +449,9 @@ where
     pub ctx: T,
 }
 
-unsafe impl<T> Send for BDevImpl<T> where T: BDevOps + ?Sized {}
+unsafe impl<T> Send for BDevImpl<T> where T: BDevOps + Send + ?Sized {}
 
-unsafe impl<T> Sync for BDevImpl<T> where T: BDevOps + ?Sized {}
+unsafe impl<T> Sync for BDevImpl<T> where T: BDevOps + Sync + ?Sized {}
 
 impl<T> BDevImpl<T>
 where
@@ -673,7 +674,6 @@ impl<T: BDevOps> OwnedImpl<T> {
     }
 }
 
-#[async_trait(?Send)]
 impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
     fn as_ptr(&self) -> *mut spdk_bdev {
         addr_of!(self.0.bdev) as *mut _

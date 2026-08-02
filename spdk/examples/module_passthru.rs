@@ -4,7 +4,6 @@ use std::{
     slice::{self},
 };
 
-use async_trait::async_trait;
 use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
     block::{Any, Descriptor, Device, IoChannel, IoType, Owned},
@@ -17,7 +16,6 @@ use spdk::{
 #[derive(Debug, Default)]
 struct PassthruRsModule;
 
-#[async_trait(?Send)]
 impl ModuleOps for PassthruRsModule {
     type BDev = PassthruRs;
 }
@@ -26,7 +24,6 @@ struct PassthruRsChannel {
     ch: IoChannel,
 }
 
-#[async_trait(?Send)]
 impl BDevIoChannelOps for PassthruRsChannel {
     type IoContext = ();
 
@@ -81,7 +78,6 @@ struct PassthruRs {
 unsafe impl Send for PassthruRs {}
 unsafe impl Sync for PassthruRs {}
 
-#[async_trait]
 impl BDevOps for PassthruRs {
     type IoChannel = PassthruRsChannel;
 

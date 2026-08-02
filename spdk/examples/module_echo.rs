@@ -6,7 +6,6 @@ use std::{
 };
 
 use async_condvar_fair::Condvar;
-use async_trait::async_trait;
 use futures::future::join;
 use parking_lot::Mutex;
 use spdk::{
@@ -24,7 +23,6 @@ use spdk::{
 #[derive(Debug, Default)]
 struct EchoModule;
 
-#[async_trait(?Send)]
 impl ModuleOps for EchoModule {
     type BDev = Echo;
 
@@ -106,7 +104,6 @@ impl EchoChannel {
     }
 }
 
-#[async_trait(?Send)]
 impl BDevIoChannelOps for EchoChannel {
     type IoContext = ();
 
@@ -148,7 +145,6 @@ impl Default for Echo {
 unsafe impl Send for Echo {}
 unsafe impl Sync for Echo {}
 
-#[async_trait]
 impl BDevOps for Echo {
     type IoChannel = EchoChannel;
 
