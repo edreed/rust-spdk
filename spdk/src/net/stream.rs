@@ -1,7 +1,7 @@
 //! The implementation of a TCP connection between local and remote sockets.
 use std::{
     future::Future,
-    io::IoSlice,
+    io::{IoSlice, IoSliceMut},
     mem::MaybeUninit,
     os::raw::c_void,
     pin::Pin,
@@ -12,8 +12,8 @@ use std::{
 use futures::{AsyncRead, AsyncWrite};
 use spdk_sys::{
     iovec as IoVec, spdk_sock, spdk_sock_close, spdk_sock_connect_async, spdk_sock_flush,
-    spdk_sock_get_default_opts, spdk_sock_is_connected, spdk_sock_opts, spdk_sock_recv,
-    spdk_sock_writev,
+    spdk_sock_get_default_opts, spdk_sock_is_connected, spdk_sock_opts, spdk_sock_readv,
+    spdk_sock_recv, spdk_sock_writev,
 };
 
 use crate::{
@@ -179,6 +179,33 @@ impl TcpStreamSocket {
         }
     }
 
+    /// Attempts to read from the [`TcpStreamSocket`] into multiple buffers.
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes read in `Poll::Ready(Ok(num_bytes_read))` if data was
+    /// available and `Poll::Pending` if no data was available.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[``Errno`]`))`.
+    pub(crate) fn poll_read_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &mut [IoSliceMut],
+    ) -> Poll<Result<usize, Errno>> {
+        let res = to_result_size!(unsafe {
+            spdk_sock_readv(self.sock, bufs as *mut _ as *mut IoVec, bufs.len() as i32)
+        });
+
+        match res {
+            Ok(bytes_read) => Poll::Ready(Ok(bytes_read)),
+            Err(EAGAIN) => {
+                self.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+
     /// Attempts to write to the [`TcpStreamSocket`].
     ///
     /// # Returns
@@ -195,6 +222,33 @@ impl TcpStreamSocket {
         let iov = IoSlice::new(buf);
         let res =
             to_result_size!(unsafe { spdk_sock_writev(self.sock, addr_of!(iov) as *mut IoVec, 1) });
+
+        match res {
+            Ok(bytes_written) => Poll::Ready(Ok(bytes_written)),
+            Err(EAGAIN) => {
+                self.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+
+    /// Attempts to write to the [`TcpStreamSocket`] from multiple buffers.
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes written in `Poll::Ready(Ok(num_bytes_written))` if data was
+    /// written and `Poll::Pending` data cannot currently be written.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[``Errno`]`))`.
+    pub(crate) fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice],
+    ) -> Poll<Result<usize, Errno>> {
+        let res = to_result_size!(unsafe {
+            spdk_sock_writev(self.sock, bufs as *const _ as *mut IoVec, bufs.len() as i32)
+        });
 
         match res {
             Ok(bytes_written) => Poll::Ready(Ok(bytes_written)),
@@ -286,10 +340,20 @@ pub(crate) struct RawTcpStreamVtable {
     pub(crate) poll_read:
         unsafe fn(*const (), &mut Context<'_>, &mut [u8]) -> Poll<Result<usize, Errno>>,
 
+    /// Attempts to read from the [`RawTcpStream`] into multiple buffers.
+    #[allow(clippy::type_complexity)]
+    pub(crate) poll_read_vectored:
+        unsafe fn(*const (), &mut Context<'_>, &mut [IoSliceMut]) -> Poll<Result<usize, Errno>>,
+
     /// Attempts to write to the [`RawTcpStream`].
     #[allow(clippy::type_complexity)]
     pub(crate) poll_write:
         unsafe fn(*const (), &mut Context<'_>, &[u8]) -> Poll<Result<usize, Errno>>,
+
+    /// Attempts to write to the [`RawTcpStream`] from multiple buffers.
+    #[allow(clippy::type_complexity)]
+    pub(crate) poll_write_vectored:
+        unsafe fn(*const (), &mut Context<'_>, &[IoSlice]) -> Poll<Result<usize, Errno>>,
 
     /// Attempts to flush buffered data in the [`RawTcpStream`].
     pub(crate) poll_flush: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<(), Errno>>,
@@ -344,6 +408,22 @@ impl RawTcpStream {
         unsafe { (self.vtable.poll_read)(self.data, cx, buf) }
     }
 
+    /// Attempts to read from the [`TcpStreamSocket`] into multiple buffers.
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes read in `Poll::Ready(Ok(num_bytes_read))` if data was
+    /// available and `Poll::Pending` if no data was available.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[``Errno`]`))`.
+    fn poll_read_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &mut [IoSliceMut],
+    ) -> Poll<Result<usize, Errno>> {
+        unsafe { (self.vtable.poll_read_vectored)(self.data, cx, bufs) }
+    }
+
     /// Attempts to write to the TCP stream.
     ///
     /// # Returns
@@ -358,6 +438,22 @@ impl RawTcpStream {
         buf: &[u8],
     ) -> Poll<Result<usize, Errno>> {
         unsafe { (self.vtable.poll_write)(self.data, cx, buf) }
+    }
+
+    /// Attempts to write to the TCP stream from multiple buffers.
+    ///
+    /// # Returns
+    ///
+    /// This method returns number of bytes written in `Poll::Ready(Ok(num_bytes_written))` if data
+    /// was written and `Poll::Pending` data cannot currently be written.
+    ///
+    /// If the connection has failed, this method returns `Poll::Ready(Err(`[``Errno`]`))`.
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice],
+    ) -> Poll<Result<usize, Errno>> {
+        unsafe { (self.vtable.poll_write_vectored)(self.data, cx, bufs) }
     }
 
     /// Attempts to flush buffered data from the TCP stream.
@@ -451,6 +547,16 @@ impl AsyncRead for TcpStream {
     ) -> Poll<std::io::Result<usize>> {
         Pin::new(&mut self.0).poll_read(cx, buf).map_err(Into::into)
     }
+
+    fn poll_read_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.0)
+            .poll_read_vectored(cx, bufs)
+            .map_err(Into::into)
+    }
 }
 
 impl AsyncWrite for TcpStream {
@@ -461,6 +567,16 @@ impl AsyncWrite for TcpStream {
     ) -> Poll<std::io::Result<usize>> {
         Pin::new(&mut self.0)
             .poll_write(cx, buf)
+            .map_err(Into::into)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().0)
+            .poll_write_vectored(cx, bufs)
             .map_err(Into::into)
     }
 
