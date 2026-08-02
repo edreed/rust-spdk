@@ -1,6 +1,5 @@
 use std::io::Write;
 
-use async_trait::async_trait;
 use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
     block::{Device, IoType, Owned},
@@ -13,7 +12,6 @@ use spdk::{
 #[derive(Debug, Default)]
 struct NullRsModule;
 
-#[async_trait(?Send)]
 impl ModuleOps for NullRsModule {
     type BDev = NullRs;
 }
@@ -22,7 +20,6 @@ impl ModuleOps for NullRsModule {
 /// and returns zeroed buffers for read requests.
 struct NullRsChannel;
 
-#[async_trait(?Send)]
 impl BDevIoChannelOps for NullRsChannel {
     type IoContext = ();
 
@@ -58,7 +55,6 @@ impl NullRs {
     }
 }
 
-#[async_trait]
 impl BDevOps for NullRs {
     type IoChannel = NullRsChannel;
 

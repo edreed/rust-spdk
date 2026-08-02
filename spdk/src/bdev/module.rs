@@ -1,6 +1,5 @@
-use std::{ffi::CStr, fmt::Debug};
+use std::{ffi::CStr, fmt::Debug, future::Future};
 
-use async_trait::async_trait;
 use spdk_sys::{
     spdk_bdev, spdk_bdev_module, spdk_bdev_module_examine_done, spdk_bdev_module_fini_done,
     spdk_bdev_module_init_done, spdk_bdev_module_list_add,
@@ -14,16 +13,19 @@ use crate::{
 use super::{BDevImpl, BDevOps};
 
 /// A trait defining BDev module operations.
-#[async_trait(?Send)]
 pub trait ModuleOps {
     /// The BDev type implemented by the module.
     type BDev: BDevOps;
 
     /// Initializes the module.
-    async fn init(&self) {}
+    fn init(&self) -> impl Future<Output = ()> {
+        async {}
+    }
 
     /// Finalizes the module.
-    async fn fini(&self) {}
+    fn fini(&self) -> impl Future<Output = ()> {
+        async {}
+    }
 
     /// Returns the size in bytes of the per-I/O context.
     fn get_io_context_size(&self) -> usize {
@@ -51,7 +53,9 @@ pub trait ModuleOps {
     /// decision whether to claim can be made asynchronously.
     ///
     /// The default implementation claims no devices.
-    async fn examine_disk(&self, _bdev: Device<Any>) {}
+    fn examine_disk(&self, _bdev: Device<Any>) -> impl std::future::Future<Output = ()> {
+        async {}
+    }
 }
 
 /// A trait implemented by the [`module`] attribute macro to provide access to

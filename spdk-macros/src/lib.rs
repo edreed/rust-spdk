@@ -203,7 +203,6 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```rust
 /// use std::io::Write;
 ///
-/// use async_trait::async_trait;
 /// use spdk::{
 ///     bdev::{
 ///         BDevIo,
@@ -271,7 +270,6 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     }
 /// }
 ///
-/// #[async_trait]
 /// impl BDevOps for NullRs {
 ///     type IoChannel = NullRsChannel;
 ///
