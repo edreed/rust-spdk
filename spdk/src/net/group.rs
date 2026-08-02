@@ -202,6 +202,48 @@ fn stream_poll_read(
     Pin::new(&mut this.sock).poll_read(cx, buf)
 }
 
+/// Attempts to read from the [`RawTcpStream`] into multiple buffers.
+///
+/// This function is invoked through the [`RawTcpStreamVtable`] crated by the [`stream_vtable`]
+/// function. It enables dynamic dispatch to a [`Grouped`]`<`[`TcpStreamSocket`]`>` instance.
+///
+/// # Returns
+///
+/// This method returns number of bytes read in `Poll::Ready(Ok(num_bytes_read))` if data was
+/// available and `Poll::Pending` if no data was available.
+///
+/// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+fn stream_poll_read_vectored(
+    data: *const (),
+    cx: &mut Context<'_>,
+    bufs: &mut [std::io::IoSliceMut<'_>],
+) -> Poll<Result<usize, Errno>> {
+    let this = unsafe { &mut *(data as *mut Grouped<TcpStreamSocket>) };
+
+    Pin::new(&mut this.sock).poll_read_vectored(cx, bufs)
+}
+
+/// Attempts to write to the [`RawTcpStream`] from multiple buffers.
+///
+/// This function is invoked through the [`RawTcpStreamVtable`] crated by the [`stream_vtable`]
+/// function. It enables dynamic dispatch to a [`Grouped`]`<`[`TcpStreamSocket`]`>` instance.
+///
+/// # Returns
+///
+/// This method returns number of bytes written in `Poll::Ready(Ok(num_bytes_written))` if data was
+/// written and `Poll::Pending` data cannot currently be written.
+///
+/// If the connection has failed, this method returns `Poll::Ready(Err(`[``Errno`]`))`.
+fn stream_poll_write_vectored(
+    data: *const (),
+    cx: &mut Context<'_>,
+    bufs: &[std::io::IoSlice<'_>],
+) -> Poll<Result<usize, Errno>> {
+    let this = unsafe { &mut *(data as *mut Grouped<TcpStreamSocket>) };
+
+    Pin::new(&mut this.sock).poll_write_vectored(cx, bufs)
+}
+
 /// Attempts to write to the [`RawTcpStream`].
 ///
 /// This function is invoked through the [`RawTcpStreamVtable`] crated by the [`stream_vtable`]
@@ -283,7 +325,9 @@ fn stream_vtable() -> &'static RawTcpStreamVtable {
         as_raw_sock: stream_as_raw_sock,
         poll_connected: stream_poll_connected,
         poll_read: stream_poll_read,
+        poll_read_vectored: stream_poll_read_vectored,
         poll_write: stream_poll_write,
+        poll_write_vectored: stream_poll_write_vectored,
         poll_flush: stream_poll_flush,
         poll_close: stream_poll_close,
         drop: stream_drop,
