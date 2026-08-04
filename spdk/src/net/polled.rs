@@ -1,5 +1,6 @@
 //! Contains the SPDK poller based TCP listener and stream implementations.
 use std::{
+    io::{IoSlice, IoSliceMut},
     mem::ManuallyDrop,
     pin::Pin,
     task::{Context, Poll},
@@ -7,7 +8,7 @@ use std::{
 
 use spdk_sys::{spdk_sock, spdk_sock_opts};
 
-use crate::{errors::Errno, task::Poller};
+use crate::{Result, task::Poller};
 
 use super::{
     Accepted, AsRawSock, Connector, RawTcpListener, RawTcpListenerVtable, RawTcpStream,
@@ -35,7 +36,7 @@ fn listener_as_raw_sock(data: *const ()) -> *mut spdk_sock {
 /// If an incoming connection is available, this function returns `Poll<Ok(`[`Accepted`]`)>`. See
 /// the [`TcpListener::accept`] for details on converting the `Accepted` instance into a
 /// [`TcpStream`].
-fn listener_poll_accept(data: *const (), cx: &mut Context<'_>) -> Poll<Result<Accepted, Errno>> {
+fn listener_poll_accept(data: *const (), cx: &mut Context<'_>) -> Poll<Result<Accepted>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpListenerSocket>) });
 
@@ -69,7 +70,7 @@ fn listener_vtable() -> &'static RawTcpListenerVtable {
 /// [`TcpSocketExt::local_addr()`] method.
 ///
 /// [`TcpSocketExt::local_addr()`]: crate::net::TcpSocketExt::local_addr
-pub(crate) fn bind_polled_listener(addr: SocketAddr) -> Result<TcpListener, Errno> {
+pub(crate) fn bind_polled_listener(addr: SocketAddr) -> Result<TcpListener> {
     let listener = Poller::new(TcpListenerSocket::bind(addr)?);
 
     // SAFETY: The `vtable` matches the `data` pointer type.
@@ -98,7 +99,7 @@ fn stream_as_raw_sock(data: *const ()) -> *mut spdk_sock {
 ///
 /// This method returns `Poll::Ready(Ok())` if the stream is connected, `Poll::Pending` if the
 /// outgoing connection is pending, and `Poll::Ready(Err(`[`Errno`]`))` if the connection failed.
-fn stream_poll_connected(data: *const (), cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+fn stream_poll_connected(data: *const (), cx: &mut Context<'_>) -> Poll<Result<()>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
 
@@ -116,11 +117,7 @@ fn stream_poll_connected(data: *const (), cx: &mut Context<'_>) -> Poll<Result<(
 /// available and `Poll::Pending` if no data was available.
 ///
 /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
-fn stream_poll_read(
-    data: *const (),
-    cx: &mut Context<'_>,
-    buf: &mut [u8],
-) -> Poll<Result<usize, Errno>> {
+fn stream_poll_read(data: *const (), cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<usize>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
 
@@ -141,8 +138,8 @@ fn stream_poll_read(
 fn stream_poll_read_vectored(
     data: *const (),
     cx: &mut Context<'_>,
-    bufs: &mut [std::io::IoSliceMut<'_>],
-) -> Poll<Result<usize, Errno>> {
+    bufs: &mut [IoSliceMut<'_>],
+) -> Poll<Result<usize>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
 
@@ -160,11 +157,7 @@ fn stream_poll_read_vectored(
 /// written and `Poll::Pending` data cannot currently be written.
 ///
 /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
-fn stream_poll_write(
-    data: *const (),
-    cx: &mut Context<'_>,
-    buf: &[u8],
-) -> Poll<Result<usize, Errno>> {
+fn stream_poll_write(data: *const (), cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
 
@@ -185,8 +178,8 @@ fn stream_poll_write(
 fn stream_poll_write_vectored(
     data: *const (),
     cx: &mut Context<'_>,
-    bufs: &[std::io::IoSlice<'_>],
-) -> Poll<Result<usize, Errno>> {
+    bufs: &[IoSlice<'_>],
+) -> Poll<Result<usize>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
 
@@ -202,7 +195,7 @@ fn stream_poll_write_vectored(
 ///
 /// The SPDK does not expose a means explicitly flush the buffer data in the socket, so this method
 /// always returns `Poll::Ready(Ok())`.
-fn stream_poll_flush(data: *const (), cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+fn stream_poll_flush(data: *const (), cx: &mut Context<'_>) -> Poll<Result<()>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
 
@@ -218,7 +211,7 @@ fn stream_poll_flush(data: *const (), cx: &mut Context<'_>) -> Poll<Result<(), E
 ///
 /// This method returns `Poll::Ready(Ok())` if the socket was successfully closed, and
 /// `Poll::Ready(Err(`[`Errno`]`))` otherwise.
-fn stream_poll_close(data: *const (), cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+fn stream_poll_close(data: *const (), cx: &mut Context<'_>) -> Poll<Result<()>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
 
@@ -263,7 +256,7 @@ pub(crate) fn accept_polled_stream(accepted: Accepted) -> TcpStream {
 pub(crate) async fn connect_polled_stream(
     addr: SocketAddr,
     opts: &spdk_sock_opts,
-) -> Result<TcpStream, Errno> {
+) -> Result<TcpStream> {
     let stream = Poller::new_in_place(|stream| {
         TcpStreamSocket::connect_in_place(stream, addr, opts);
     });

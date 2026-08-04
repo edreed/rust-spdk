@@ -32,7 +32,8 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::{ENOMEM, Errno},
+    Result,
+    errors::ENOMEM,
     runtime::CpuSet,
     task::{self, Executor, JoinHandle},
     to_result,
@@ -70,7 +71,7 @@ impl Thread {
     /// The thread object returned is owned by the caller. When dropped, the
     /// thread will be marked for exit causing any further processing requests
     /// on this thread to fail.
-    pub fn new(name: &CStr, cpuset: &CpuSet) -> Result<Self, Errno> {
+    pub fn new(name: &CStr, cpuset: &CpuSet) -> Result<Self> {
         let t = unsafe { spdk_thread_create(name.as_ptr(), cpuset.as_ptr()) };
 
         match NonNull::new(t) {
@@ -288,7 +289,7 @@ impl Thread {
     ///
     /// [`EIO`]: crate::errors::EIO
     /// [`ENOMEM`]: crate::errors::ENOMEM
-    pub fn send_msg<F>(&self, f: F) -> Result<(), Errno>
+    pub fn send_msg<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce(),
     {

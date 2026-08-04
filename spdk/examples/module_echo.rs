@@ -12,7 +12,7 @@ use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
-    errors::{ENOTSUP, Errno},
+    errors::ENOTSUP,
     runtime::reactors,
     task::{self},
     thread::Thread,
@@ -55,7 +55,7 @@ struct EchoChannel {
 impl EchoChannel {
     // The `reader `condition variable releases the lock during the await.
     #[allow(clippy::await_holding_lock)]
-    async fn do_read(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
+    async fn do_read(&self, io: &mut BDevIo<()>) -> spdk::Result<()> {
         let offset_blocks = io.offset_blocks();
         let dst_buf = io.buffers_mut();
 
@@ -84,7 +84,7 @@ impl EchoChannel {
 
     // The `writer `condition variable releases the lock during the await.
     #[allow(clippy::await_holding_lock)]
-    async fn do_write(&self, io: &mut BDevIo<()>) -> Result<(), Errno> {
+    async fn do_write(&self, io: &mut BDevIo<()>) -> spdk::Result<()> {
         let mut src_buf = self.device.src_buf.lock();
 
         while src_buf.is_some() {
@@ -107,7 +107,7 @@ impl EchoChannel {
 impl BDevIoChannelOps for EchoChannel {
     type IoContext = ();
 
-    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
+    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
         match io.io_type() {
             IoType::Read => self.do_read(io).await,
             IoType::Write => self.do_write(io).await,
@@ -122,7 +122,7 @@ struct Echo {
 }
 
 impl Echo {
-    fn try_new(name: &CStr) -> Result<Device<Owned>, Errno> {
+    fn try_new(name: &CStr) -> spdk::Result<Device<Owned>> {
         let mut echo = EchoModule::new_bdev(name, Self::default());
 
         echo.bdev.blocklen = 4096;
@@ -148,7 +148,7 @@ unsafe impl Sync for Echo {}
 impl BDevOps for Echo {
     type IoChannel = EchoChannel;
 
-    async fn destruct(&mut self) -> Result<(), Errno> {
+    async fn destruct(&mut self) -> spdk::Result<()> {
         Ok(())
     }
 
@@ -156,7 +156,7 @@ impl BDevOps for Echo {
         matches!(io_type, IoType::Read | IoType::Write)
     }
 
-    fn new_io_channel(&mut self) -> Result<EchoChannel, Errno> {
+    fn new_io_channel(&mut self) -> spdk::Result<EchoChannel> {
         let device = self.inner.clone();
 
         Ok(EchoChannel { device })

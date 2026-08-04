@@ -8,7 +8,8 @@ use futures::{
 use spdk_sys::{spdk_event_allocate, spdk_event_call};
 
 use crate::{
-    errors::{ENOMEM, Errno},
+    Result,
+    errors::ENOMEM,
     task::{self, Executor, JoinHandle},
     thread::Thread,
 };
@@ -104,7 +105,7 @@ impl Reactor {
         self.0
     }
 
-    pub fn send_event<F>(&self, f: F) -> Result<(), Errno>
+    pub fn send_event<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce() + 'static,
     {

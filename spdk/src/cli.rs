@@ -1,5 +1,5 @@
 //! Command-line interface support for SPDK applications.
-use crate::{errors::Errno, runtime::Builder};
+use crate::{Result, runtime::Builder};
 
 pub use spdk_macros::Parser;
 
@@ -9,7 +9,7 @@ pub trait Parser {
     /// [`Runtime`].
     ///
     /// [`Runtime`]: ../runtime/struct.Runtime.html
-    fn parse() -> Result<Builder, Errno>;
+    fn parse() -> Result<Builder>;
 
     /// Returns a reference to the parsed command-line arguments.
     fn get() -> &'static Self;

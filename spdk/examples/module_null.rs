@@ -4,7 +4,6 @@ use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
-    errors::Errno,
 };
 
 /// Implements the NullRs block device module.
@@ -23,7 +22,7 @@ struct NullRsChannel;
 impl BDevIoChannelOps for NullRsChannel {
     type IoContext = ();
 
-    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
+    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();
 
@@ -43,7 +42,7 @@ unsafe impl Sync for NullRs {}
 
 impl NullRs {
     /// Creates a new NullRs block device.
-    pub fn try_new() -> Result<Device<Owned>, Errno> {
+    pub fn try_new() -> spdk::Result<Device<Owned>> {
         let mut null = NullRsModule::new_bdev(c"null-rs", NullRs);
 
         null.bdev.blocklen = 4096;
@@ -58,7 +57,7 @@ impl NullRs {
 impl BDevOps for NullRs {
     type IoChannel = NullRsChannel;
 
-    async fn destruct(&mut self) -> Result<(), Errno> {
+    async fn destruct(&mut self) -> spdk::Result<()> {
         Ok(())
     }
 
@@ -66,7 +65,7 @@ impl BDevOps for NullRs {
         matches!(io_type, IoType::Read | IoType::Write)
     }
 
-    fn new_io_channel(&mut self) -> Result<NullRsChannel, Errno> {
+    fn new_io_channel(&mut self) -> spdk::Result<NullRsChannel> {
         Ok(NullRsChannel)
     }
 }

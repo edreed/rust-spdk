@@ -1,6 +1,6 @@
 use spdk_sys::spdk_bdev;
 
-use crate::errors::{EPERM, Errno};
+use crate::{Result, errors::EPERM};
 
 use super::{Owned, OwnedOps};
 
@@ -12,7 +12,7 @@ impl OwnedOps for Any {
         unreachable!("Any::as_ptr() should never be called")
     }
 
-    async fn destroy(self) -> Result<(), Errno> {
+    async fn destroy(self) -> Result<()> {
         Err(EPERM)
     }
 }

@@ -258,7 +258,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// impl NullRs {
 ///     /// Creates a new NullRs block device.
-///     pub fn try_new() -> Result<Device<Owned>, Errno> {
+///     pub fn try_new() -> spdk::Result<Device<Owned>> {
 ///         let mut null = NullRsModule::new_bdev(c"null-rs", NullRs::default());
 ///
 ///         null.bdev.blocklen = 4096;
@@ -273,7 +273,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// impl BDevOps for NullRs {
 ///     type IoChannel = NullRsChannel;
 ///
-///     async fn destruct(&mut self) -> Result<(), Errno> {
+///     async fn destruct(&mut self) -> spdk::Result<()> {
 ///         Ok(())
 ///     }
 ///

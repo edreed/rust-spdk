@@ -10,7 +10,8 @@ use futures::{Stream, StreamExt};
 use spdk_sys::{spdk_sock, spdk_sock_accept, spdk_sock_close, spdk_sock_listen};
 
 use crate::{
-    errors::{self, EAGAIN, EBADF, EINVAL, Errno, errno},
+    Result,
+    errors::{EAGAIN, EBADF, EINVAL, errno},
     net::accept_polled_stream,
     task::Polled,
     to_result,
@@ -44,7 +45,7 @@ impl<'a> Incoming<'a> {
 }
 
 impl<'a> Stream for Incoming<'a> {
-    type Item = Result<Accepted, Errno>;
+    type Item = Result<Accepted>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         unsafe {
@@ -127,7 +128,7 @@ pub(crate) struct TcpListenerSocket {
 
 impl TcpListenerSocket {
     /// Creates a new [`TcpListenerSocket`] bound to the specified socket address.
-    pub(crate) fn bind(addr: SocketAddr) -> Result<Self, Errno> {
+    pub(crate) fn bind(addr: SocketAddr) -> Result<Self> {
         let sock = unsafe { spdk_sock_listen(addr.ip().as_ptr(), addr.port() as i32, ptr::null()) };
 
         if !sock.is_null() {
@@ -146,7 +147,7 @@ impl TcpListenerSocket {
     pub(crate) fn poll_accept(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Accepted, Errno>> {
+    ) -> Poll<Result<Accepted>> {
         let accepted = unsafe { spdk_sock_accept(self.sock) };
 
         if !accepted.is_null() {
@@ -208,7 +209,7 @@ pub(crate) struct RawTcpListenerVtable {
     pub(crate) as_raw_sock: unsafe fn(*const ()) -> *mut spdk_sock,
 
     /// Polls the [`RawTcpListener`] for an incoming connection.
-    pub(crate) poll_accept: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<Accepted, Errno>>,
+    pub(crate) poll_accept: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<Accepted>>,
 
     /// Drops the [`RawTcpListener`].
     pub(crate) drop: unsafe fn(*const ()),
@@ -237,7 +238,7 @@ impl RawTcpListener {
     ///
     /// If an incoming connection is available, this function returns `Poll<Ok(`[`Accepted`]`)>`. See
     /// the [`TcpListener::accept`] for details on converting the `Accepted` instance into a [`TcpStream`].
-    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Accepted, Errno>> {
+    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Accepted>> {
         unsafe { (self.vtable.poll_accept)(self.data, cx) }
     }
 }
@@ -281,7 +282,7 @@ impl TcpListener {
     /// If `addr` yields multiple socket address, `bind` will attempt listen on each until one
     /// succeeds and returns a listener. If no address can be successfully bound, `Err(EINVAL)` is
     /// returned.
-    pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<Self, errors::Errno> {
+    pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<Self> {
         for addr in addrs.to_socket_addr().await? {
             match bind_polled_listener(addr).ok() {
                 Some(listener) => return Ok(listener),
@@ -312,7 +313,7 @@ impl TcpListener {
     /// [`Thread`]: crate::thread::Thread
     /// [`into`]: std::convert::Into::into
     /// [`TcpStream`]: super::TcpStream
-    pub async fn accept(&mut self) -> Result<Accepted, Errno> {
+    pub async fn accept(&mut self) -> Result<Accepted> {
         self.incoming().next().await.unwrap_or(Err(EBADF))
     }
 

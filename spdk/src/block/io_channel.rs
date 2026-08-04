@@ -22,7 +22,8 @@ use spdk_sys::{
 use ternary_rs::if_else;
 
 use crate::{
-    errors::{EINVAL, EIO, ENOMEM, Errno},
+    Result,
+    errors::{EINVAL, EIO, ENOMEM},
     task::{Promise, Promissory},
     thread::Thread,
     to_poll_pending_on_ok,
@@ -63,7 +64,7 @@ pub struct IoChannel {
 
 impl IoChannel {
     /// Creates a new [`IoChannel`].
-    pub(crate) fn new(desc: &Descriptor) -> Result<Self, Errno> {
+    pub(crate) fn new(desc: &Descriptor) -> Result<Self> {
         // SAFETY: `desc` is guaranteed to contain a non-null pointer. The SPDK
         // also guarantees the descriptor will live as long as there are
         // outstanding I/O channels.
@@ -127,7 +128,7 @@ impl IoChannel {
     ///
     /// This function returns `Err(EINVAL)` if the I/O channel an I/O buffer is
     /// available on the current thread..
-    async fn wait_io_available(&mut self) -> Result<(), Errno> {
+    async fn wait_io_available(&mut self) -> Result<()> {
         let ch = self.channel;
 
         Promise::with_context_cyclic(|w| IoWait::new(w, self))
@@ -160,9 +161,9 @@ impl IoChannel {
 
     /// Executes an I/O operation, queuing the I/O for later execution if there
     /// are no `spdk_bdev_io` structures available.
-    async fn execute_io<F, T>(&mut self, data: PhantomData<T>, mut start_fn: F) -> Result<(), Errno>
+    async fn execute_io<F, T>(&mut self, data: PhantomData<T>, mut start_fn: F) -> Result<()>
     where
-        F: FnMut(&mut Self, &mut Rc<Promissory<(), PhantomData<T>>>) -> Poll<Result<(), Errno>>,
+        F: FnMut(&mut Self, &mut Rc<Promissory<(), PhantomData<T>>>) -> Poll<Result<()>>,
         T: Unpin,
     {
         loop {
@@ -178,7 +179,7 @@ impl IoChannel {
     }
 
     /// Resets the block device zone.
-    pub async fn reset_zone<'a>(&'a mut self, zone_id: u64) -> Result<(), Errno> {
+    pub async fn reset_zone<'a>(&'a mut self, zone_id: u64) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -203,11 +204,7 @@ impl IoChannel {
 
     /// Writes the data in the buffer to the block device at the specified
     /// byte offset.
-    pub async fn write_at<'a, B: AsRef<[u8]>>(
-        &'a mut self,
-        buf: &'a B,
-        offset: u64,
-    ) -> Result<(), Errno> {
+    pub async fn write_at<'a, B: AsRef<[u8]>>(&'a mut self, buf: &'a B, offset: u64) -> Result<()> {
         self.execute_io(PhantomData::<(&'a mut Self, &'a B)>, |this, p| {
             let buf = buf.as_ref();
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
@@ -239,7 +236,7 @@ impl IoChannel {
         bufs: &'a B,
         offset: u64,
         length: u64,
-    ) -> Result<(), Errno>
+    ) -> Result<()>
     where
         B: AsRef<[IoSlice<'a>]> + ?Sized,
     {
@@ -276,7 +273,7 @@ impl IoChannel {
         &'a mut self,
         buf: &'a B,
         offset_blocks: u64,
-    ) -> Result<(), Errno> {
+    ) -> Result<()> {
         self.execute_io(PhantomData::<(&'a mut Self, &'a B)>, |this, p| {
             let buf = buf.as_ref();
             let logical_block_size = this.device().logical_block_size() as usize;
@@ -314,7 +311,7 @@ impl IoChannel {
         bufs: &'a B,
         offset_blocks: u64,
         num_blocks: u64,
-    ) -> Result<(), Errno>
+    ) -> Result<()>
     where
         B: AsRef<[IoSlice<'a>]> + ?Sized,
     {
@@ -344,7 +341,7 @@ impl IoChannel {
     }
 
     /// Writes zeroes to the block device at the specified byte offset.
-    pub async fn write_zeroes_at<'a>(&'a mut self, offset: u64, len: u64) -> Result<(), Errno> {
+    pub async fn write_zeroes_at<'a>(&'a mut self, offset: u64, len: u64) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -372,7 +369,7 @@ impl IoChannel {
         &'a mut self,
         offset_blocks: u64,
         num_blocks: u64,
-    ) -> Result<(), Errno> {
+    ) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -401,7 +398,7 @@ impl IoChannel {
         &'a mut self,
         buf: &'a mut B,
         offset: u64,
-    ) -> Result<(), Errno> {
+    ) -> Result<()> {
         self.execute_io(PhantomData::<(&'a mut Self, &'a mut B)>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -432,7 +429,7 @@ impl IoChannel {
         bufs: &'a mut B,
         offset: u64,
         length: u64,
-    ) -> Result<(), Errno>
+    ) -> Result<()>
     where
         B: AsMut<[IoSliceMut<'a>]> + ?Sized,
     {
@@ -469,7 +466,7 @@ impl IoChannel {
         &'a mut self,
         buf: &'a mut B,
         offset_blocks: u64,
-    ) -> Result<(), Errno> {
+    ) -> Result<()> {
         self.execute_io(PhantomData::<(&'a mut Self, &'a mut B)>, |this, p| {
             let buf = buf.as_mut();
             let logical_block_size = this.device().logical_block_size() as usize;
@@ -507,7 +504,7 @@ impl IoChannel {
         bufs: &'a mut B,
         offset_blocks: u64,
         num_blocks: u64,
-    ) -> Result<(), Errno>
+    ) -> Result<()>
     where
         B: AsMut<[IoSliceMut<'a>]> + ?Sized,
     {
@@ -542,7 +539,7 @@ impl IoChannel {
         src_offset_blocks: u64,
         dst_offset_blocks: u64,
         num_blocks: u64,
-    ) -> Result<(), Errno> {
+    ) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -568,7 +565,7 @@ impl IoChannel {
 
     /// Notifies the block device that the specified range of bytes is no longer
     /// valid.
-    pub async fn unmap<'a>(&'a mut self, offset: u64, len: u64) -> Result<(), Errno> {
+    pub async fn unmap<'a>(&'a mut self, offset: u64, len: u64) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -593,11 +590,7 @@ impl IoChannel {
 
     /// Notifies the block device that the specified range of blocks is no longer
     /// valid.
-    pub async fn unmap_blocks<'a>(
-        &'a mut self,
-        offset_blocks: u64,
-        num_blocks: u64,
-    ) -> Result<(), Errno> {
+    pub async fn unmap_blocks<'a>(&'a mut self, offset_blocks: u64, num_blocks: u64) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -625,7 +618,7 @@ impl IoChannel {
     ///
     /// For devices with volatile cache, data is not guaranteed to be persistent
     /// until the completion of the flush operation.
-    pub async fn flush<'a>(&'a mut self, offset: u64, len: u64) -> Result<(), Errno> {
+    pub async fn flush<'a>(&'a mut self, offset: u64, len: u64) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 
@@ -649,7 +642,7 @@ impl IoChannel {
     }
 
     /// Resets the block device.
-    pub async fn reset<'a>(&'a mut self) -> Result<(), Errno> {
+    pub async fn reset<'a>(&'a mut self) -> Result<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
 

@@ -19,7 +19,7 @@ use spdk_sys::{
     iovec as IoVec, spdk_dma_free, spdk_dma_malloc, spdk_dma_realloc, spdk_dma_zmalloc,
 };
 
-use crate::errors::{EINVAL, Errno};
+use crate::{Result, errors::EINVAL};
 
 /// Allocates memory using the SPDK memory allocator.
 pub fn alloc(layout: Layout) -> *mut u8 {
@@ -147,7 +147,7 @@ impl Buffer {
     ///
     /// Returns [`EINVAL`] if the offset is greater than the
     /// size of the buffer.
-    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize, Errno> {
+    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
         let size = self.size() as u64;
 
         if offset > size {
@@ -181,7 +181,7 @@ impl Buffer {
     ///
     /// Returns [`EINVAL`] if the offset is greater than the
     /// size of the buffer.
-    pub fn write_at(&mut self, buf: &[u8], offset: u64) -> Result<usize, Errno> {
+    pub fn write_at(&mut self, buf: &[u8], offset: u64) -> Result<usize> {
         let size = self.size() as u64;
 
         if offset > size {
