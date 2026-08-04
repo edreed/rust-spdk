@@ -18,6 +18,7 @@ use static_init::dynamic;
 use ternary_rs::if_else;
 
 use crate::{
+    Result,
     errors::{EINVAL, Errno},
     runtime::{Reactor, reactors},
     task::{LocalTask, RcTask},
@@ -76,7 +77,7 @@ impl Builder {
     }
 
     /// Returns a new builder with values initialized from the command line.
-    pub fn from_cmdline() -> Result<Self, Errno> {
+    pub fn from_cmdline() -> Result<Self> {
         let argv: Vec<*const c_char> = ARGV_CSTRING.iter().map(|a| a.as_ptr()).collect();
         let mut builder = Self::new();
 
@@ -195,7 +196,7 @@ impl Runtime {
     }
 
     /// Returns a new runtime initialized from the command line.
-    pub fn from_cmdline() -> Result<Self, Errno> {
+    pub fn from_cmdline() -> Result<Self> {
         Ok(Builder::from_cmdline()?
             .with_name(APP_NAME.as_c_str())
             .build())

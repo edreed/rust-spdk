@@ -7,7 +7,7 @@ use std::{
 
 use spdk_sys::{spdk_sock, spdk_sock_getaddr};
 
-use crate::{errors::Errno, to_result};
+use crate::{Result, to_result};
 
 use super::SocketAddr;
 
@@ -30,7 +30,7 @@ where
 #[allow(private_bounds)]
 pub trait TcpSocketExt: AsRawSock {
     /// Returns the local address to which this TCP socket is bound.
-    fn local_addr(&self) -> Result<SocketAddr, Errno> {
+    fn local_addr(&self) -> Result<SocketAddr> {
         let mut addr = [0u8; 46];
         let mut port = 0u16;
 
@@ -53,7 +53,7 @@ pub trait TcpSocketExt: AsRawSock {
 /// A trait defining methods common to TCP sockets with remote connections.
 pub trait TcpSocketRemote: TcpSocketExt {
     /// Returns the socket address of the remote connection.
-    fn peer_addr(&self) -> Result<SocketAddr, Errno> {
+    fn peer_addr(&self) -> Result<SocketAddr> {
         let mut addr = [0u8; 46];
         let mut port = 0u16;
 

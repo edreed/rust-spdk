@@ -15,9 +15,9 @@ use std::{
 use lazy_regex::{regex_captures, regex_is_match};
 use libanl::{self, EAI_INPROGRESS, GAI_NOWAIT, eai_to_result, gai_error, gaicb, getaddrinfo_a};
 use libc::{AF_INET, AF_INET6, NI_NUMERICHOST, NI_NUMERICSERV, addrinfo, getnameinfo};
-use ternary_rs::if_else;
 
 use crate::{
+    Result,
     errors::{EINVAL, Errno},
     task::{Polled, Poller},
 };
@@ -178,7 +178,7 @@ impl Display for SocketAddr {
 impl FromStr for SocketAddr {
     type Err = Errno;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         Ok(std::net::SocketAddr::from_str(s)
             .map_err(|_| EINVAL)?
             .into())
@@ -200,7 +200,7 @@ impl From<std::net::SocketAddr> for SocketAddr {
 impl TryFrom<&str> for SocketAddr {
     type Error = Errno;
 
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
+    fn try_from(s: &str) -> Result<Self> {
         SocketAddr::from_str(s)
     }
 }
@@ -340,28 +340,36 @@ impl ResolverInner {
     ///
     /// # Returns
     ///
-    /// This method returns `Ok(())` if the lookup operation was started successfully. Otherwise, it
-    /// returns a `Err(`[`libanl::Error`]`)` result.
+    /// This method returns `Poll:Pending` if the lookup operation was started successfully.
+    /// Otherwise, it returns a `Poll::Ready(Err(`[`Errno`]`))` result.
     ///
     /// [`Idle`]: ResolverState::Idle
-    fn poll_start(self: Pin<&Self>) -> Result<(), libanl::Error> {
+    fn poll_start(self: Pin<&Self>) -> Poll<Result<SocketAddrIter>> {
         let list = [addr_of!(self.req)].as_ptr();
 
         eai_to_result!(unsafe { getaddrinfo_a(GAI_NOWAIT, list as *mut _, 1, ptr::null_mut()) })
+            .err()
+            .map_or(Poll::Pending, |e| Poll::Ready(Err(e.into())))
     }
 
     /// Called to poll the result of an asynchronous socket address lookup.
     ///
     /// # Returns
     ///
-    /// This method returns `Ok(Some(`[`SocketAddrIter`]`))` if the lookup operation completed
-    /// successfully, `Ok(None)` if the operation is still in progress and
-    /// `Err(`[`libanl::Error`]`)` on error.
-    fn poll_result(self: Pin<&Self>) -> Result<Option<SocketAddrIter>, libanl::Error> {
+    /// This method returns `Poll::Ready(Ok(`[`SocketAddrIter`]`)))` if the lookup operation
+    /// completed successfully, `Poll::Pending` if the operation is still in progress and
+    /// `Poll::Ready(Err(`[`Errno`]`))` on error.
+    fn poll_result(self: Pin<&Self>) -> Poll<Result<SocketAddrIter>> {
         eai_to_result!(unsafe { gai_error(&self.req as *const _) })
             .err()
-            .map(|e| if_else!(e == EAI_INPROGRESS, Ok(None), Err(e)))
-            .unwrap_or_else(|| Ok(Some(SocketAddrIter::new(self.req.ar_result))))
+            .map(|e| {
+                if e == EAI_INPROGRESS {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Err(e.into()))
+                }
+            })
+            .unwrap_or_else(|| Poll::Ready(Ok(SocketAddrIter::new(self.req.ar_result))))
     }
 
     /// Whether the asynchronous socket address lookup is done.
@@ -385,30 +393,21 @@ impl Polled for ResolverInner {
 }
 
 impl Future for ResolverInner {
-    type Output = Result<SocketAddrIter, Errno>;
+    type Output = Result<SocketAddrIter>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state = self.as_mut().state_mut().poll(cx);
 
         match state {
-            ResolverState::Idle => self
-                .as_ref()
-                .poll_start()
-                .err()
-                .map_or(Poll::Pending, |e| Poll::Ready(Err(e.into()))),
+            ResolverState::Idle => self.as_ref().poll_start(),
             ResolverState::Resolving(_) => Poll::Pending,
             ResolverState::Waking => match self.as_ref().poll_result() {
-                Ok(Some(res)) => {
+                Poll::Ready(res) => {
                     self.state_mut().set_complete();
 
-                    Poll::Ready(Ok(res))
+                    Poll::Ready(res)
                 }
-                Ok(None) => Poll::Pending,
-                Err(e) => {
-                    self.state_mut().set_complete();
-
-                    Poll::Ready(Err(e.into()))
-                }
+                Poll::Pending => Poll::Pending,
             },
             _ => panic!("poll called in unexpected state: {:?}", state),
         }
@@ -427,7 +426,7 @@ impl Resolver {
 }
 
 impl Future for Resolver {
-    type Output = Result<SocketAddrIter, Errno>;
+    type Output = Result<SocketAddrIter>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         unsafe { self.map_unchecked_mut(|s| &mut s.0) }.poll(cx)
@@ -444,7 +443,7 @@ impl Future for Resolver {
 /// let addr = resolve("localhost:8080").await?.next().unwrap();
 /// println!("resolved {:?}", addr);
 /// ```
-pub async fn resolve<A>(addr: A) -> Result<A::Iter, Errno>
+pub async fn resolve<A>(addr: A) -> Result<A::Iter>
 where
     A: ToSocketAddrs,
 {
@@ -467,13 +466,13 @@ pub trait ToSocketAddrs {
     type Iter: Iterator<Item = SocketAddr>;
 
     /// Converts or resolves this object into an iterator of [`SocketAddr`] objects.
-    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter, Errno>>;
+    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter>>;
 }
 
 impl ToSocketAddrs for SocketAddr {
     type Iter = option::IntoIter<SocketAddr>;
 
-    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter, Errno>> {
+    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter>> {
         ready(Ok(Some(self.clone()).into_iter()))
     }
 }
@@ -481,7 +480,7 @@ impl ToSocketAddrs for SocketAddr {
 impl ToSocketAddrs for SocketAddrV4 {
     type Iter = option::IntoIter<SocketAddr>;
 
-    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter, Errno>> {
+    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter>> {
         ready(Ok(Some(SocketAddr::V4(self.clone())).into_iter()))
     }
 }
@@ -489,7 +488,7 @@ impl ToSocketAddrs for SocketAddrV4 {
 impl ToSocketAddrs for SocketAddrV6 {
     type Iter = option::IntoIter<SocketAddr>;
 
-    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter, Errno>> {
+    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter>> {
         ready(Ok(Some(SocketAddr::V6(self.clone())).into_iter()))
     }
 }
@@ -497,7 +496,7 @@ impl ToSocketAddrs for SocketAddrV6 {
 impl ToSocketAddrs for (&str, Option<&str>) {
     type Iter = SocketAddrIter;
 
-    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter, Errno>> {
+    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter>> {
         Resolver::new(self.0, self.1)
     }
 }
@@ -505,7 +504,7 @@ impl ToSocketAddrs for (&str, Option<&str>) {
 impl ToSocketAddrs for (&str, &str) {
     type Iter = SocketAddrIter;
 
-    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter, Errno>> {
+    fn to_socket_addr(&self) -> impl Future<Output = Result<Self::Iter>> {
         Resolver::new(self.0, Some(self.1))
     }
 }
@@ -513,7 +512,7 @@ impl ToSocketAddrs for (&str, &str) {
 impl ToSocketAddrs for &str {
     type Iter = SocketAddrIter;
 
-    async fn to_socket_addr(&self) -> Result<Self::Iter, Errno> {
+    async fn to_socket_addr(&self) -> Result<Self::Iter> {
         if let Some((_, host, service)) = regex_captures!(r#"^\[?([^\]]+)\]?:(.+)$"#, self) {
             return Resolver::new(host, Some(service)).await;
         }
@@ -525,7 +524,7 @@ impl ToSocketAddrs for &str {
 impl ToSocketAddrs for String {
     type Iter = SocketAddrIter;
 
-    async fn to_socket_addr(&self) -> Result<Self::Iter, Errno> {
+    async fn to_socket_addr(&self) -> Result<Self::Iter> {
         self.as_str().to_socket_addr().await
     }
 }

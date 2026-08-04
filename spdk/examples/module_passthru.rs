@@ -8,7 +8,7 @@ use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
     block::{Any, Descriptor, Device, IoChannel, IoType, Owned},
     dma::{self},
-    errors::{ENOTSUP, Errno},
+    errors::ENOTSUP,
     thread,
 };
 
@@ -27,7 +27,7 @@ struct PassthruRsChannel {
 impl BDevIoChannelOps for PassthruRsChannel {
     type IoContext = ();
 
-    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> Result<(), Errno> {
+    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
         match io.io_type() {
             IoType::Read => {
                 let num_blocks = io.num_blocks();
@@ -81,7 +81,7 @@ unsafe impl Sync for PassthruRs {}
 impl BDevOps for PassthruRs {
     type IoChannel = PassthruRsChannel;
 
-    async fn destruct(&mut self) -> Result<(), Errno> {
+    async fn destruct(&mut self) -> spdk::Result<()> {
         Ok(())
     }
 
@@ -89,7 +89,7 @@ impl BDevOps for PassthruRs {
         self.base.io_type_supported(io_type)
     }
 
-    fn new_io_channel(&mut self) -> Result<PassthruRsChannel, Errno> {
+    fn new_io_channel(&mut self) -> spdk::Result<PassthruRsChannel> {
         let ch = self.desc.io_channel()?;
 
         Ok(PassthruRsChannel { ch })
@@ -97,7 +97,7 @@ impl BDevOps for PassthruRs {
 }
 
 impl PassthruRs {
-    pub fn try_new(base: Device<Any>, desc: Descriptor) -> Result<Device<Owned>, Errno> {
+    pub fn try_new(base: Device<Any>, desc: Descriptor) -> spdk::Result<Device<Owned>> {
         let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy())).unwrap();
         let mut passthru = PassthruRsModule::new_bdev(name.as_c_str(), PassthruRs { base, desc });
 

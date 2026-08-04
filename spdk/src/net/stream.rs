@@ -17,6 +17,7 @@ use spdk_sys::{
 };
 
 use crate::{
+    Result,
     errors::{EAGAIN, EBADF, EINPROGRESS, EINVAL, Errno, SUCCESS},
     task::Polled,
     to_result, to_result_size,
@@ -46,7 +47,7 @@ impl Connector {
     fn poll_connected(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<RawTcpStream, Errno>> {
+    ) -> Poll<Result<RawTcpStream>> {
         // SAFETY: We're mapping to a field of a pinned object.
         unsafe { Pin::map_unchecked_mut(self.as_mut(), |s| &mut s.0) }
             .as_pin_mut()
@@ -57,7 +58,7 @@ impl Connector {
 }
 
 impl Future for Connector {
-    type Output = Result<TcpStream, Errno>;
+    type Output = Result<TcpStream>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.poll_connected(cx).map_ok(TcpStream::new)
@@ -137,7 +138,7 @@ impl TcpStreamSocket {
     pub(crate) fn poll_connected(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Errno>> {
+    ) -> Poll<Result<()>> {
         // Call `spdk_sock_flush` to get an indication whether the connection is in-progress,
         // complete or failed.
         let res = to_result!(unsafe { spdk_sock_flush(self.sock) });
@@ -164,7 +165,7 @@ impl TcpStreamSocket {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<Result<usize, Errno>> {
+    ) -> Poll<Result<usize>> {
         let res = to_result_size!(unsafe {
             spdk_sock_recv(self.sock, addr_of_mut!(*buf) as *mut _, buf.len())
         });
@@ -191,7 +192,7 @@ impl TcpStreamSocket {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bufs: &mut [IoSliceMut],
-    ) -> Poll<Result<usize, Errno>> {
+    ) -> Poll<Result<usize>> {
         let res = to_result_size!(unsafe {
             spdk_sock_readv(self.sock, bufs as *mut _ as *mut IoVec, bufs.len() as i32)
         });
@@ -218,7 +219,7 @@ impl TcpStreamSocket {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> Poll<Result<usize, Errno>> {
+    ) -> Poll<Result<usize>> {
         let iov = IoSlice::new(buf);
         let res =
             to_result_size!(unsafe { spdk_sock_writev(self.sock, addr_of!(iov) as *mut IoVec, 1) });
@@ -245,7 +246,7 @@ impl TcpStreamSocket {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bufs: &[IoSlice],
-    ) -> Poll<Result<usize, Errno>> {
+    ) -> Poll<Result<usize>> {
         let res = to_result_size!(unsafe {
             spdk_sock_writev(self.sock, bufs as *const _ as *mut IoVec, bufs.len() as i32)
         });
@@ -266,10 +267,7 @@ impl TcpStreamSocket {
     ///
     /// The SPDK does not expose a means explicitly flush the buffer data in the socket, so this
     /// method always returns `Poll::Ready(Ok())`.
-    pub(crate) fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Errno>> {
+    pub(crate) fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
         Poll::Ready(Ok(()))
     }
 
@@ -279,10 +277,7 @@ impl TcpStreamSocket {
     ///
     /// This method returns `Poll::Ready(Ok())` if the socket was successfully closed, and
     /// `Poll::Ready(Err(`[`Errno`]`))` otherwise.
-    pub(crate) fn poll_close(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Errno>> {
+    pub(crate) fn poll_close(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
         Poll::Ready(to_result!(unsafe {
             spdk_sock_close(&mut self.sock as *mut _)
         }))
@@ -333,33 +328,27 @@ pub(crate) struct RawTcpStreamVtable {
     pub(crate) as_raw_sock: unsafe fn(*const ()) -> *mut spdk_sock,
 
     /// Polls the connection state of the [`RawTcpStream`].
-    pub(crate) poll_connected: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<(), Errno>>,
+    pub(crate) poll_connected: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<()>>,
 
     /// Attempts to read from the [`RawTcpStream`].
-    #[allow(clippy::type_complexity)]
-    pub(crate) poll_read:
-        unsafe fn(*const (), &mut Context<'_>, &mut [u8]) -> Poll<Result<usize, Errno>>,
+    pub(crate) poll_read: unsafe fn(*const (), &mut Context<'_>, &mut [u8]) -> Poll<Result<usize>>,
 
     /// Attempts to read from the [`RawTcpStream`] into multiple buffers.
-    #[allow(clippy::type_complexity)]
     pub(crate) poll_read_vectored:
-        unsafe fn(*const (), &mut Context<'_>, &mut [IoSliceMut]) -> Poll<Result<usize, Errno>>,
+        unsafe fn(*const (), &mut Context<'_>, &mut [IoSliceMut]) -> Poll<Result<usize>>,
 
     /// Attempts to write to the [`RawTcpStream`].
-    #[allow(clippy::type_complexity)]
-    pub(crate) poll_write:
-        unsafe fn(*const (), &mut Context<'_>, &[u8]) -> Poll<Result<usize, Errno>>,
+    pub(crate) poll_write: unsafe fn(*const (), &mut Context<'_>, &[u8]) -> Poll<Result<usize>>,
 
     /// Attempts to write to the [`RawTcpStream`] from multiple buffers.
-    #[allow(clippy::type_complexity)]
     pub(crate) poll_write_vectored:
-        unsafe fn(*const (), &mut Context<'_>, &[IoSlice]) -> Poll<Result<usize, Errno>>,
+        unsafe fn(*const (), &mut Context<'_>, &[IoSlice]) -> Poll<Result<usize>>,
 
     /// Attempts to flush buffered data in the [`RawTcpStream`].
-    pub(crate) poll_flush: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<(), Errno>>,
+    pub(crate) poll_flush: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<()>>,
 
     /// Attempts to close the [`RawTcpStream`].
-    pub(crate) poll_close: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<(), Errno>>,
+    pub(crate) poll_close: unsafe fn(*const (), &mut Context<'_>) -> Poll<Result<()>>,
 
     /// Drops the [`RawTcpStream`].
     pub(crate) drop: unsafe fn(*const ()),
@@ -388,7 +377,7 @@ impl RawTcpStream {
     ///
     /// This method returns `Poll::Ready(Ok())` if the stream is connected, `Poll::Pending` if the
     /// outgoing connection is pending, and `Poll::Ready(Err(`[`Errno`]`))` if the connection failed.
-    fn poll_connected(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+    fn poll_connected(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         unsafe { (self.vtable.poll_connected)(self.data, cx) }
     }
 
@@ -404,7 +393,7 @@ impl RawTcpStream {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<Result<usize, Errno>> {
+    ) -> Poll<Result<usize>> {
         unsafe { (self.vtable.poll_read)(self.data, cx, buf) }
     }
 
@@ -420,7 +409,7 @@ impl RawTcpStream {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bufs: &mut [IoSliceMut],
-    ) -> Poll<Result<usize, Errno>> {
+    ) -> Poll<Result<usize>> {
         unsafe { (self.vtable.poll_read_vectored)(self.data, cx, bufs) }
     }
 
@@ -432,11 +421,7 @@ impl RawTcpStream {
     /// written and `Poll::Pending` data cannot currently be written.
     ///
     /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, Errno>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
         unsafe { (self.vtable.poll_write)(self.data, cx, buf) }
     }
 
@@ -452,7 +437,7 @@ impl RawTcpStream {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bufs: &[IoSlice],
-    ) -> Poll<Result<usize, Errno>> {
+    ) -> Poll<Result<usize>> {
         unsafe { (self.vtable.poll_write_vectored)(self.data, cx, bufs) }
     }
 
@@ -462,7 +447,7 @@ impl RawTcpStream {
     ///
     /// The SPDK does not expose a means explicitly flush the buffer data in the socket, so this
     /// method always returns `Poll::Ready(Ok())`.
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         unsafe { (self.vtable.poll_flush)(self.data, cx) }
     }
 
@@ -472,7 +457,7 @@ impl RawTcpStream {
     ///
     /// This method returns `Poll::Ready(Ok())` if the socket was successfully closed, and
     /// `Poll::Ready(Err(`[`Errno`]`))` otherwise.
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Errno>> {
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         unsafe { (self.vtable.poll_close)(self.data, cx) }
     }
 }
@@ -510,7 +495,7 @@ impl TcpStream {
     /// If `addr` yields multiple socket addresses, `connect` will attempt to connect to each until
     /// one succeeds and returns a stream. If no address can be successfully connected,
     /// the error from the last connection attempt is returned.
-    pub async fn connect<A: ToSocketAddrs>(addrs: A) -> Result<Self, Errno> {
+    pub async fn connect<A: ToSocketAddrs>(addrs: A) -> Result<Self> {
         let opts = unsafe {
             let mut opts = MaybeUninit::<spdk_sock_opts>::zeroed().assume_init();
 

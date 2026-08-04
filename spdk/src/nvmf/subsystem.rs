@@ -18,7 +18,8 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::{EINVAL, ENOENT, Errno},
+    Result,
+    errors::{EINVAL, ENOENT},
     nvme::TransportId,
     task::{Promise, Promissory},
     to_poll_pending_on_ok, to_result,
@@ -75,7 +76,7 @@ impl Subsystem {
     }
 
     /// Sets the serial number of the subsystem.
-    pub fn set_serial_number(&mut self, sn: &CStr) -> Result<(), Errno> {
+    pub fn set_serial_number(&mut self, sn: &CStr) -> Result<()> {
         unsafe {
             if spdk_nvmf_subsystem_set_sn(self.as_ptr(), sn.as_ptr()) < 0 {
                 return Err(EINVAL);
@@ -91,7 +92,7 @@ impl Subsystem {
     }
 
     /// Sets the model number of the subsystem.
-    pub fn set_model_number(&mut self, mn: &CStr) -> Result<(), Errno> {
+    pub fn set_model_number(&mut self, mn: &CStr) -> Result<()> {
         unsafe {
             if spdk_nvmf_subsystem_set_mn(self.as_ptr(), mn.as_ptr()) < 0 {
                 return Err(EINVAL);
@@ -136,7 +137,7 @@ impl Subsystem {
     }
 
     /// Adds a host NQN to the allowed list.
-    pub fn allow_host(&mut self, host_nqn: &CStr) -> Result<(), Errno> {
+    pub fn allow_host(&mut self, host_nqn: &CStr) -> Result<()> {
         unsafe {
             to_result!(spdk_nvmf_subsystem_add_host(
                 self.as_ptr(),
@@ -155,7 +156,7 @@ impl Subsystem {
     ///
     /// Returns `Ok(true)` if the host was removed from the allowed list, and
     /// `Ok(false)` if the host was not in the allowed list.
-    pub fn deny_host(&mut self, host_nqn: &CStr) -> Result<bool, Errno> {
+    pub fn deny_host(&mut self, host_nqn: &CStr) -> Result<bool> {
         let res = unsafe {
             to_result!(spdk_nvmf_subsystem_remove_host(
                 self.as_ptr(),
@@ -194,7 +195,7 @@ impl Subsystem {
     /// Starts the subsystem.
     ///
     /// This method transitions of the subsystem from the Inactive to Active state.
-    pub async fn start<'a>(&'a mut self) -> Result<(), Errno> {
+    pub async fn start<'a>(&'a mut self) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
                 let (cb_fn, cb_arg) =
@@ -219,7 +220,7 @@ impl Subsystem {
     /// Stops the subsystem.
     ///
     /// This method transitions of the subsystem from the Active to Inactive state.
-    pub async fn stop<'a>(&'a mut self) -> Result<(), Errno> {
+    pub async fn stop<'a>(&'a mut self) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
                 let (cb_fn, cb_arg) =
@@ -250,7 +251,7 @@ impl Subsystem {
     /// namespace are quiesced and incoming commands are queued until the
     /// subsystem is resumed. A namespace identifier of 0 indicates that no
     /// namespace is paused while `SPDK_NVME_GLOBAL_NS_TAG` pauses all namespaces.
-    pub async fn pause<'a>(&'a mut self, ns: u32) -> Result<(), Errno> {
+    pub async fn pause<'a>(&'a mut self, ns: u32) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
                 let (cb_fn, cb_arg) =
@@ -276,7 +277,7 @@ impl Subsystem {
     /// Resumes the subsystem.
     ///
     /// This method transitions of the subsystem from the Inactive to Paused state.
-    pub async fn resume<'a>(&'a mut self) -> Result<(), Errno> {
+    pub async fn resume<'a>(&'a mut self) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
                 let (cb_fn, cb_arg) =
@@ -302,7 +303,7 @@ impl Subsystem {
     ///
     /// The subsystem must be in the Paused or Inactive states to add a
     /// namespace.
-    pub fn add_namespace(&mut self, device_name: &CStr) -> Result<Namespace, Errno> {
+    pub fn add_namespace(&mut self, device_name: &CStr) -> Result<Namespace> {
         unsafe {
             let nsid = spdk_nvmf_subsystem_add_ns_ext(
                 self.as_ptr(),
@@ -326,7 +327,7 @@ impl Subsystem {
     ///
     /// The subsystem must be in the Paused or Inactive states to remove a
     /// namespace.
-    pub fn remove_namespace(&mut self, nsid: u32) -> Result<(), Errno> {
+    pub fn remove_namespace(&mut self, nsid: u32) -> Result<()> {
         unsafe { to_result!(spdk_nvmf_subsystem_remove_ns(self.as_ptr(), nsid)) }
     }
 
@@ -339,7 +340,7 @@ impl Subsystem {
     ///
     /// The subsystem must be in the Paused or Inactive states to add a
     /// listener.
-    pub async fn add_listener<'a>(&'a mut self, transport_id: &TransportId) -> Result<(), Errno> {
+    pub async fn add_listener<'a>(&'a mut self, transport_id: &TransportId) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
                 let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
@@ -364,7 +365,7 @@ impl Subsystem {
     ///
     /// Returns `Ok(true)` if the listener was removed, and `Ok(false)` if no
     /// listener was listening on the given transport.
-    pub fn remove_listener(&mut self, transport_id: &TransportId) -> Result<bool, Errno> {
+    pub fn remove_listener(&mut self, transport_id: &TransportId) -> Result<bool> {
         let res = unsafe {
             to_result!(spdk_nvmf_subsystem_remove_listener(
                 self.as_ptr(),

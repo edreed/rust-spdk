@@ -16,7 +16,8 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::{EBADF, EINPROGRESS, ENOMEM, EPERM, Errno},
+    Result,
+    errors::{EBADF, EINPROGRESS, ENOMEM, EPERM},
     nvme::{SPDK_NVME_GLOBAL_NS_TAG, TransportId},
     task::{Promise, Promissory},
     thread, to_poll_pending_on_err, to_result,
@@ -57,7 +58,7 @@ impl Builder {
 
     /// Creates a new [`Target`] instance that owns the underlying
     /// `spdk_nvmf_tgt` pointer.
-    pub fn build(self) -> Result<Target, Errno> {
+    pub fn build(self) -> Result<Target> {
         unsafe {
             match NonNull::new(spdk_nvmf_tgt_create(&self.0 as *const _ as *mut _)) {
                 Some(ptr) => Ok(Target(OwnershipState::Owned(ptr))),
@@ -126,7 +127,7 @@ unsafe impl Send for Target {}
 impl Target {
     /// Creates a new NVMe-oF target that owns the underlying `spdk_nvmf_tgt`
     /// pointer.
-    pub fn new(name: &str) -> Result<Self, Errno> {
+    pub fn new(name: &str) -> Result<Self> {
         Builder::new(name).build()
     }
 
@@ -194,7 +195,7 @@ impl Target {
     /// `Err(EPERM)` if called on a borrowed target and `Err(ENODEV)` if called
     /// on a target that neither owns nor borrows the underlying `spdk_nvmf_tgt`
     /// pointer.
-    pub async fn destroy(mut self) -> Result<(), Errno> {
+    pub async fn destroy(mut self) -> Result<()> {
         match self.0 {
             OwnershipState::Owned(_) => {
                 Promise::new()
@@ -221,7 +222,7 @@ impl Target {
     }
 
     /// Adds a transport to the target.
-    pub async fn add_transport<'a>(&'a mut self, transport: Transport) -> Result<(), Errno> {
+    pub async fn add_transport<'a>(&'a mut self, transport: Transport) -> Result<()> {
         let res = Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
                 let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
@@ -264,7 +265,7 @@ impl Target {
     }
 
     /// Enables the NVMe-oF Discovery Controller subsystem on this target.
-    pub fn enable_discovery(&mut self) -> Result<Subsystem, Errno> {
+    pub fn enable_discovery(&mut self) -> Result<Subsystem> {
         let mut discovery =
             self.add_subsystem(SPDK_NVMF_DISCOVERY_NQN, SubsystemType::Discovery, 0)?;
 
@@ -288,7 +289,7 @@ impl Target {
         nqn: &CStr,
         subtype: SubsystemType,
         num_ns: u32,
-    ) -> Result<Subsystem, Errno> {
+    ) -> Result<Subsystem> {
         let subsys = unsafe {
             spdk_nvmf_subsystem_create(self.as_ptr(), nqn.as_ptr(), subtype.into(), num_ns)
         };
@@ -301,7 +302,7 @@ impl Target {
     }
 
     /// Removes a subsystem from the target.
-    pub async fn remove_subsystem<'a>(&'a mut self, subsys: Subsystem) -> Result<(), Errno> {
+    pub async fn remove_subsystem<'a>(&'a mut self, subsys: Subsystem) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
                 let (cb_fn, cb_arg) = Promissory::callback_with_ok(p);
@@ -329,7 +330,7 @@ impl Target {
     }
 
     /// Starts the subsystems on this target.
-    pub async fn start_subsystems(&mut self) -> Result<(), Errno> {
+    pub async fn start_subsystems(&mut self) -> Result<()> {
         for mut subsys in self.subsystems() {
             subsys.start().await?;
         }
@@ -338,7 +339,7 @@ impl Target {
     }
 
     /// Stops the subsystems on this target.
-    pub async fn stop_subsystems(&mut self) -> Result<(), Errno> {
+    pub async fn stop_subsystems(&mut self) -> Result<()> {
         for mut subsys in self.subsystems() {
             subsys.stop().await?;
         }
@@ -347,7 +348,7 @@ impl Target {
     }
 
     /// Pauses the subsystems on this target.
-    pub async fn pause_subsystems(&mut self) -> Result<(), Errno> {
+    pub async fn pause_subsystems(&mut self) -> Result<()> {
         for mut subsys in self.subsystems() {
             subsys.pause(SPDK_NVME_GLOBAL_NS_TAG).await?;
         }
@@ -356,7 +357,7 @@ impl Target {
     }
 
     /// Resumes the subsystems on this target.
-    pub async fn resume_subsystems(&mut self) -> Result<(), Errno> {
+    pub async fn resume_subsystems(&mut self) -> Result<()> {
         for mut subsys in self.subsystems() {
             subsys.resume().await?;
         }
@@ -365,7 +366,7 @@ impl Target {
     }
 
     /// Begins accepting new connections on the specified transport.
-    pub fn listen(&mut self, transport_id: &TransportId) -> Result<(), Errno> {
+    pub fn listen(&mut self, transport_id: &TransportId) -> Result<()> {
         unsafe {
             let mut opts = MaybeUninit::uninit();
 

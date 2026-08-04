@@ -5,7 +5,6 @@ use futures::{AsyncReadExt, AsyncWriteExt};
 use spdk::{
     self,
     cli::Parser,
-    errors::Errno,
     net::{Accepted, SocketGroup, TcpSocketExt, TcpSocketRemote, TcpStream},
     task::JoinHandle,
     thread::{self, Thread},
@@ -23,7 +22,7 @@ struct Args {
 
 const HELLO_WORLD: &str = "Hello, World!";
 
-async fn handle_client(client: Accepted) -> Result<(), Errno> {
+async fn handle_client(client: Accepted) -> spdk::Result<()> {
     let name = CString::new(format!(
         "client {}",
         client.peer_addr().expect("client connected")
@@ -49,7 +48,7 @@ async fn handle_client(client: Accepted) -> Result<(), Errno> {
         .await
 }
 
-fn run_server(args: &'static Args) -> JoinHandle<Result<(), Errno>> {
+fn run_server(args: &'static Args) -> JoinHandle<spdk::Result<()>> {
     thread::spawn_local(async move {
         let group = SocketGroup::new();
         let mut listener = group.bind(args.host.as_str()).await?;
@@ -65,7 +64,7 @@ fn run_server(args: &'static Args) -> JoinHandle<Result<(), Errno>> {
     })
 }
 
-fn run_client(args: &'static Args) -> JoinHandle<Result<(), Errno>> {
+fn run_client(args: &'static Args) -> JoinHandle<spdk::Result<()>> {
     thread::spawn_local(async move {
         println!("CLIENT: Connecting to {}", args.host);
 

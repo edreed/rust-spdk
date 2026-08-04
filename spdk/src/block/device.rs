@@ -22,8 +22,9 @@ use spdk_sys::{
 };
 
 use crate::{
+    Result,
     block::{Any, Owned, OwnedOps},
-    errors::{ENODEV, EPERM, Errno},
+    errors::{ENODEV, EPERM},
     thread,
 };
 
@@ -229,7 +230,7 @@ impl<T: OwnedOps> Device<T> {
     /// Only an owned device can be destroyed. This function returns `Err(EPERM)`
     /// if called on a borrowed device and `Err(ENODEV)` if called on a device
     /// that neither owns nor borrows the underlying `spdk_bdev` pointer.
-    pub async fn destroy(mut self) -> Result<(), Errno> {
+    pub async fn destroy(mut self) -> Result<()> {
         match self.0 {
             OwnershipState::Borrowed(_) => Err(EPERM),
             OwnershipState::None => Err(ENODEV),
@@ -241,7 +242,7 @@ impl<T: OwnedOps> Device<T> {
     }
 
     /// Opens the device asynchronously.
-    pub async fn open(&self, write: bool) -> Result<Descriptor, Errno> {
+    pub async fn open(&self, write: bool) -> Result<Descriptor> {
         Descriptor::open(self.name(), write).await
     }
 
@@ -293,13 +294,13 @@ impl<T: OwnedOps> Device<T> {
     }
 
     /// Get the [`Layout`] for a buffer of the specified byte size.
-    pub fn layout_for_size(&self, size: usize) -> Result<Layout, LayoutError> {
+    pub fn layout_for_size(&self, size: usize) -> std::result::Result<Layout, LayoutError> {
         Layout::from_size_align(size, self.buffer_alignment())
     }
 
     /// Get the [`Layout`] for a buffer of the specified number of logical
     /// blocks.
-    pub fn layout_for_blocks(&self, count: u64) -> Result<Layout, LayoutError> {
+    pub fn layout_for_blocks(&self, count: u64) -> std::result::Result<Layout, LayoutError> {
         self.layout_for_size(count as usize * self.logical_block_size() as usize)
     }
 

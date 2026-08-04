@@ -14,8 +14,8 @@ use spdk_sys::{
 };
 
 use crate::{
+    Result,
     block::{Device, Owned, OwnedOps},
-    errors::Errno,
     task::{Promise, Promissory},
     to_result,
 };
@@ -67,7 +67,7 @@ impl Builder {
     ///
     /// [`Device<Malloc>::destroy`]: method@crate::block::Device<Malloc>::destroy
     /// [`task::yield_now`]: function@crate::task::yield_now
-    pub fn build(self) -> Result<Device<Malloc>, Errno> {
+    pub fn build(self) -> Result<Device<Malloc>> {
         let mut malloc = null_mut();
 
         unsafe { to_result!(create_malloc_disk(&mut malloc, &self.0))? };
@@ -94,7 +94,7 @@ impl OwnedOps for Malloc {
         self.0.as_ptr()
     }
 
-    async fn destroy(self) -> Result<(), Errno> {
+    async fn destroy(self) -> Result<()> {
         Promise::new()
             .request(move |p| {
                 let (cb_fn, cb_arg) = Promissory::callback_with_status(p);

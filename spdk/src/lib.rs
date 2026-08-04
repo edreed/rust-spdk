@@ -22,3 +22,6 @@ pub use spdk_macros::main;
 
 #[cfg(feature = "bdev-module")]
 pub use spdk_macros::module;
+
+/// A specialized `Result` type for SPDK operations.
+pub type Result<T> = std::result::Result<T, errors::Errno>;

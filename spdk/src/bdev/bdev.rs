@@ -25,6 +25,7 @@ use spdk_sys::{
 use ternary_rs::if_else;
 
 use crate::{
+    Result,
     block::{Any, Device, IoType, Owned, OwnedOps},
     errors::{ECANCELED, EINPROGRESS, EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
@@ -80,8 +81,8 @@ impl From<Errno> for IoStatus {
     }
 }
 
-impl From<Result<(), Errno>> for IoStatus {
-    fn from(result: Result<(), Errno>) -> Self {
+impl From<Result<()>> for IoStatus {
+    fn from(result: Result<()>) -> Self {
         match result {
             Ok(_) => IoStatus::Success,
             Err(e) => e.into(),
@@ -119,7 +120,7 @@ pub trait BDevIoChannelOps: 'static {
     fn submit_request(
         &mut self,
         io: &mut BDevIo<Self::IoContext>,
-    ) -> impl Future<Output = Result<(), Errno>>;
+    ) -> impl Future<Output = Result<()>>;
 }
 
 /// A BDev I/O channel implementation.
@@ -176,7 +177,7 @@ where
 {
     type Error = Errno;
 
-    fn try_from(channel: *mut spdk_io_channel) -> Result<Self, Self::Error> {
+    fn try_from(channel: *mut spdk_io_channel) -> Result<Self> {
         match NonNull::new(channel) {
             Some(channel) => Ok(Self {
                 channel,
@@ -361,7 +362,7 @@ where
     ///
     /// Any buffers allocated by this method will automatically be freed on
     /// completion of this I/O request.
-    pub async fn allocate_buffers<'a>(&'a mut self, length: u64) -> Result<(), Errno> {
+    pub async fn allocate_buffers<'a>(&'a mut self, length: u64) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(move |p| {
                 self.internal_ctx_mut()
@@ -412,7 +413,7 @@ pub trait BDevOps: Send + Sync + 'static {
     type IoChannel: BDevIoChannelOps;
 
     /// Destroys the BDev.
-    fn destruct(&mut self) -> impl Future<Output = Result<(), Errno>>;
+    fn destruct(&mut self) -> impl Future<Output = Result<()>>;
 
     /// Returns whether the specified I/O type is supported by the BDev.
     fn io_type_supported(&self, io_type: IoType) -> bool;
@@ -424,12 +425,12 @@ pub trait BDevOps: Send + Sync + 'static {
     /// The default implementation returns a per-thread I/O channel for the
     /// BDev. Implementations may override this method to provide different
     /// behavior.
-    fn get_io_channel(&self) -> Result<BDevIoChannel<Self::IoChannel>, Errno> {
+    fn get_io_channel(&self) -> Result<BDevIoChannel<Self::IoChannel>> {
         unsafe { spdk_get_io_channel(self as *const _ as *mut _).try_into() }
     }
 
     /// Creates a new I/O channel for the BDev.
-    fn new_io_channel(&mut self) -> Result<Self::IoChannel, Errno>;
+    fn new_io_channel(&mut self) -> Result<Self::IoChannel>;
 
     /// Returns the size in bytes of the per-I/O context.
     fn get_io_context_size() -> usize {
@@ -487,7 +488,7 @@ where
 
     /// Registers the BDev with the SPDK subsystem. This function must be called
     /// from the SPDK application thread.
-    pub fn register(&mut self) -> Result<(), Errno> {
+    pub fn register(&mut self) -> Result<()> {
         unsafe {
             spdk_io_device_register(
                 self.bdev.ctxt,
@@ -508,7 +509,7 @@ where
 
     /// Unregisters the BDev from the SPDK subsystem. This function must be
     /// called from the SPDK application thread.
-    pub async fn unregister(self: Box<Self>) -> Result<(), Errno> {
+    pub async fn unregister(self: Box<Self>) -> Result<()> {
         let bdev_ptr = self.into_bdev_ptr();
 
         Promise::new()
@@ -679,7 +680,7 @@ impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
         addr_of!(self.0.bdev) as *mut _
     }
 
-    async fn destroy(self) -> Result<(), Errno> {
+    async fn destroy(self) -> Result<()> {
         // The BDev implementation's `destruct` method is invoked by the called
         // to unregister the device and will take care of dropping the box. We
         // avoid dropping the box here to prevent double-free.

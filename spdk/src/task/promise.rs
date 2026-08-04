@@ -12,6 +12,7 @@ use std::{
 use libc::c_void;
 
 use crate::{
+    Result,
     errors::{EINVAL, Errno},
     thread::Thread,
     to_result,
@@ -60,7 +61,7 @@ where
     /// If a completion function is invoked before the start function returns, the promise
     /// transitions from the `Requesting` state to the `Kept` state directly. Otherwise, the promise
     /// transitions from the `Requesting` state to the `Waiting` state.
-    Kept(Result<T, Errno>),
+    Kept(Result<T>),
 
     /// The promisee has received the promised result.
     ///
@@ -97,7 +98,7 @@ where
     /// Sets the state and result of the operation to [`Kept`].
     ///
     /// [`Kept`]: Self::Kept
-    fn set_kept(&mut self, res: Result<T, Errno>) -> Self {
+    fn set_kept(&mut self, res: Result<T>) -> Self {
         match self {
             Self::Requesting | Self::Waiting(_) => mem::replace(self, Self::Kept(res)),
             _ => panic!("set_kept called in unexpected state: {:?}", self),
@@ -198,7 +199,7 @@ where
     }
 
     /// Sets the state and result of the operation to [`PromiseState::Kept`].
-    fn set_kept(&self, res: Result<R, Errno>) -> PromiseState<R> {
+    fn set_kept(&self, res: Result<R>) -> PromiseState<R> {
         self.state.borrow_mut().set_kept(res)
     }
 
@@ -216,7 +217,7 @@ where
     }
 
     /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
-    pub fn set_result(rc_self: Rc<Self>, res: Result<R, Errno>) {
+    pub fn set_result(rc_self: Rc<Self>, res: Result<R>) {
         assert!(
             rc_self.thread.is_current(),
             "set_result called from wrong thread"
@@ -365,7 +366,7 @@ impl<R, C> Future for FuturePromise<R, C>
 where
     R: Debug,
 {
-    type Output = Result<R, Errno>;
+    type Output = Result<R>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state = self.0.poll_state(cx);
@@ -476,9 +477,9 @@ where
     }
 
     /// Begins the asynchronous operation to fulfill the promise.
-    pub fn request<S>(mut self, start_fn: S) -> impl Future<Output = Result<R, Errno>>
+    pub fn request<S>(mut self, start_fn: S) -> impl Future<Output = Result<R>>
     where
-        S: FnOnce(&mut Rc<Promissory<R, C>>) -> Poll<Result<R, Errno>>,
+        S: FnOnce(&mut Rc<Promissory<R, C>>) -> Poll<Result<R>>,
     {
         self.0.set_requesting();
 

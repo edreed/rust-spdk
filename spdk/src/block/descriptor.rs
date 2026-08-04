@@ -9,6 +9,7 @@ use spdk_sys::{
 use ternary_rs::if_else;
 
 use crate::{
+    Result,
     block::Any,
     errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
@@ -39,7 +40,7 @@ impl Descriptor {
     }
 
     /// Open a block device by its name.
-    pub async fn open(name: &CStr, write: bool) -> Result<Descriptor, Errno> {
+    pub async fn open(name: &CStr, write: bool) -> Result<Descriptor> {
         Promise::new()
             .request(|p| {
                 let (cb_fn, cb_arg) = (Self::open_complete, Promissory::into_raw(p.clone()));
@@ -78,7 +79,7 @@ impl Descriptor {
     ///
     /// I/O channels are bound to the `spdk_thread` on which this function is
     /// called. The returned [`IoChannel`] cannot be used from any other thread.
-    pub fn io_channel(&self) -> Result<IoChannel, Errno> {
+    pub fn io_channel(&self) -> Result<IoChannel> {
         IoChannel::new(self)
     }
 }
@@ -92,7 +93,7 @@ impl Drop for Descriptor {
 impl TryFrom<*mut spdk_bdev_desc> for Descriptor {
     type Error = Errno;
 
-    fn try_from(desc: *mut spdk_bdev_desc) -> Result<Self, Self::Error> {
+    fn try_from(desc: *mut spdk_bdev_desc) -> Result<Self> {
         match NonNull::new(desc as *mut _) {
             Some(ptr) => Ok(Self(ptr)),
             None => Err(ENOMEM),

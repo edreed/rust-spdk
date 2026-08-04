@@ -18,6 +18,7 @@ use spdk_sys::{
 };
 
 use crate::{
+    Result,
     errors::{EINVAL, ENODEV, ENOMEM, EPERM, Errno},
     task::{Promise, Promissory},
     thread, to_poll_pending_on_ok,
@@ -101,7 +102,7 @@ unsafe impl Send for Builder {}
 
 impl Builder {
     /// Creates a new builder for the given transport type.
-    pub fn new(transport_type: TransportType) -> Result<Self, Errno> {
+    pub fn new(transport_type: TransportType) -> Result<Self> {
         unsafe {
             let mut opts = MaybeUninit::uninit();
             let transport_name: &CStr = transport_type.into();
@@ -122,7 +123,7 @@ impl Builder {
     }
 
     /// Creates the configured `Transport`.
-    pub async fn build(self) -> Result<Transport, Errno> {
+    pub async fn build(self) -> Result<Transport> {
         Promise::new()
             .request(move |p| {
                 let (cb_fn, cb_arg) = Promissory::callback_with_object(p);
@@ -347,7 +348,7 @@ impl Transport {
     /// `Err(EPERM)` if called on a borrowed transport and `Err(ENODEV)` if
     /// called on a transport that neither owns nor borrows the underlying
     /// `spdk_nvmf_transport` pointer.
-    pub async fn destroy(mut self) -> Result<(), Errno> {
+    pub async fn destroy(mut self) -> Result<()> {
         match self.0 {
             OwnershipState::Borrowed(_) => Err(EPERM),
             OwnershipState::None => Err(ENODEV),
@@ -392,7 +393,7 @@ impl Drop for Transport {
 impl TryFrom<*mut spdk_nvmf_transport> for Transport {
     type Error = Errno;
 
-    fn try_from(ptr: *mut spdk_nvmf_transport) -> Result<Self, Self::Error> {
+    fn try_from(ptr: *mut spdk_nvmf_transport) -> Result<Self> {
         match NonNull::new(ptr) {
             Some(ptr) => Ok(Self(OwnershipState::Owned(ptr))),
             None => Err(ENOMEM),
@@ -403,7 +404,7 @@ impl TryFrom<*mut spdk_nvmf_transport> for Transport {
 impl TryFrom<*const spdk_nvmf_transport> for Transport {
     type Error = Errno;
 
-    fn try_from(ptr: *const spdk_nvmf_transport) -> Result<Self, Self::Error> {
+    fn try_from(ptr: *const spdk_nvmf_transport) -> Result<Self> {
         match NonNull::new(ptr as *mut _) {
             Some(ptr) => Ok(Self(OwnershipState::Borrowed(ptr))),
             None => Err(ENOMEM),

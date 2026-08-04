@@ -1,9 +1,8 @@
-use std::{mem, pin::Pin, ptr::NonNull};
+use std::{future::Future, mem, pin::Pin, ptr::NonNull};
 
-use futures::Future;
 use spdk_sys::spdk_bdev;
 
-use crate::{block::Device, errors::Errno};
+use crate::{Result, block::Device};
 
 /// A trait for owned block devices.
 pub trait OwnedOps: From<Owned> + 'static {
@@ -11,13 +10,13 @@ pub trait OwnedOps: From<Owned> + 'static {
     fn as_ptr(&self) -> *mut spdk_bdev;
 
     /// Destroy the block device asynchronously.
-    fn destroy(self) -> impl std::future::Future<Output = Result<(), Errno>>;
+    fn destroy(self) -> impl Future<Output = Result<()>>;
 }
 
-type DestroyFn = fn(Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>>>>;
+type DestroyFn = fn(Owned) -> Pin<Box<dyn Future<Output = Result<()>>>>;
 
 /// Destroys the type-erased device managed by the specified [`Owned`] instance.
-fn destroy_device<T>(owned: Owned) -> Pin<Box<dyn Future<Output = Result<(), Errno>>>>
+fn destroy_device<T>(owned: Owned) -> Pin<Box<dyn Future<Output = Result<()>>>>
 where
     T: OwnedOps,
 {
@@ -67,7 +66,7 @@ impl OwnedOps for Owned {
         self.bdev.as_ptr()
     }
 
-    async fn destroy(self) -> Result<(), Errno> {
+    async fn destroy(self) -> Result<()> {
         (self.destroy_fn)(self).await
     }
 }
