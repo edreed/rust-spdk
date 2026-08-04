@@ -60,9 +60,9 @@ impl EchoChannel {
         let dst_buf = io.buffers_mut();
 
         if offset_blocks == 0 {
-            // Some Virtual BDev read the first block to inspect
+            // Some Virtual BDevs read the first block to inspect
             // partition or other metadata to determine whether
-            // to claim the device. We imply return a block of
+            // to claim the device. We simply return a block of
             // zeros to prevent this BDev from claiming the device.
             dst_buf[0].fill(0);
 

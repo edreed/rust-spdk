@@ -1,4 +1,4 @@
-use std::{ffi::CStr, fmt::Debug, future::Future};
+use std::{ffi::CStr, fmt::Debug, future::Future, mem::MaybeUninit, pin::Pin};
 
 use spdk_sys::{
     spdk_bdev, spdk_bdev_module, spdk_bdev_module_examine_done, spdk_bdev_module_fini_done,
@@ -32,25 +32,23 @@ pub trait ModuleOps {
         Self::BDev::get_io_context_size()
     }
 
-    /// Examines the specified block device to determine whether it should be
-    /// claimed by a Virtual BDev implemented by this module.
+    /// Examines the specified block device to determine whether it should be claimed by a Virtual
+    /// BDev implemented by this module.
     ///
-    /// This method provides the first notification to a Virtual BDev module to
-    /// examine newly-added block devices and automatically create their own
-    /// Virtual BDevs. However, no I/O to the device can be submitted in this
-    /// method. The decision whether to claim the BDev must be made
+    /// This method provides the first notification to a Virtual BDev module to examine newly-added
+    /// block devices and automatically create their own Virtual BDevs. However, no I/O to the
+    /// device can be submitted in this method. The decision whether to claim the BDev must be made
     /// synchronously.
     ///
     /// The default implementation claims no devices.
     fn examine_config(&self, _bdev: Device<Any>) {}
 
-    /// Examines the specified block device to determine whether it should be
-    /// claimed by a Virtual BDev implemented by this module.
+    /// Examines the specified block device to determine whether it should be claimed by a Virtual
+    /// BDev implemented by this module.
     ///
-    /// This method provides the second notification to a Virtual BDev module to
-    /// examine newly-added block devices and automatically create their own
-    /// Virtual BDevs. I/O may be submitted to the device in this method and the
-    /// decision whether to claim can be made asynchronously.
+    /// This method provides the second notification to a Virtual BDev module to examine newly-added
+    /// block devices and automatically create their own Virtual BDevs. I/O may be submitted to the
+    /// device in this method and the decision whether to claim can be made asynchronously.
     ///
     /// The default implementation claims no devices.
     fn examine_disk(&self, _bdev: Device<Any>) -> impl std::future::Future<Output = ()> {
@@ -58,8 +56,8 @@ pub trait ModuleOps {
     }
 }
 
-/// A trait implemented by the [`module`] attribute macro to provide access to
-/// the singleton [`Module`] instance.
+/// A trait implemented by the [`module`] attribute macro to provide access to the singleton
+/// [`Module`] instance.
 ///
 /// [`module`]: macro@crate::module
 /// [`Module`]: struct@super::Module
@@ -73,12 +71,19 @@ where
     /// Returns a raw pointer to the singleton instance of the module.
     fn module() -> *const spdk_bdev_module;
 
-    /// Creates a new partially initialized BDev instance with the specified
-    /// name and context. Implementors must provider their own constructor
-    /// function to complete initialization.
-    fn new_bdev<B>(name: &CStr, ctx: B) -> Box<BDevImpl<B>>
+    /// Creates a new partially initialized BDev instance with the specified name and context.
+    /// Implementors must provider their own constructor function to complete initialization.
+    fn new_bdev<C>(name: &CStr, ctx: C) -> Box<BDevImpl<C>>
     where
-        B: BDevOps;
+        C: BDevOps + Unpin;
+
+    /// Creates a new partially initialized BDev instance with the specified name and initializing
+    /// the context in-place. Implementors must provider their own constructor function to complete
+    /// initialization.
+    fn new_bdev_in_place<C, I>(name: &CStr, init_fn: I) -> Box<BDevImpl<C>>
+    where
+        C: BDevOps,
+        I: FnOnce(Pin<&mut MaybeUninit<C>>);
 }
 
 /// A BDev module implementation created by the [`module`] attribute macro.
@@ -105,8 +110,8 @@ where
 {
     /// Creates a new BDev module instance with the specified name.
     ///
-    /// This method is used by the [`module`] attribute macro to create the
-    /// singleton module instance. It must not be called directly.
+    /// This method is used by the [`module`] attribute macro to create the singleton module
+    /// instance. It must not be called directly.
     ///
     /// [`module`]: macro@crate::module
     pub fn new(name: &'static CStr) -> Self {
@@ -133,8 +138,8 @@ where
 
     /// Registers the module with the SPDK BDev module list.
     ///
-    /// This method is used by the [`module`] attribute macro to register the
-    /// singleton module instance. It must not be called directly.
+    /// This method is used by the [`module`] attribute macro to register the singleton module
+    /// instance. It must not be called directly.
     ///
     /// [`module`]: macro@crate::module
     pub fn register(&self) {
@@ -170,14 +175,13 @@ where
         T::instance().get_io_context_size() as i32
     }
 
-    /// Examines the specified block device to determine whether it should be
-    /// claimed by a Virtual BDev implemented by this module.
+    /// Examines the specified block device to determine whether it should be claimed by a Virtual
+    /// BDev implemented by this module.
     ///
-    /// This function provides the first notification to a Virtual BDev module
-    /// to examine newly-added block devices and automatically create their own
-    /// Virtual BDevs. However, no I/O to the device can be submitted in this
-    /// function. The decision whether to claim the BDev must be made
-    /// synchronously.
+    /// This function provides the first notification to a Virtual BDev module to examine
+    /// newly-added block devices and automatically create their own Virtual BDevs. However, no I/O
+    /// to the device can be submitted in this function. The decision whether to claim the BDev must
+    /// be made synchronously.
     ///
     /// The default implementation claims no devices.
     unsafe extern "C" fn examine_config(bdev: *mut spdk_bdev) {
@@ -186,13 +190,13 @@ where
         unsafe { spdk_bdev_module_examine_done(T::module() as *mut _) }
     }
 
-    /// Examines the specified block device to determine whether it should be
-    /// claimed by a Virtual BDev implemented by this module.
+    /// Examines the specified block device to determine whether it should be claimed by a Virtual
+    /// BDev implemented by this module.
     ///
-    /// This function provides the second notification to a Virtual BDev module
-    /// to examine newly-added block devices and automatically create their own
-    /// Virtual BDevs. I/O may be submitted to the device in this function and
-    /// the decision whether to claim can be made asynchronously.
+    /// This function provides the second notification to a Virtual BDev module to examine
+    /// newly-added block devices and automatically create their own Virtual BDevs. I/O may be
+    /// submitted to the device in this function and the decision whether to claim can be made
+    /// asynchronously.
     ///
     /// The default implementation claims no devices.
     unsafe extern "C" fn examine_disk(bdev: *mut spdk_bdev) {

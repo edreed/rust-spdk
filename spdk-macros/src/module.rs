@@ -52,11 +52,19 @@ impl GenerateModule {
                     &#reg_var_ident.get().unwrap().module as *const _
                 }
 
-                fn new_bdev<B>(name: &::std::ffi::CStr, ctx: B) -> Box<::spdk::bdev::BDevImpl<B>>
+                fn new_bdev<C>(name: &::std::ffi::CStr, ctx: C) -> Box<::spdk::bdev::BDevImpl<C>>
                 where
-                    B: ::spdk::bdev::BDevOps
+                    C: ::spdk::bdev::BDevOps + Unpin
                 {
                     ::spdk::bdev::BDevImpl::new(name, Self::module(), ctx)
+                }
+
+                fn new_bdev_in_place<C, I>(name: &::std::ffi::CStr, init_fn: I) -> Box<::spdk::bdev::BDevImpl<C>>
+                where
+                    C: ::spdk::bdev::BDevOps,
+                    I: FnOnce(::std::pin::Pin<&mut ::std::mem::MaybeUninit<C>>)
+                {
+                    ::spdk::bdev::BDevImpl::new_in_place(name, Self::module(), init_fn)
                 }
             }
         };
