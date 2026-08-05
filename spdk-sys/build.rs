@@ -3,31 +3,36 @@ use std::{env, fs::canonicalize, iter::once, path::PathBuf};
 use bindgen::callbacks::ParseCallbacks;
 use fs_extra::dir;
 use itertools::Itertools;
-use regex::Regex;
+use lazy_regex::regex_replace_all;
 
 #[derive(Debug)]
-struct DoxygenCallbacks {
-    eol_doxygen: Regex,
-}
+struct DoxygenCallbacks;
 
 impl DoxygenCallbacks {
-    fn new() -> Self {
-        Self {
-            eol_doxygen: Regex::new(r"([\\@]\w+\b*)\n").expect("eol_doxygen regex to compile"),
-        }
+    fn new() -> Box<Self> {
+        Box::new(Self)
     }
 }
 
 impl ParseCallbacks for DoxygenCallbacks {
     fn process_comment(&self, comment: &str) -> Option<String> {
-        // The following workaround is to prevent the doxygen_rs crate from
-        // panicking when it encounters a Doxygen comment on the end of a line.
+        // The following workaround is to prevent the doxygen_rs crate from panicking when it
+        // encounters a Doxygen comment on the end of a line.
         //
-        // TODO: Fix the doxygen_rs crate to not panic on when Doxygen comments
-        // are on the end of the line.
-        let comment = self.eol_doxygen.replace_all(comment, "$1");
+        // TODO: Fix the doxygen_rs crate to not panic on when Doxygen comments are on the end of
+        // the line.
+        let comment = regex_replace_all!(r"([\\@]\w+\b*)\n", comment, "$1");
 
-        Some(doxygen_rs::transform(&comment))
+        let transformed = doxygen_rs::transform(&comment);
+
+        // The doxygen-rs crate doesn't handle punctuation following a link in Doxygen comments
+        // correctly, including it in the link. The following workaround removes the punctuation
+        // from the link.
+        let transformed =
+            regex_replace_all!(r"\[`((?:\w+)(?:\(\))?)(\W+)\`]", &transformed, "[`$1`]$2")
+                .to_string();
+
+        Some(transformed)
     }
 }
 
@@ -228,7 +233,7 @@ fn main() {
     let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .parse_callbacks(Box::new(DoxygenCallbacks::new()))
+        .parse_callbacks(DoxygenCallbacks::new())
         .clang_args(
             include_paths
                 .iter()
