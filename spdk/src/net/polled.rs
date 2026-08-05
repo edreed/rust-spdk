@@ -99,6 +99,8 @@ fn stream_as_raw_sock(data: *const ()) -> *mut spdk_sock {
 ///
 /// This method returns `Poll::Ready(Ok())` if the stream is connected, `Poll::Pending` if the
 /// outgoing connection is pending, and `Poll::Ready(Err(`[`Errno`]`))` if the connection failed.
+///
+/// [`Errno`]: crate::errors::Errno
 fn stream_poll_connected(data: *const (), cx: &mut Context<'_>) -> Poll<Result<()>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
@@ -117,6 +119,8 @@ fn stream_poll_connected(data: *const (), cx: &mut Context<'_>) -> Poll<Result<(
 /// available and `Poll::Pending` if no data was available.
 ///
 /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+///
+/// [`Errno`]: crate::errors::Errno
 fn stream_poll_read(data: *const (), cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<usize>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
@@ -135,6 +139,8 @@ fn stream_poll_read(data: *const (), cx: &mut Context<'_>, buf: &mut [u8]) -> Po
 /// available and `Poll::Pending` if no data was available.
 ///
 /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+///
+/// [`Errno`]: crate::errors::Errno
 fn stream_poll_read_vectored(
     data: *const (),
     cx: &mut Context<'_>,
@@ -157,6 +163,8 @@ fn stream_poll_read_vectored(
 /// written and `Poll::Pending` data cannot currently be written.
 ///
 /// If the connection has failed, this method returns `Poll::Ready(Err(`[`Errno`]`))`.
+///
+/// [`Errno`]: crate::errors::Errno
 fn stream_poll_write(data: *const (), cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });
@@ -175,6 +183,8 @@ fn stream_poll_write(data: *const (), cx: &mut Context<'_>, buf: &[u8]) -> Poll<
 /// written and `Poll::Pending` data cannot currently be written.
 ///
 /// If the connection has failed, this method returns `Poll::Ready(Err(`[``Errno`]`))`.
+///
+/// [`Errno`]: crate::errors::Errno
 fn stream_poll_write_vectored(
     data: *const (),
     cx: &mut Context<'_>,
@@ -211,6 +221,8 @@ fn stream_poll_flush(data: *const (), cx: &mut Context<'_>) -> Poll<Result<()>> 
 ///
 /// This method returns `Poll::Ready(Ok())` if the socket was successfully closed, and
 /// `Poll::Ready(Err(`[`Errno`]`))` otherwise.
+///
+/// [`Errno`]: crate::errors::Errno
 fn stream_poll_close(data: *const (), cx: &mut Context<'_>) -> Poll<Result<()>> {
     let mut this =
         ManuallyDrop::new(unsafe { Poller::from_raw(data as *const Poller<TcpStreamSocket>) });

@@ -11,7 +11,7 @@ all-features = true
 aquamarine = "0.6.0"
 futures = "0.3.33"
 libc = "0.2.189"
-lazy-regex = "3.6.0"
+lazy-regex = "3.6.1"
 parking_lot = "0.12.5"
 serde = { version = "1.0.229", features = ["derive"] }
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
