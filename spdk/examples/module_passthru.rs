@@ -5,7 +5,7 @@ use std::{
 };
 
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps, malloc},
     block::{Any, Descriptor, Device, IoChannel, IoType, Owned},
     dma::{self},
     errors::ENOTSUP,

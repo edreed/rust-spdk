@@ -1,13 +1,13 @@
 use std::io::Write;
 
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
 };
 
 /// Implements the NullRs block device module.
-#[spdk::module]
+#[spdk::module(product_name = "Null Disk")]
 #[derive(Debug, Default)]
 struct NullRsModule;
 

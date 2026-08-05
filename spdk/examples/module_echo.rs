@@ -9,7 +9,7 @@ use async_condvar_fair::Condvar;
 use futures::future::join;
 use parking_lot::Mutex;
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
     errors::ENOTSUP,

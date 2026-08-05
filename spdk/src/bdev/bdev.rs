@@ -19,9 +19,9 @@ use spdk_sys::{
     SPDK_BDEV_IO_STATUS_SCSI_ERROR, SPDK_BDEV_IO_STATUS_SUCCESS, spdk_bdev,
     spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
     spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread, spdk_bdev_io_status,
-    spdk_bdev_io_type, spdk_bdev_module, spdk_bdev_register, spdk_bdev_unregister,
-    spdk_get_io_channel, spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread,
-    spdk_io_device_register, spdk_io_device_unregister,
+    spdk_bdev_io_type, spdk_bdev_register, spdk_bdev_unregister, spdk_get_io_channel,
+    spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread, spdk_io_device_register,
+    spdk_io_device_unregister,
 };
 use ternary_rs::if_else;
 
@@ -33,6 +33,8 @@ use crate::{
     thread::{self, Thread},
     to_result,
 };
+
+use super::{Module, ModuleInstance, ModuleOps};
 
 /// The status of an I/O operation.
 ///
@@ -488,7 +490,10 @@ where
     /// Creates a new partially initialized BDev instance with the specified name, owning module and
     /// context. Implementors must provide their own constructor function to complete
     /// initialization.
-    pub fn new(name: &CStr, module: *const spdk_bdev_module, ctx: T) -> Box<Self> {
+    pub(crate) fn new<M>(name: &CStr, module: &Module<M>, ctx: T) -> Box<Self>
+    where
+        M: ModuleInstance<M> + Default + ModuleOps + 'static,
+    {
         let mut this = Box::new(Self {
             bdev: unsafe { mem::zeroed() },
             ctx,
@@ -496,7 +501,8 @@ where
 
         this.bdev.ctxt = addr_of_mut!(this.ctx) as *mut c_void;
         this.bdev.name = name.to_owned().into_raw();
-        this.bdev.module = module as *mut _;
+        this.bdev.product_name = M::product_name().as_ptr() as *mut _;
+        this.bdev.module = module.as_ptr() as *mut _;
         this.bdev.fn_table = Self::vtable() as *const _;
 
         this
@@ -510,9 +516,10 @@ where
     /// Creates a new partially initialized BDev instance with the specified name and initializing
     /// the context in-place. Implementors must provider their own constructor function to complete
     /// initialization.
-    pub fn new_in_place<F>(name: &CStr, module: *const spdk_bdev_module, init_fn: F) -> Box<Self>
+    pub(crate) fn new_in_place<F, M>(name: &CStr, module: &Module<M>, init_fn: F) -> Box<Self>
     where
         F: FnOnce(Pin<&mut MaybeUninit<T>>),
+        M: ModuleInstance<M> + Default + ModuleOps + 'static,
     {
         let mut this = Box::new(BDevImpl {
             bdev: unsafe { mem::zeroed() },
@@ -523,7 +530,8 @@ where
 
         this.bdev.ctxt = addr_of_mut!(this.ctx) as *mut c_void;
         this.bdev.name = name.to_owned().into_raw();
-        this.bdev.module = module as *mut _;
+        this.bdev.product_name = M::product_name().as_ptr() as *mut _;
+        this.bdev.module = module.as_ptr() as *mut _;
         this.bdev.fn_table = Self::vtable() as *const _;
 
         unsafe { transmute(this) }
