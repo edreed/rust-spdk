@@ -161,8 +161,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The singleton instance can be accessed using the [`instance()`] method of the [`ModuleInstance<T>`]
 /// trait.
 ///
-/// BDev implementors call the [`new_bdev()`] or [`new_bdev_in_place()`] methods of the `ModuleOps`
-/// trait to create a new block device instance.
+/// BDev implementors call the [`new_bdev_builder()`] method of the `ModuleOps` trait to create a
+/// builder to specify the attributes of a new block device. The builder's [`build()`],
+/// [`build_with_context()`] or [`build_with_context_in_place()`] methods create and register the new
+/// BDev instance with the SPDK global block device list.
 ///
 /// # Attributes
 ///
@@ -181,8 +183,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// [`instance()`]: ../spdk/bdev/trait.ModuleInstance.html#tymethod.instance
-/// [`new_bdev()`]: ../spdk/bdev/trait.ModuleOps.html#tymethod.new_bdev
-/// [`new_bdev()`]: ../spdk/bdev/trait.ModuleOps.html#tymethod.new_bdev_in_place
+/// [`new_bdev_builder()`]: ../spdk/bdev/trait.ModuleOps.html#tymethod.new_bdev
+/// [`build()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build
+/// [`build_with_context()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build_with_context
+/// [`build_with_context_in_place()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build_with_context_in_place
 /// [`Module<T>`]: ../spdk/bdev/struct.Module.html
 /// [`ModuleInstance<T>`]: ../spdk/bdev/trait.ModuleInstance.html
 #[cfg(feature = "bdev-module")]

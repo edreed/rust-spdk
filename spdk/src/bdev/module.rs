@@ -1,4 +1,4 @@
-use std::{ffi::CStr, fmt::Debug, future::Future, mem::MaybeUninit, pin::Pin};
+use std::{ffi::CStr, fmt::Debug, future::Future};
 
 use spdk_sys::{
     spdk_bdev, spdk_bdev_module, spdk_bdev_module_examine_done, spdk_bdev_module_fini_done,
@@ -10,7 +10,7 @@ use crate::{
     thread::{self},
 };
 
-use super::{BDevImpl, BDevOps};
+use super::{BDevBuilder, BDevOps};
 
 /// A trait implemented by the [`module`] attribute macro to provide access to the singleton
 /// [`Module`] instance.
@@ -71,24 +71,13 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
         async {}
     }
 
-    /// Creates a new partially initialized BDev instance with the specified name and context.
-    /// Implementors must provider their own constructor function to complete initialization.
-    fn new_bdev<C>(name: &CStr, ctx: C) -> Box<BDevImpl<C>>
-    where
-        C: BDevOps + Unpin,
-    {
-        BDevImpl::new(name, Self::instance(), ctx)
-    }
-
-    /// Creates a new partially initialized BDev instance with the specified name and initializing
-    /// the context in-place. Implementors must provider their own constructor function to complete
-    /// initialization.
-    fn new_bdev_in_place<C, I>(name: &CStr, init_fn: I) -> Box<BDevImpl<C>>
-    where
-        C: BDevOps,
-        I: FnOnce(Pin<&mut MaybeUninit<C>>),
-    {
-        BDevImpl::new_in_place(name, Self::instance(), init_fn)
+    /// Creates a new [`BDevBuilder`] to build a new `BDev` instance managed by this module.
+    fn new_bdev_builder<'a>(
+        name: &'a CStr,
+        block_size: u32,
+        num_blocks: u64,
+    ) -> BDevBuilder<'a, Self::BDev, Self> {
+        BDevBuilder::new(Self::instance(), name, block_size, num_blocks)
     }
 }
 

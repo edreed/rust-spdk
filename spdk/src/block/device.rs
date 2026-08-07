@@ -14,11 +14,16 @@ use spdk_sys::{
     SPDK_BDEV_IO_TYPE_READ, SPDK_BDEV_IO_TYPE_RESET, SPDK_BDEV_IO_TYPE_SEEK_DATA,
     SPDK_BDEV_IO_TYPE_SEEK_HOLE, SPDK_BDEV_IO_TYPE_UNMAP, SPDK_BDEV_IO_TYPE_WRITE,
     SPDK_BDEV_IO_TYPE_WRITE_UNCORRECTABLE, SPDK_BDEV_IO_TYPE_WRITE_ZEROES, SPDK_BDEV_IO_TYPE_ZCOPY,
-    SPDK_BDEV_IO_TYPE_ZONE_APPEND, SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT, spdk_bdev, spdk_bdev_first,
-    spdk_bdev_get_block_size, spdk_bdev_get_buf_align, spdk_bdev_get_by_name, spdk_bdev_get_name,
-    spdk_bdev_get_num_blocks, spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
+    SPDK_BDEV_IO_TYPE_ZONE_APPEND, SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT, SPDK_ENV_NUMA_ID_ANY,
+    spdk_bdev, spdk_bdev_first, spdk_bdev_get_block_size, spdk_bdev_get_buf_align,
+    spdk_bdev_get_by_name, spdk_bdev_get_dif_pi_format, spdk_bdev_get_dif_type,
+    spdk_bdev_get_md_size, spdk_bdev_get_name, spdk_bdev_get_num_blocks, spdk_bdev_get_numa_id,
+    spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
     spdk_bdev_get_product_name, spdk_bdev_get_write_unit_size, spdk_bdev_has_write_cache,
-    spdk_bdev_io_type, spdk_bdev_io_type_supported, spdk_bdev_is_zoned, spdk_bdev_next,
+    spdk_bdev_io_type, spdk_bdev_io_type_supported, spdk_bdev_is_dif_check_enabled,
+    spdk_bdev_is_dif_head_of_md, spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
+    spdk_dif_check_type, spdk_dif_pi_format,
+    spdk_dif_type::{self, SPDK_DIF_DISABLE},
 };
 
 use crate::{
@@ -104,22 +109,21 @@ unsafe impl<T: OwnedOps> Send for OwnershipState<T> {}
 
 /// Represents a block device.
 ///
-/// `Device` wraps an `spdk_bdev` pointer and can be in one of three ownership
-/// states: owned, borrowed, or none.
+/// `Device` wraps an `spdk_bdev` pointer and can be in one of three ownership states: owned,
+/// borrowed, or none.
 ///
-/// An owned device owns the underlying `spdk_bdev` pointer and will destroy it
-/// when dropped. The caller must ensure that the drop occurs in the same thread
-/// that created the device. It must also occur as part of thread event handling
-/// by explicitly calling [`task::yield_now`] before dropping the device.
-/// However, it is easiest and safest to explicitly call [`Device<T>::destroy`]
-/// on the device rather than let it drop naturally.
+/// An owned device owns the underlying `spdk_bdev` pointer and will destroy it when dropped. The
+/// caller must ensure that the drop occurs in the same thread that created the device. It must also
+/// occur as part of thread event handling by explicitly calling [`task::yield_now`] before dropping
+/// the device. However, it is easiest and safest to explicitly call [`Device<T>::destroy`] on the
+/// device rather than let it drop naturally.
 ///
-/// A borrowed device borrows the underlying `spdk_bdev` pointer. Dropping a
-/// borrowed device has no effect on the underlying `spdk_bdev` pointer.
+/// A borrowed device borrows the underlying `spdk_bdev` pointer. Dropping a borrowed device has no
+/// effect on the underlying `spdk_bdev` pointer.
 ///
-/// A device with no ownership state can only be safely queried for ownership
-/// state or dropped. Any other operation will panic. A device will be left in
-/// this state after the [`Device<T>::take`] method is called.
+/// A device with no ownership state can only be safely queried for ownership state or dropped. Any
+/// other operation will panic. A device will be left in this state after the [`Device<T>::take`]
+/// method is called.
 ///
 /// [`Device<T>::destroy`]: method@Device<T>::destroy
 /// [`Device<T>::take`]: method@Device<T>::take
@@ -139,8 +143,7 @@ impl<T: OwnedOps> Device<T> {
     ///
     /// # Returns
     ///
-    /// This function returns [`None`] if no block device with the given name
-    /// exists.
+    /// This function returns [`None`] if no block device with the given name exists.
     pub fn from_name(name: &CStr) -> Option<Device<Any>> {
         let bdev = unsafe { spdk_bdev_get_by_name(name.as_ptr()) };
 
@@ -179,8 +182,8 @@ impl<T: OwnedOps> Device<T> {
         }
     }
 
-    /// Consumes this device and returns a [`Device<Owned>`] assuming ownership
-    /// of the underlying `spdk_bdev` pointer.
+    /// Consumes this device and returns a [`Device<Owned>`] assuming ownership of the underlying
+    /// `spdk_bdev` pointer.
     pub fn into_owned(&mut self) -> Option<Device<Owned>> {
         match self.0 {
             OwnershipState::Owned(_) => match mem::replace(&mut self.0, OwnershipState::None) {
@@ -217,8 +220,7 @@ impl<T: OwnedOps> Device<T> {
         matches!(self.0, OwnershipState::None)
     }
 
-    /// Takes the value from this device and replaces with a value having no
-    /// ownership.
+    /// Takes the value from this device and replaces with a value having no ownership.
     pub fn take(&mut self) -> Self {
         mem::replace(self, Self(OwnershipState::None))
     }
@@ -227,9 +229,9 @@ impl<T: OwnedOps> Device<T> {
     ///
     /// # Returns
     ///
-    /// Only an owned device can be destroyed. This function returns `Err(EPERM)`
-    /// if called on a borrowed device and `Err(ENODEV)` if called on a device
-    /// that neither owns nor borrows the underlying `spdk_bdev` pointer.
+    /// Only an owned device can be destroyed. This function returns `Err(EPERM)` if called on a
+    /// borrowed device and `Err(ENODEV)` if called on a device that neither owns nor borrows the
+    /// underlying `spdk_bdev` pointer.
     pub async fn destroy(mut self) -> Result<()> {
         match self.0 {
             OwnershipState::Borrowed(_) => Err(EPERM),
@@ -273,17 +275,16 @@ impl<T: OwnedOps> Device<T> {
 
     /// Get the write unit size of this block device in logical blocks.
     ///
-    /// This is the minimum number of blocks that can be written in a single
-    /// operation. Write operations must be a multiple of the write unit size.
+    /// This is the minimum number of blocks that can be written in a single operation. Write
+    /// operations must be a multiple of the write unit size.
     pub fn write_unit_size(&self) -> u32 {
         unsafe { spdk_bdev_get_write_unit_size(self.as_ptr()) }
     }
 
     /// Get the optimal I/O boundary of this block device in logical blocks.
     ///
-    /// This is the optimal boundary in logical blocks that should not be
-    /// crosseed for best performance. This function returns `0` if there is
-    /// no optimal I/O boundary.
+    /// This is the optimal boundary in logical blocks that should not be crosseed for best
+    /// performance. This function returns `0` if there is no optimal I/O boundary.
     pub fn optimal_io_boundary(&self) -> u32 {
         unsafe { spdk_bdev_get_optimal_io_boundary(self.as_ptr()) }
     }
@@ -293,13 +294,86 @@ impl<T: OwnedOps> Device<T> {
         unsafe { spdk_bdev_get_buf_align(self.as_ptr()) }
     }
 
+    /// Get whether the metadata of this block device is interleaved with or separated from the
+    /// block data.
+    ///
+    /// The returned value if only meaningful if the metadata size is non-zero.
+    pub fn is_metadata_interleaved(&self) -> bool {
+        unsafe { spdk_bdev_is_md_interleaved(self.as_ptr()) }
+    }
+
+    /// Get the size of the metadata of this block device in bytes.
+    ///
+    /// A return value of zero indicates that this block device does not have metadata.
+    pub fn metadata_size(&self) -> u32 {
+        unsafe { spdk_bdev_get_md_size(self.as_ptr()) }
+    }
+
+    /// Get the [Data Integrity Field (DIF)] type of this block device.
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
+    pub fn dif_type(&self) -> spdk_dif_type {
+        unsafe { spdk_bdev_get_dif_type(self.as_ptr()) }
+    }
+
+    /// Get the [Data Integrity Field (DIF)] protection information format of this block device.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(pi)` if DIF is enabled and `None` otherwise.
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
+    pub fn dif_pi_format(&self) -> Option<spdk_dif_pi_format> {
+        if self.dif_type() != SPDK_DIF_DISABLE {
+            return Some(unsafe { spdk_bdev_get_dif_pi_format(self.as_ptr()) });
+        }
+
+        None
+    }
+
+    /// Get whether the specified [Data Integrity Field (DIF)] check is enabled.
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
+    pub fn is_dif_check_enabled(&self, check_type: spdk_dif_check_type) -> bool {
+        unsafe { spdk_bdev_is_dif_check_enabled(self.as_ptr(), check_type) }
+    }
+
+    /// Get the bitmap of enabled [Data Integrity Field (DIF)] checks.
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
+    pub fn dif_check_flags(&self) -> u32 {
+        unsafe { (*self.as_ptr()).dif_check_flags }
+    }
+
+    /// Get whether the [Data Integrity Field (DIF)] is set in the first 8|16 bytes or last 8|16
+    /// bytes of metadata.
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
+    pub fn is_dif_head_of_metadata(&self) -> bool {
+        unsafe { spdk_bdev_is_dif_head_of_md(self.as_ptr()) }
+    }
+
+    /// Get the NUMA node ID of this block device.
+    ///
+    /// # Returns
+    ///
+    /// The `Some(node_id)` or `None` if the ID is not known.
+    pub fn numa_id(&self) -> Option<i32> {
+        let node_id = unsafe { spdk_bdev_get_numa_id(self.as_ptr()) };
+
+        if node_id != SPDK_ENV_NUMA_ID_ANY {
+            return Some(node_id);
+        }
+
+        None
+    }
+
     /// Get the [`Layout`] for a buffer of the specified byte size.
     pub fn layout_for_size(&self, size: usize) -> std::result::Result<Layout, LayoutError> {
         Layout::from_size_align(size, self.buffer_alignment())
     }
 
-    /// Get the [`Layout`] for a buffer of the specified number of logical
-    /// blocks.
+    /// Get the [`Layout`] for a buffer of the specified number of logical blocks.
     pub fn layout_for_blocks(&self, count: u64) -> std::result::Result<Layout, LayoutError> {
         self.layout_for_size(count as usize * self.logical_block_size() as usize)
     }

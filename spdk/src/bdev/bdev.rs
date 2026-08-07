@@ -19,9 +19,13 @@ use spdk_sys::{
     SPDK_BDEV_IO_STATUS_SCSI_ERROR, SPDK_BDEV_IO_STATUS_SUCCESS, spdk_bdev,
     spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
     spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread, spdk_bdev_io_status,
-    spdk_bdev_io_type, spdk_bdev_register, spdk_bdev_unregister, spdk_get_io_channel,
-    spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread, spdk_io_device_register,
-    spdk_io_device_unregister,
+    spdk_bdev_io_type, spdk_bdev_register, spdk_bdev_unregister,
+    spdk_dif_pi_format::{
+        self, SPDK_DIF_PI_FORMAT_16, SPDK_DIF_PI_FORMAT_32, SPDK_DIF_PI_FORMAT_64,
+    },
+    spdk_dif_type::{self, SPDK_DIF_DISABLE},
+    spdk_get_io_channel, spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread,
+    spdk_io_device_register, spdk_io_device_unregister,
 };
 use ternary_rs::if_else;
 
@@ -34,7 +38,7 @@ use crate::{
     to_result,
 };
 
-use super::{Module, ModuleInstance, ModuleOps};
+use super::{Module, ModuleOps};
 
 /// The status of an I/O operation.
 ///
@@ -482,61 +486,10 @@ where
 unsafe impl<T> Send for BDevImpl<T> where T: BDevOps + Send + ?Sized {}
 
 unsafe impl<T> Sync for BDevImpl<T> where T: BDevOps + Sync + ?Sized {}
-
-impl<T> BDevImpl<T>
-where
-    T: BDevOps + Unpin,
-{
-    /// Creates a new partially initialized BDev instance with the specified name, owning module and
-    /// context. Implementors must provide their own constructor function to complete
-    /// initialization.
-    pub(crate) fn new<M>(name: &CStr, module: &Module<M>, ctx: T) -> Box<Self>
-    where
-        M: ModuleInstance<M> + Default + ModuleOps + 'static,
-    {
-        let mut this = Box::new(Self {
-            bdev: unsafe { mem::zeroed() },
-            ctx,
-        });
-
-        this.bdev.ctxt = addr_of_mut!(this.ctx) as *mut c_void;
-        this.bdev.name = name.to_owned().into_raw();
-        this.bdev.product_name = M::product_name().as_ptr() as *mut _;
-        this.bdev.module = module.as_ptr() as *mut _;
-        this.bdev.fn_table = Self::vtable() as *const _;
-
-        this
-    }
-}
-
 impl<T> BDevImpl<T>
 where
     T: BDevOps,
 {
-    /// Creates a new partially initialized BDev instance with the specified name and initializing
-    /// the context in-place. Implementors must provider their own constructor function to complete
-    /// initialization.
-    pub(crate) fn new_in_place<F, M>(name: &CStr, module: &Module<M>, init_fn: F) -> Box<Self>
-    where
-        F: FnOnce(Pin<&mut MaybeUninit<T>>),
-        M: ModuleInstance<M> + Default + ModuleOps + 'static,
-    {
-        let mut this = Box::new(BDevImpl {
-            bdev: unsafe { mem::zeroed() },
-            ctx: MaybeUninit::<T>::uninit(),
-        });
-
-        init_fn(unsafe { Pin::new_unchecked(&mut this.ctx) });
-
-        this.bdev.ctxt = addr_of_mut!(this.ctx) as *mut c_void;
-        this.bdev.name = name.to_owned().into_raw();
-        this.bdev.product_name = M::product_name().as_ptr() as *mut _;
-        this.bdev.module = module.as_ptr() as *mut _;
-        this.bdev.fn_table = Self::vtable() as *const _;
-
-        unsafe { transmute(this) }
-    }
-
     /// Converts a raw `spdk_bdev` pointer to a reference to the BDevImpl.
     ///
     /// # Safety
@@ -720,6 +673,329 @@ where
 {
     fn drop(&mut self) {
         unsafe { drop(CString::from_raw(self.bdev.name)) }
+    }
+}
+
+/// A builder used to create a new instance of a `BDev`.
+///
+/// Create a new instance by calling the [`new_bdev_builder()`] method of the [`Module`] managing
+/// the `BDev` type.
+///
+/// [`new_bdev_builder()`]: super::ModuleOps::new_bdev_builder
+pub struct BDevBuilder<'a, C, M>
+where
+    C: BDevOps,
+    M: ModuleOps,
+{
+    module: &'a Module<M>,
+    name: &'a CStr,
+    block_size: u32,
+    num_blocks: u64,
+    write_cache_present: bool,
+    physical_block_size: u32,
+    buffer_alignment: u8,
+    optimal_io_boundary: u32,
+    metadata_size: Option<u32>,
+    is_metadata_interleaved: bool,
+    dif_type: spdk_dif_type,
+    dif_pi_format: Option<spdk_dif_pi_format>,
+    dif_is_head_of_md: bool,
+    dif_check_flags: u32,
+    numa_id: Option<i32>,
+
+    _phantom: PhantomData<C>,
+}
+
+impl<'a, C, M> BDevBuilder<'a, C, M>
+where
+    C: BDevOps,
+    M: ModuleOps,
+{
+    /// Creates a new [`BDevBuilder`] instance.
+    pub(crate) fn new(
+        module: &'a Module<M>,
+        name: &'a CStr,
+        block_size: u32,
+        num_blocks: u64,
+    ) -> Self {
+        Self {
+            module,
+            name,
+            block_size,
+            num_blocks,
+            write_cache_present: false,
+            physical_block_size: 0,
+            buffer_alignment: 0,
+            optimal_io_boundary: 0,
+            metadata_size: None,
+            is_metadata_interleaved: false,
+            dif_type: SPDK_DIF_DISABLE,
+            dif_is_head_of_md: false,
+            dif_pi_format: None,
+            dif_check_flags: 0,
+            numa_id: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Initializes the `spdk_bdev` structure of the `BDev` being built.
+    ///
+    /// # Safety
+    ///
+    /// This function assumes the memory referenced by the `bdev` argument has been initialized to
+    /// zeroes. Failure to do so results in **undefined behavior**.
+    ///
+    /// The `ctx` argument is a raw pointer to the new `BDev`'s context. It may be uninitialized at
+    /// this point, so dereferecing it results in **undefined behavior**. This method simply stores
+    /// the pointer value in the `spdk_bdev`'s `ctxt` field. The caller must ensure that the context
+    /// is properly initialized before this field can be deferenced.
+    unsafe fn init_bdev(&self, bdev: &mut spdk_bdev, ctx: *mut c_void) {
+        bdev.ctxt = ctx;
+        bdev.name = self.name.to_owned().into_raw();
+        bdev.product_name = M::product_name().as_ptr() as *mut _;
+        bdev.module = self.module.as_ptr() as *mut _;
+        bdev.fn_table = BDevImpl::<C>::vtable() as *const _;
+        bdev.write_cache = self.write_cache_present as i32;
+        bdev.blocklen = self.block_size;
+        bdev.blockcnt = self.num_blocks;
+        bdev.phys_blocklen = self.physical_block_size;
+        bdev.required_alignment = self.buffer_alignment;
+        bdev.optimal_io_boundary = self.optimal_io_boundary;
+        bdev.md_len = self.metadata_size.unwrap_or(0);
+        bdev.__bindgen_anon_1
+            .set_md_interleave(self.is_metadata_interleaved as u32);
+        bdev.dif_type = self.dif_type;
+        bdev.__bindgen_anon_1
+            .set_dif_is_head_of_md(self.dif_is_head_of_md as u32);
+        bdev.dif_pi_format = self.dif_pi_format.unwrap_or(SPDK_DIF_PI_FORMAT_16);
+        bdev.dif_check_flags = self.dif_check_flags;
+
+        if let Some(numa_id) = self.numa_id {
+            bdev.numa.set_id(numa_id);
+            bdev.numa.set_id_valid(true as u32);
+        }
+    }
+
+    /// Set whether the new `BDev` has a write cache.
+    pub fn with_write_cache_present(mut self, has_write_cache: bool) -> Self {
+        self.write_cache_present = has_write_cache;
+        self
+    }
+
+    /// Set the new `BDev`'s physical block size.
+    ///
+    /// If the physical block size is not explcitly set, it is assumed to be the same size of a
+    /// logical block.
+    pub fn with_physical_block_size(mut self, size: u32) -> Self {
+        self.physical_block_size = size;
+        self
+    }
+
+    /// Set the new `BDev`'s minimum buffer alignment.
+    ///
+    /// The alignment must be a non-zero power of 2. If not explicitly specified, byte alignment is
+    /// assumed.
+    ///
+    /// # Panics
+    ///
+    /// The value must be a non-zero power of 2 otherwise this function panics.
+    pub fn with_buffer_alignment(mut self, alignment: usize) -> Self {
+        assert!(
+            alignment.is_power_of_two(),
+            "buffer alignment must be a power of two"
+        );
+        self.buffer_alignment = alignment.checked_ilog2().expect("not zero") as u8;
+        self
+    }
+
+    /// Set the new `BDev`'s optimal I/O boundary in number of blocks.
+    ///
+    /// If not explicitly specified, no boundary is assumed.
+    pub fn with_optimal_io_boundary(mut self, boundary: u32) -> Self {
+        self.optimal_io_boundary = boundary;
+        self
+    }
+
+    /// Set the new `BDev`'s metadata parameters.
+    ///
+    /// If not explicitly specified, it is assumed the new `BDev` does not support metadata or
+    /// supports only the [Data Integrity Field (DIF)] as specified by the [`Self::with_dif()`]
+    /// method.
+    ///
+    /// # Parameters
+    ///
+    /// - `size`: The size of the metadata in bytes. A value of zero indicates no metadata is supported.
+    /// - `interleaved`: Specifies whether the metadata is interleaved with or separate from the
+    ///   block data.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if DIF was enabled and the specified metadata size is smaller than the
+    /// required number of DIF bytes.
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
+    pub fn with_metadata(mut self, size: u32, interleaved: bool) -> Self {
+        let min_md_size = match self.dif_pi_format {
+            Some(SPDK_DIF_PI_FORMAT_16) => 8,
+            Some(SPDK_DIF_PI_FORMAT_32) | Some(SPDK_DIF_PI_FORMAT_64) => 16,
+            None => 0,
+        };
+
+        assert!(
+            size >= min_md_size,
+            "the metadata size of {size} bytes is less than the {min_md_size} bytes required by the DIF configuration"
+        );
+
+        self.metadata_size = Some(size);
+        self.is_metadata_interleaved = interleaved;
+        self
+    }
+
+    /// Set the new `BDev`'s [Data Integrity Field (DIF)] parameters.
+    ///
+    /// If the metadata size has not been set, this method sets the metadata size to the number of
+    /// bytes required by the DIF configuration.
+    ///
+    /// # Parameters
+    ///
+    /// - `type`: A value from the [`spdk_dif_type`] enum specifying the DIF type. If
+    ///   `SPDK_DIF_DISABLE`, DIF is disabled for this block device and the remaining parameters are
+    ///   ignored.
+    /// - `pi_format`: An optional value from the [`spdk_dif_pi_format`] enum specifying the
+    ///   protection information format. This parameter is required to be specified as
+    ///   `Some(pi_format)` if DIF is not disabled.
+    /// - `is_head_of_md`: Specifies whether the DIF is set in the new `BDev`'s first or last 8|16
+    ///   bytes of metadata.
+    /// - `check_flags`: The bitmap of enabled DIF checks.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the metadata size has already been specified and is less than the
+    /// number of bytes required by the DIF configuration.
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
+    /// [`spdk_dif_type`]: spdk_sys::spdk_dif_type
+    /// [`spdk_dif_pi_format`]: spdk_sys::spdk_dif_pi_format
+    pub fn with_dif(
+        mut self,
+        r#type: spdk_dif_type,
+        pi_format: Option<spdk_dif_pi_format>,
+        is_head_of_md: bool,
+        check_flags: u32,
+    ) -> Self {
+        assert!(
+            self.dif_type == SPDK_DIF_DISABLE,
+            "DIF parameters can only be set once"
+        );
+
+        self.dif_type = r#type;
+
+        if self.dif_type != SPDK_DIF_DISABLE {
+            let min_md_size = match pi_format {
+                Some(SPDK_DIF_PI_FORMAT_16) => 8,
+                Some(SPDK_DIF_PI_FORMAT_32) | Some(SPDK_DIF_PI_FORMAT_64) => 16,
+                None => panic!("PI format must be specified if DIF is enabled"),
+            };
+
+            match self.metadata_size {
+                None => self.metadata_size = Some(min_md_size),
+                Some(size) => {
+                    assert!(
+                        size >= min_md_size,
+                        "the metadata size of {size} bytes is less than the {min_md_size} bytes required by the DIF configuration"
+                    );
+                }
+            }
+
+            self.dif_pi_format = pi_format;
+            self.dif_is_head_of_md = is_head_of_md;
+            self.dif_check_flags = check_flags
+        }
+        self
+    }
+
+    /// Set the new `BDev`'s NUMA node ID.
+    ///
+    /// The specified value may be `None` if the NUMA node ID is not known.
+    pub fn with_numa_id(mut self, numa_id: Option<i32>) -> Self {
+        self.numa_id = numa_id;
+        self
+    }
+}
+
+impl<'a, C, M> BDevBuilder<'a, C, M>
+where
+    C: BDevOps + Default + Unpin + 'static,
+    M: ModuleOps,
+{
+    /// Builds and registers a new `BDev` instance with the context initialized to default values.
+    pub fn build(self) -> Result<Device<Owned>> {
+        let mut bdev = Box::new(BDevImpl {
+            bdev: unsafe { mem::zeroed() },
+            ctx: C::default(),
+        });
+
+        // SAFETY: The `BDev`'s `spdk_bdev` struct has been zeroed and context initialized at this
+        // point.
+        unsafe { self.init_bdev(&mut bdev.bdev, addr_of_mut!(bdev.ctx) as *mut _) };
+
+        bdev.register()?;
+
+        Ok(bdev.into_device())
+    }
+}
+
+impl<'a, C, M> BDevBuilder<'a, C, M>
+where
+    C: BDevOps + Unpin + 'static,
+    M: ModuleOps,
+{
+    /// Builds and registers a new `BDev` instance with the specified context.
+    pub fn build_with_context(self, ctx: C) -> Result<Device<Owned>> {
+        let mut bdev = Box::new(BDevImpl {
+            bdev: unsafe { mem::zeroed() },
+            ctx,
+        });
+
+        // SAFETY: The `BDev`'s `spdk_bdev` struct has been zeroed and context initialized at this
+        // point.
+        unsafe { self.init_bdev(&mut bdev.bdev, addr_of_mut!(bdev.ctx) as *mut _) };
+
+        bdev.register()?;
+
+        Ok(bdev.into_device())
+    }
+}
+
+impl<'a, C, M> BDevBuilder<'a, C, M>
+where
+    C: BDevOps + 'static,
+    M: ModuleOps,
+{
+    /// Builds and registers a new `BDev` instance, initializing the context in-place using the
+    /// specified initialization function.
+    pub fn build_with_context_in_place<I>(self, init_fn: I) -> Result<Device<Owned>>
+    where
+        I: FnOnce(Pin<&mut MaybeUninit<C>>),
+    {
+        let mut bdev = Box::new(BDevImpl {
+            bdev: unsafe { mem::zeroed() },
+            ctx: MaybeUninit::<C>::uninit(),
+        });
+
+        // SAFETY: The `BDev`'s `spdk_bdev` struct has been zeroed. It's context will be initialized
+        // on the line following this call and before the `BDev` is available globally.
+        unsafe { self.init_bdev(&mut bdev.bdev, addr_of_mut!(bdev.ctx) as *mut _) };
+
+        init_fn(unsafe { Pin::new_unchecked(&mut bdev.ctx) });
+
+        // SAFETY: The `BDev` is fully initialized at this point.
+        let mut bdev =
+            unsafe { transmute::<Box<BDevImpl<MaybeUninit<C>>>, Box<BDevImpl<C>>>(bdev) };
+
+        bdev.register()?;
+
+        Ok(bdev.into_device())
     }
 }
 

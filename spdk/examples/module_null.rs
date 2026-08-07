@@ -43,14 +43,7 @@ unsafe impl Sync for NullRs {}
 impl NullRs {
     /// Creates a new NullRs block device.
     pub fn try_new() -> spdk::Result<Device<Owned>> {
-        let mut null = NullRsModule::new_bdev(c"null-rs", NullRs);
-
-        null.bdev.blocklen = 4096;
-        null.bdev.blockcnt = 1;
-
-        null.register()?;
-
-        Ok(null.into_device())
+        NullRsModule::new_bdev_builder(c"null-rs", 4096, 1).build()
     }
 }
 

@@ -117,28 +117,14 @@ impl BDevIoChannelOps for EchoChannel {
 }
 
 /// Implements the Echo block device.
+#[derive(Default)]
 struct Echo {
     inner: Arc<EchoInner>,
 }
 
 impl Echo {
     fn try_new(name: &CStr) -> spdk::Result<Device<Owned>> {
-        let mut echo = EchoModule::new_bdev(name, Self::default());
-
-        echo.bdev.blocklen = 4096;
-        echo.bdev.blockcnt = 2;
-
-        echo.register()?;
-
-        Ok(echo.into_device())
-    }
-}
-
-impl Default for Echo {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(Default::default()),
-        }
+        EchoModule::new_bdev_builder(name, 4096, 2).build()
     }
 }
 
