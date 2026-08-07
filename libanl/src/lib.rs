@@ -6,6 +6,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
 };
 
+use libanl_macros::define_error;
 use libc::{addrinfo, gai_strerror, sigevent, timespec};
 
 /// Specifies the Internet host and service to lookup in a call to the [`getaddrinfo_a`] function.
@@ -138,18 +139,20 @@ impl Debug for Error {
     }
 }
 
-pub const EAI_BADFLAGS: Error = Error(-1);
-pub const EAI_NONAME: Error = Error(-2);
-pub const EAI_AGAIN: Error = Error(-3);
-pub const EAI_FAIL: Error = Error(-4);
-pub const EAI_NODATA: Error = Error(-5);
-pub const EAI_FAMILY: Error = Error(-6);
-pub const EAI_SOCKTYPE: Error = Error(-7);
-pub const EAI_SERVICE: Error = Error(-8);
-pub const EAI_ADDRFAMILY: Error = Error(-9);
-pub const EAI_MEMORY: Error = Error(-10);
-pub const EAI_SYSTEM: Error = Error(-11);
-pub const EAI_INPROGRESS: Error = Error(-100);
+define_error! {
+    EAI_BADFLAGS = -1,
+    EAI_NONAME = -2,
+    EAI_AGAIN = -3,
+    EAI_FAIL = -4,
+    EAI_NODATA = -5,
+    EAI_FAMILY = -6,
+    EAI_SOCKTYPE = -7,
+    EAI_SERVICE = -8,
+    EAI_ADDRFAMILY = -9,
+    EAI_MEMORY = -10,
+    EAI_SYSTEM = -11,
+    EAI_INPROGRESS = -100,
+}
 
 /// Converts the return value from a `getaddrinfo` family function into an
 /// [`Error`] value.
