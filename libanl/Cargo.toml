@@ -5,4 +5,5 @@ edition = "2024"
 rust-version = "1.93.0"
 
 [dependencies]
+libanl-macros = { version = "0.1.0", path = "../libanl-macros" }
 libc = "0.2.189"
