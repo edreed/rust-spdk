@@ -5,7 +5,7 @@ use std::{
 };
 
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps, malloc},
     block::{Any, Descriptor, Device, IoChannel, IoType, Owned},
     dma::{self},
     errors::ENOTSUP,
@@ -99,31 +99,23 @@ impl BDevOps for PassthruRs {
 impl PassthruRs {
     pub fn try_new(base: Device<Any>, desc: Descriptor) -> spdk::Result<Device<Owned>> {
         let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy())).unwrap();
-        let mut passthru = PassthruRsModule::new_bdev(name.as_c_str(), PassthruRs { base, desc });
 
-        let base = unsafe { &mut *passthru.ctx().base.as_ptr() };
-
-        passthru.bdev.write_cache = base.write_cache;
-        passthru.bdev.required_alignment = base.required_alignment;
-        passthru.bdev.optimal_io_boundary = base.optimal_io_boundary;
-        passthru.bdev.blocklen = base.blocklen;
-        passthru.bdev.blockcnt = base.blockcnt;
-
-        passthru
-            .bdev
-            .__bindgen_anon_1
-            .set_md_interleave(base.__bindgen_anon_1.md_interleave());
-        passthru.bdev.md_len = base.md_len;
-        passthru.bdev.dif_type = base.dif_type;
-        passthru
-            .bdev
-            .__bindgen_anon_1
-            .set_dif_is_head_of_md(base.__bindgen_anon_1.dif_is_head_of_md());
-        passthru.bdev.dif_check_flags = base.dif_check_flags;
-
-        passthru.register()?;
-
-        Ok(passthru.into_device())
+        PassthruRsModule::new_bdev_builder(
+            name.as_c_str(),
+            base.logical_block_size(),
+            base.logical_block_count(),
+        )
+        .with_write_cache_present(base.has_write_cache())
+        .with_buffer_alignment(base.buffer_alignment())
+        .with_optimal_io_boundary(base.optimal_io_boundary())
+        .with_metadata(base.metadata_size(), base.is_metadata_interleaved())
+        .with_dif(
+            base.dif_type(),
+            base.dif_pi_format(),
+            base.is_dif_head_of_metadata(),
+            base.dif_check_flags(),
+        )
+        .build_with_context(PassthruRs { base, desc })
     }
 }
 

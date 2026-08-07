@@ -27,7 +27,7 @@ repos:
   - id: rustdoc
     name: rustdoc
     description: Check rustdoc for correctness
-    entry: "env RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --all-features --document-private-items --color always --open"
+    entry: "env RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --all-features --document-private-items --color always"
     language: system
     pass_filenames: false
   - id: clippy

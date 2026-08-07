@@ -9,7 +9,7 @@ use async_condvar_fair::Condvar;
 use futures::future::join;
 use parking_lot::Mutex;
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps},
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
     errors::ENOTSUP,
@@ -60,9 +60,9 @@ impl EchoChannel {
         let dst_buf = io.buffers_mut();
 
         if offset_blocks == 0 {
-            // Some Virtual BDev read the first block to inspect
+            // Some Virtual BDevs read the first block to inspect
             // partition or other metadata to determine whether
-            // to claim the device. We imply return a block of
+            // to claim the device. We simply return a block of
             // zeros to prevent this BDev from claiming the device.
             dst_buf[0].fill(0);
 
@@ -117,28 +117,14 @@ impl BDevIoChannelOps for EchoChannel {
 }
 
 /// Implements the Echo block device.
+#[derive(Default)]
 struct Echo {
     inner: Arc<EchoInner>,
 }
 
 impl Echo {
     fn try_new(name: &CStr) -> spdk::Result<Device<Owned>> {
-        let mut echo = EchoModule::new_bdev(name, Self::default());
-
-        echo.bdev.blocklen = 4096;
-        echo.bdev.blockcnt = 2;
-
-        echo.register()?;
-
-        Ok(echo.into_device())
-    }
-}
-
-impl Default for Echo {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(Default::default()),
-        }
+        EchoModule::new_bdev_builder(name, 4096, 2).build()
     }
 }
 

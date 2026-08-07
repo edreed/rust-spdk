@@ -8,76 +8,48 @@ mod module;
 
 use proc_macro::TokenStream;
 
-/// Derives the [`Parser`] trait for a struct defining command-line arguments in
-/// addition to the standard SPDK Application Framework arguments.
+/// Derives the [`Parser`] trait for a struct defining command-line arguments in addition to the
+/// standard SPDK Application Framework arguments.
 ///
-/// This macro provides simple command-line argument parsing for SPDK
-/// applications and integrates with the [`macro@main`] macro. It allows an
-/// application to extend the set of command-line arguments supported by the
-/// SPDK Event Framework. The derived struct will implement the [`Parser`] trait
-/// and its `parse` method can be passed to the [`macro@main`] macro.
+/// This macro provides simple command-line argument parsing for SPDK applications and integrates
+/// with the [`macro@main`] macro. It allows an application to extend the set of command-line
+/// arguments supported by the SPDK Event Framework. The derived struct will implement the
+/// [`Parser`] trait and its `parse` method can be passed to the [`macro@main`] macro.
 ///
-/// If you need more advanced argument parsing, consider using a crate like
-/// [`clap`] and create a runtime using the [`Builder`] type.
+/// If you need more advanced argument parsing, consider using a crate like [`clap`] and create a
+/// runtime using the [`Builder`] type.
 ///
 /// # Field Types
 ///
-/// The type of each field in the derived struct must implement the [`FromStr`]
-/// trait.
+/// The type of each field in the derived struct must implement the [`FromStr`] trait.
 ///
-/// Boolean fields are treated as flags and will be set to `true` if present on
-/// the command-line. The option supports an optional value containing `true` or
-/// `false` to explicitly set the value.
+/// Boolean fields are treated as flags and will be set to `true` if present on the command-line.
+/// The option supports an optional value containing `true` or `false` to explicitly set the value.
 ///
 /// # Attributes
 ///
-/// The optional `spdk_arg` helper attribute can be used the customize the
-/// command-line behavior. The following metadata is supported by this
-/// attribute:
+/// The optional `spdk_arg` helper attribute can be used the customize the command-line behavior.
+/// The following metadata is supported by this attribute:
 ///
-/// * `short`: The short name of the argument, e.g. `short = 'C'`. If not present,
-///   no short argument will be generated.
-/// * `long`: The long name of the argument, e.g. `long = "block-count"`. If not
-///   present, the field name will be converted to a long argument by replacing
-///   any underscores (`'_'`) with dashes (`'-'`).
-/// * `default`: The default value for the argument, e.g. `default = 512`. If
-///   not present, the field type must implement the [`Default`] trait.
-/// * `value_name`: The name of the value for the argument that will appear in
-///   the usage help text, e.g. `value_name = "SIZE"`. If not present, the value
-///   name will be derived from the field name by converting to uppercase and
-///   replacing underscores with dashes.
+/// * `short`: The short name of the argument, e.g. `short = 'C'`. If not present, no short argument
+///   will be generated.
+/// * `long`: The long name of the argument, e.g. `long = "block-count"`. If not present, the field
+///   name will be converted to a long argument by replacing any underscores (`'_'`) with dashes
+///   (`'-'`).
+/// * `default`: The default value for the argument, e.g. `default = 512`. If not present, the field
+///   type must implement the [`Default`] trait.
+/// * `value_name`: The name of the value for the argument that will appear in the usage help text,
+///   e.g. `value_name = "SIZE"`. If not present, the value name will be derived from the field name
+///   by converting to uppercase and replacing underscores with dashes.
 ///
 /// # Help Text
 ///
-/// The help text for the derived struct will be generated from the doc comments
-/// for each field.
+/// The help text for the derived struct will be generated from the doc comments for each field.
 ///
 /// # Usage
 ///
 /// ```no_run
-/// use std::path::PathBuf;
-/// use spdk::{self, cli::Parser};
-///
-/// #[derive(Debug, Parser)]
-/// struct Args {
-///     /// Path to the block device to use.
-///     #[spdk_arg(short = 'D')]
-///     device_path: PathBuf,
-///
-///     /// The block size of the device in bytes.
-///     #[spdk_arg(default = 512)]
-///     block_size: u32,
-///
-///     /// If specified, creates a new block device.
-///     create_new: bool,
-/// }
-///
-/// #[spdk::main(cli_args = Args::parse())]
-/// async fn main() {
-///     let args = Args::get();
-///
-///     println!("{:#?}", args);
-/// }
+#[doc = include_str!("../../spdk/examples/cli.rs")]
 /// ```
 ///
 /// The following help text will be generated for the above example:
@@ -150,25 +122,23 @@ pub fn parser(input: TokenStream) -> TokenStream {
     cli::DeriveParser::new().derive(input)
 }
 
-/// Marks the main entry point of an application using the SPDK Application
-/// Framework.
+/// Marks the main entry point of an application using the SPDK Application Framework.
 ///
 /// # Notes
 ///
-/// This macro is for applications that do not require a complex setup. Consider
-/// using [`Builder`](../spdk/runtime/struct.Builder.html) to create a
-/// [`Runtime`](../spdk/runtime/struct.Runtime.html) directly if this macro does
-/// not meet your needs.
+/// This macro is for applications that do not require a complex setup. Consider using
+/// [`Builder`](../spdk/runtime/struct.Builder.html) to create a
+/// [`Runtime`](../spdk/runtime/struct.Runtime.html) directly if this macro does not meet your
+/// needs.
 ///
-/// The [`Runtime`](../spdk/runtime/struct.Runtime.html) created by this macro
-/// is initialized from the command line arguments supported by the
+/// The [`Runtime`](../spdk/runtime/struct.Runtime.html) created by this macro is initialized from
+/// the command line arguments supported by the
 /// [`spdk_app_parse_args`](../spdk_sys/fn.spdk_app_parse_args.html) function.
 ///
 /// # Attributes
 ///
-/// The `cli_args` attribute is used with the `Parser` trait to specify the
-/// parsing function for a struct defining command-line arguments. See the
-/// [`Parser`] derive macro for more information.
+/// The `cli_args` attribute is used with the `Parser` trait to specify the parsing function for a
+/// struct defining command-line arguments. See the [`Parser`] derive macro for more information.
 ///
 /// # Usage
 ///
@@ -185,127 +155,40 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Marks a struct as a SPDK block device module.
 ///
-/// This attribute macro creates a singleton instance of type [`Module<T>`] for
-/// the target struct and registers it with the SPDK block device module list.
+/// This attribute macro creates a singleton instance of type [`Module<T>`] for the target struct
+/// and registers it with the SPDK block device module list.
 ///
-/// The singleton instance can be accessed using the [`instance()`] method of
-/// the [`ModuleInstance`] trait.
+/// The singleton instance can be accessed using the [`instance()`] method of the [`ModuleInstance<T>`]
+/// trait.
 ///
-/// BDev implementors call the [`new_bdev()`] method of the `ModuleInstance`
-/// trait to create a new block device instance.
+/// BDev implementors call the [`new_bdev_builder()`] method of the `ModuleOps` trait to create a
+/// builder to specify the attributes of a new block device. The builder's [`build()`],
+/// [`build_with_context()`] or [`build_with_context_in_place()`] methods create and register the new
+/// BDev instance with the SPDK global block device list.
+///
+/// # Attributes
+///
+/// The `product_name` attribute can be used to specify a product name for the block device. If not
+/// specified, the product name will be derived from the struct name by removing the `Module`
+/// suffix, converting to title case and appending "Disk".
 ///
 /// # Example
 ///
-/// The following example creates a block device module for a device that
-/// ignores writes and returns zeroed buffers for reads:
+/// The following example creates a block device module for a device that ignores writes and returns
+/// zeroed buffers for reads:
 ///
 ///
-/// ```rust
-/// use std::io::Write;
-///
-/// use spdk::{
-///     bdev::{
-///         BDevIo,
-///         BDevIoChannelOps,
-///         BDevOps,
-///         IoStatus,
-///         IoType,
-///         ModuleInstance,
-///         ModuleOps,
-///     },
-///     block::{
-///         Device,
-///         Owned,
-///     },
-///     dma,
-///     errors::Errno
-/// };
-///
-/// /// Implements the NullRs block device module.
-/// #[spdk::module]
-/// #[derive(Debug, Default)]
-/// struct NullRsModule;
-///
-/// impl ModuleOps for NullRsModule {
-///     type IoContext = ();
-/// }
-///
-/// /// Implements the NullRs block device I/O channel. It ignores write requests
-/// /// and returns zeroed buffers for read requests.
-/// #[derive(Debug, Default)]
-/// struct NullRsChannel;
-///
-/// impl BDevIoChannelOps for NullRsChannel {
-///     type IoContext = ();
-///
-///     fn submit_request(&self, io: BDevIo<Self::IoContext>) {
-///         if io.io_type() == IoType::Read {
-///             let dst = io.buffers_mut();
-///
-///             dst[0].fill(0);
-///         }
-///
-///         io.complete(IoStatus::Success);
-///     }
-/// }
-///
-/// /// Implements the NullRs block device.
-/// #[derive(Default)]
-/// struct NullRs;
-///
-/// unsafe impl Send for NullRs {}
-/// unsafe impl Sync for NullRs {}
-///
-/// impl NullRs {
-///     /// Creates a new NullRs block device.
-///     pub fn try_new() -> spdk::Result<Device<Owned>> {
-///         let mut null = NullRsModule::new_bdev(c"null-rs", NullRs::default());
-///
-///         null.bdev.blocklen = 4096;
-///         null.bdev.blockcnt = 1;
-///
-///         null.register()?;
-///
-///         Ok(null.into_device())
-///     }
-/// }
-///
-/// impl BDevOps for NullRs {
-///     type IoChannel = NullRsChannel;
-///
-///     async fn destruct(&mut self) -> spdk::Result<()> {
-///         Ok(())
-///     }
-///
-///     fn io_type_supported(&self, io_type: IoType) -> bool {
-///         matches!(io_type, IoType::Read | IoType::Write)
-///     }
-/// }
-///
-/// /// A program that creates and writes to the NullRs block device.
-/// #[spdk::main]
-/// async fn main() {
-///     let null = NullRs::try_new().unwrap();
-///     let desc = null.open(true).await.unwrap();
-///     let mut ch = desc.io_channel().unwrap();
-///     let layout = null.layout_for_blocks(1).unwrap();
-///     let mut buf = dma::Buffer::new_zeroed(layout);
-///
-///     write!(buf.cursor_mut(), "Hello, World!").unwrap();
-///
-///     ch.write_at(&buf, 0).await.unwrap();
-///
-///     drop(ch);
-///     drop(desc);
-///     null.destroy().await.unwrap();
-/// }
-///
+/// ```no_run
+#[doc = include_str!("../../spdk/examples/module_null.rs")]
 /// ```
 ///
 /// [`instance()`]: ../spdk/bdev/trait.ModuleInstance.html#tymethod.instance
-/// [`new_bdev()`]: ../spdk/bdev/trait.ModuleInstance.html#tymethod.new_bdev
+/// [`new_bdev_builder()`]: ../spdk/bdev/trait.ModuleOps.html#tymethod.new_bdev
+/// [`build()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build
+/// [`build_with_context()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build_with_context
+/// [`build_with_context_in_place()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build_with_context_in_place
 /// [`Module<T>`]: ../spdk/bdev/struct.Module.html
-/// [`ModuleInstance`]: ../spdk/bdev/trait.ModuleInstance.html
+/// [`ModuleInstance<T>`]: ../spdk/bdev/trait.ModuleInstance.html
 #[cfg(feature = "bdev-module")]
 #[proc_macro_attribute]
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -314,8 +197,8 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Generates `Errno` constant definitions for the `errors` module of the `spdk` crate.
 ///
-/// The macro takes a comma-delimited list of simple expression assignments given by the
-/// regular expression, `((?P<name>\w+)\s+=\s+(?P<value>\d+),?)*`, and generates `Errno` constant
+/// The macro takes a comma-delimited list of simple expression assignments given by the regular
+/// expression, `((?P<name>\w+)\s+=\s+(?P<value>\d+),?)*`, and generates `Errno` constant
 /// definitions. The definitions include automatically generated documentation by passing the value
 /// to the [`strerror`] function.
 ///
