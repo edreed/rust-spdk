@@ -49,6 +49,29 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'devices'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=devices",
+                    "--package=spdk",
+                    "--features=bdev-malloc"
+                ],
+                "filter": {
+                    "name": "devices",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'module_echo'",
             "cargo": {
                 "args": [

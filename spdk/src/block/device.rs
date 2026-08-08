@@ -2,10 +2,14 @@ use std::{
     alloc::{Layout, LayoutError},
     ffi::CStr,
     fmt::{self, Debug, Formatter},
-    mem::{self},
+    future::Future,
+    mem,
+    pin::Pin,
     ptr::NonNull,
+    task::{Context, Poll},
 };
 
+use futures::{FutureExt, Stream};
 use spdk_sys::{
     SPDK_BDEV_IO_TYPE_ABORT, SPDK_BDEV_IO_TYPE_COMPARE, SPDK_BDEV_IO_TYPE_COMPARE_AND_WRITE,
     SPDK_BDEV_IO_TYPE_COPY, SPDK_BDEV_IO_TYPE_FLUSH, SPDK_BDEV_IO_TYPE_GET_ZONE_INFO,
@@ -150,12 +154,22 @@ impl<T: OwnedOps> Device<T> {
         NonNull::new(bdev).map(|b| Device::<Any>(OwnershipState::Borrowed(b)))
     }
 
+    /// Attempt to get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(dev)` if `bdev` is non-null and `None` otherwise.
+    pub fn try_from_ptr(bdev: *mut spdk_bdev) -> Option<Device<Any>> {
+        NonNull::new(bdev).map(|b| Device::<Any>(OwnershipState::Borrowed(b)))
+    }
+
     /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if `bdev` is null.
     pub fn from_ptr(bdev: *mut spdk_bdev) -> Device<Any> {
-        match NonNull::new(bdev) {
-            Some(b) => Device::<Any>(OwnershipState::Borrowed(b)),
-            None => panic!("device pointer must not be null"),
-        }
+        Self::try_from_ptr(bdev).expect("device pointer must not be null")
     }
 
     /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
@@ -392,6 +406,20 @@ impl<T: OwnedOps> Device<T> {
     pub fn io_type_supported(&self, io_type: IoType) -> bool {
         unsafe { spdk_bdev_io_type_supported(self.as_ptr(), io_type as u32) }
     }
+
+    /// Gets the first `BDev` in the global list.
+    ///
+    /// Returns `None` if there are no `BDev`s currently registered.
+    fn first() -> Option<Device<Any>> {
+        Self::try_from_ptr(unsafe { spdk_bdev_first() })
+    }
+
+    /// Gets the next `BDev` in the global list.
+    ///
+    /// Returns `None` if there are no more `BDev`s in the list.
+    fn next(&self) -> Option<Device<Any>> {
+        Self::try_from_ptr(unsafe { spdk_bdev_next(self.as_ptr()) })
+    }
 }
 
 impl<T: OwnedOps> Drop for Device<T> {
@@ -416,28 +444,76 @@ impl From<*mut spdk_bdev> for Device<Any> {
     }
 }
 
-/// An iterator over all block devices.
-pub struct Devices(*mut spdk_bdev);
+/// An asynchronous iterator over all block devices.
+pub struct Devices {
+    current: Option<Device<Any>>,
+    desc: Option<Descriptor>,
+    open_fut: Option<Pin<Box<dyn Future<Output = Result<Descriptor>>>>>,
+}
 
-unsafe impl Send for Devices {}
-
-impl Iterator for Devices {
+impl Stream for Devices {
     type Item = Device<Any>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.0.is_null() {
-            None
-        } else {
-            let current = self.0;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        while let Some(dev) = &self.current {
+            let dev = dev.borrow();
 
-            self.0 = unsafe { spdk_bdev_next(self.0) };
+            // Open a read-only descriptor on the block device to prevent it
+            // from being unregistered (and deleted) while it is in use by the
+            // caller. Since this is an asynchronous operation, we store a
+            // future to the open call and delegate polling for a result to it.
+            if self.open_fut.is_none() {
+                let dev = dev.borrow();
 
-            Some(Device::<Any>::from_ptr(current))
+                self.open_fut = Some(async move { dev.open(false).await }.boxed_local())
+            }
+
+            // Poll the block device open future and process the result.
+            match self.open_fut.as_mut().unwrap().poll_unpin(cx) {
+                // The device was opened successfully. Store the descriptor,
+                // advance the iterator to the next device and return the
+                // current device to the caller.
+                Poll::Ready(Ok(desc)) => {
+                    self.current = dev.next();
+                    self.desc = Some(desc);
+                    self.open_fut = None;
+
+                    return Poll::Ready(Some(dev.borrow()));
+                }
+
+                // An error occurred during the open: skip this device and
+                // advance the iterator to the next one.
+                Poll::Ready(Err(_)) => {
+                    self.current = dev.next();
+                    self.desc = None;
+                    self.open_fut = None;
+                    continue;
+                }
+
+                // The open operation is pending.
+                Poll::Pending => return Poll::Pending,
+            }
         }
+
+        // There are no more devices to be iterated. Close the current
+        // descriptor and return `None` to end the iteration.
+        self.desc = None;
+
+        Poll::Ready(None)
     }
 }
 
-/// Get an iterator over all block devices.
+/// Get an asynchronous iterator over all block devices.
+///
+/// # Example
+///
+/// ```no_run
+#[doc = include_str!("../../examples/devices.rs")]
+/// ```
 pub fn devices() -> Devices {
-    Devices(unsafe { spdk_bdev_first() })
+    Devices {
+        current: Device::<Any>::first(),
+        desc: None,
+        open_fut: None,
+    }
 }
