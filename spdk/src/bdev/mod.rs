@@ -17,7 +17,7 @@ mod bdev;
 mod module;
 
 #[cfg(feature = "bdev-module")]
-pub use bdev::{BDevBuilder, BDevImpl, BDevIo, BDevIoChannel, BDevIoChannelOps, BDevOps, IoStatus};
+pub use bdev::{BDevBuilder, BDevImpl, BDevIo, BDevIoChannel, BDevIoChannelOps, BDevOps};
 
 #[cfg(feature = "bdev-module")]
 pub use module::{Module, ModuleInstance, ModuleOps};

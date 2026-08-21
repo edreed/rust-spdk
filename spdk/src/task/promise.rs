@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::{
     cell::{RefCell, UnsafeCell},
+    error::Error,
     fmt::Debug,
     future::Future,
     mem::{self, MaybeUninit, transmute},
@@ -12,7 +13,6 @@ use std::{
 use libc::c_void;
 
 use crate::{
-    Result,
     errors::{EINVAL, Errno},
     thread::Thread,
     to_result,
@@ -33,9 +33,10 @@ use crate::{
 /// Kept --> Fulfilled : poll(cx)
 /// ```
 #[derive(Debug, Default)]
-enum PromiseState<T>
+enum PromiseState<T, E>
 where
     T: Debug,
+    E: Error,
 {
     /// The initial state of a promise.
     #[default]
@@ -61,7 +62,7 @@ where
     /// If a completion function is invoked before the start function returns, the promise
     /// transitions from the `Requesting` state to the `Kept` state directly. Otherwise, the promise
     /// transitions from the `Requesting` state to the `Waiting` state.
-    Kept(Result<T>),
+    Kept(Result<T, E>),
 
     /// The promisee has received the promised result.
     ///
@@ -69,11 +70,17 @@ where
     Fulfilled,
 }
 
-unsafe impl<T> Send for PromiseState<T> where T: Debug + Send + 'static {}
+unsafe impl<T, E> Send for PromiseState<T, E>
+where
+    T: Debug + Send + 'static,
+    E: Error + Send + 'static,
+{
+}
 
-impl<T> PromiseState<T>
+impl<T, E> PromiseState<T, E>
 where
     T: Debug,
+    E: Error,
 {
     /// Polls the state of the operation, advancing to the next state if possible.
     fn poll(&mut self, cx: &Context<'_>) -> Self {
@@ -98,7 +105,7 @@ where
     /// Sets the state and result of the operation to [`Kept`].
     ///
     /// [`Kept`]: Self::Kept
-    fn set_kept(&mut self, res: Result<T>) -> Self {
+    fn set_kept(&mut self, res: Result<T, E>) -> Self {
         match self {
             Self::Requesting | Self::Waiting(_) => mem::replace(self, Self::Kept(res)),
             _ => panic!("set_kept called in unexpected state: {:?}", self),
@@ -114,18 +121,20 @@ where
 /// it.
 ///
 /// </div>
-pub struct Promissory<R, C = ()>
+pub struct Promissory<R, E, C = ()>
 where
     R: Debug,
+    E: Error,
 {
-    state: RefCell<PromiseState<R>>,
+    state: RefCell<PromiseState<R, E>>,
     thread: Thread,
     ctx: C,
 }
 
-impl<R, C> Promissory<R, C>
+impl<R, E, C> Promissory<R, E, C>
 where
     R: Debug,
+    E: Error,
     C: Unpin,
 {
     /// Returns a new `Rc<Promise>` instance with the provided context.
@@ -153,9 +162,10 @@ where
     }
 }
 
-impl<R, C> Promissory<R, C>
+impl<R, E, C> Promissory<R, E, C>
 where
     R: Debug,
+    E: Error,
 {
     /// Constructs a new `Rc<Promissory>` instance initializing the context, `C` in place. This
     /// function also provides a `Weak<Promissory>` to the allocation allowing you to initialize the
@@ -169,16 +179,17 @@ where
     /// the reference and does not access or mutate it by through the weak pointer.
     pub fn with_context_cyclic_in_place<I>(init_fn: I) -> Rc<Self>
     where
-        I: FnOnce(Pin<&mut MaybeUninit<C>>, &Weak<Promissory<R, MaybeUninit<C>>>),
+        I: FnOnce(Pin<&mut MaybeUninit<C>>, &Weak<Promissory<R, E, MaybeUninit<C>>>),
     {
-        let this = Rc::new(Promissory::<R, _> {
+        let this = Rc::new(Promissory::<R, E, _> {
             state: Default::default(),
             thread: Thread::current(),
             ctx: UnsafeCell::new(MaybeUninit::zeroed()),
         });
 
         // SAFETY: The promissory has been initialized except its context.
-        let weak: Weak<Promissory<R, MaybeUninit<C>>> = unsafe { transmute(Rc::downgrade(&this)) };
+        let weak: Weak<Promissory<R, E, MaybeUninit<C>>> =
+            unsafe { transmute(Rc::downgrade(&this)) };
 
         // SAFETY: The initialization function must ensure that it initializes the context through
         // the reference and does not access or mutate it through the weak pointer.
@@ -189,7 +200,7 @@ where
     }
 
     /// Polls the state of the operation, advancing to the next state if possible.
-    fn poll_state(&self, cx: &Context<'_>) -> PromiseState<R> {
+    fn poll_state(&self, cx: &Context<'_>) -> PromiseState<R, E> {
         self.state.borrow_mut().poll(cx)
     }
 
@@ -199,7 +210,7 @@ where
     }
 
     /// Sets the state and result of the operation to [`PromiseState::Kept`].
-    fn set_kept(&self, res: Result<R>) -> PromiseState<R> {
+    fn set_kept(&self, res: Result<R, E>) -> PromiseState<R, E> {
         self.state.borrow_mut().set_kept(res)
     }
 
@@ -217,7 +228,7 @@ where
     }
 
     /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
-    pub fn set_result(rc_self: Rc<Self>, res: Result<R>) {
+    pub fn set_result(rc_self: Rc<Self>, res: Result<R, E>) {
         assert!(
             rc_self.thread.is_current(),
             "set_result called from wrong thread"
@@ -242,35 +253,6 @@ where
                     .expect("send result");
             }
         }
-    }
-
-    /// A callback invoked to set the result of a [`Promise`].
-    ///
-    /// This callback receives a raw pointer to an SPDK object of type `R` and converts it to the
-    /// appropriate Rust type `T`. If the received pointer is null, the result is a suitable
-    /// `Err(Errno)` value.
-    unsafe extern "C" fn complete_with_object<T>(cx: *mut c_void, obj: *mut T)
-    where
-        R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
-    {
-        let rc_self = unsafe { Self::from_raw(cx.cast()) };
-
-        Self::set_result(rc_self, obj.try_into().map_err(|_| EINVAL));
-    }
-
-    /// Returns a pointer to a callback function and a context pointer suitable for passing to an
-    /// asynchronous function call. The callback is invoked to set the result of a [`Promise`].
-    ///
-    /// This callback receives a raw pointer to an SPDK object of type `R` and converts it to the
-    /// appropriate Rust type `T`. If the received pointer is null, the result is a suitable
-    /// `Err(Errno)` value.
-    pub fn callback_with_object<T>(
-        rc_self: &Rc<Self>,
-    ) -> (unsafe extern "C" fn(*mut c_void, *mut T), *const Self)
-    where
-        R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
-    {
-        (Self::complete_with_object, Self::into_raw(rc_self.clone()))
     }
 
     /// Consumes an `Rc<Promissory>` instance and returns the wrapped pointer.
@@ -301,7 +283,42 @@ where
     }
 }
 
-impl<C> Promissory<(), C> {
+impl<R, E, C> Promissory<R, E, C>
+where
+    R: Debug,
+    E: Error + From<Errno>,
+{
+    /// A callback invoked to set the result of a [`Promise`].
+    ///
+    /// This callback receives a raw pointer to an SPDK object of type `R` and converts it to the
+    /// appropriate Rust type `T`. If the received pointer is null, the result is a suitable
+    /// `Err(Errno)` value.
+    unsafe extern "C" fn complete_with_object<T>(cx: *mut c_void, obj: *mut T)
+    where
+        R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
+    {
+        let rc_self = unsafe { Self::from_raw(cx.cast()) };
+
+        Self::set_result(rc_self, obj.try_into().map_err(|_| EINVAL.into()));
+    }
+
+    /// Returns a pointer to a callback function and a context pointer suitable for passing to an
+    /// asynchronous function call. The callback is invoked to set the result of a [`Promise`].
+    ///
+    /// This callback receives a raw pointer to an SPDK object of type `R` and converts it to the
+    /// appropriate Rust type `T`. If the received pointer is null, the result is a suitable
+    /// `Err(Errno)` value.
+    pub fn callback_with_object<T>(
+        rc_self: &Rc<Self>,
+    ) -> (unsafe extern "C" fn(*mut c_void, *mut T), *const Self)
+    where
+        R: Debug + TryFrom<*mut T, Error = Errno> + 'static,
+    {
+        (Self::complete_with_object, Self::into_raw(rc_self.clone()))
+    }
+}
+
+impl<C> Promissory<(), Errno, C> {
     /// A callback invoked to set the result of a [`Promise`].
     ///
     /// This callback receives a status code. If the status code is 0, the result is `Ok(())`.
@@ -343,9 +360,10 @@ impl<C> Promissory<(), C> {
     }
 }
 
-impl<R, C> Default for Promissory<R, C>
+impl<R, E, C> Default for Promissory<R, E, C>
 where
     R: Debug,
+    E: Error,
     C: Default,
 {
     fn default() -> Self {
@@ -358,15 +376,17 @@ where
 }
 
 /// A future implementation for awaiting the result of a [`Promise`].
-struct FuturePromise<R, C>(Rc<Promissory<R, C>>)
-where
-    R: Debug;
-
-impl<R, C> Future for FuturePromise<R, C>
+struct FuturePromise<R, E, C>(Rc<Promissory<R, E, C>>)
 where
     R: Debug,
+    E: Error;
+
+impl<R, E, C> Future for FuturePromise<R, E, C>
+where
+    R: Debug,
+    E: Error,
 {
-    type Output = Result<R>;
+    type Output = Result<R, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state = self.0.poll_state(cx);
@@ -386,15 +406,22 @@ where
 /// The `Promise` type is not thread-safe. It must be used on the same SPDK thread that created it.
 ///
 /// </div>
-pub struct Promise<R, C = ()>(Rc<Promissory<R, C>>)
-where
-    R: Debug;
-
-unsafe impl<R, C> Send for Promise<R, C> where R: Debug + Send + 'static {}
-
-impl<R> Promise<R>
+pub struct Promise<R, E, C = ()>(Rc<Promissory<R, E, C>>)
 where
     R: Debug,
+    E: Error;
+
+unsafe impl<R, E, C> Send for Promise<R, E, C>
+where
+    R: Debug + Send + 'static,
+    E: Error + Send + 'static,
+{
+}
+
+impl<R, E> Promise<R, E>
+where
+    R: Debug,
+    E: Error,
 {
     /// Returns a new `Promise` instance.
     ///
@@ -407,18 +434,20 @@ where
     }
 }
 
-impl<R> Default for Promise<R>
+impl<R, E> Default for Promise<R, E>
 where
     R: Debug,
+    E: Error,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<R, C> Promise<R, C>
+impl<R, E, C> Promise<R, E, C>
 where
     R: Debug,
+    E: Error,
     C: Unpin,
 {
     /// Returns a new `Promise` instance with the user context of the related `Promissory`
@@ -444,15 +473,16 @@ where
     /// [`request`]: Self::request
     pub fn with_context_cyclic<F>(data_fn: F) -> Self
     where
-        F: FnOnce(&Weak<Promissory<R, C>>) -> C,
+        F: FnOnce(&Weak<Promissory<R, E, C>>) -> C,
     {
         Self(Promissory::with_context_cyclic(data_fn))
     }
 }
 
-impl<R, C> Promise<R, C>
+impl<R, E, C> Promise<R, E, C>
 where
     R: Debug,
+    E: Error,
 {
     /// Constructs a new `Promise` instance initializing the context, `C`, in place in the related
     /// `Promissory` allocation. This function also provides a `Weak<Promissory>` to the allocation
@@ -471,15 +501,15 @@ where
     /// [`request`]: Self::request
     pub fn with_context_cyclic_in_place<I>(init_fn: I) -> Self
     where
-        I: FnOnce(Pin<&mut MaybeUninit<C>>, &Weak<Promissory<R, MaybeUninit<C>>>),
+        I: FnOnce(Pin<&mut MaybeUninit<C>>, &Weak<Promissory<R, E, MaybeUninit<C>>>),
     {
         Self(Promissory::with_context_cyclic_in_place(init_fn))
     }
 
     /// Begins the asynchronous operation to fulfill the promise.
-    pub fn request<S>(mut self, start_fn: S) -> impl Future<Output = Result<R>>
+    pub fn request<S>(mut self, start_fn: S) -> impl Future<Output = Result<R, E>>
     where
-        S: FnOnce(&mut Rc<Promissory<R, C>>) -> Poll<Result<R>>,
+        S: FnOnce(&mut Rc<Promissory<R, E, C>>) -> Poll<Result<R, E>>,
     {
         self.0.set_requesting();
 

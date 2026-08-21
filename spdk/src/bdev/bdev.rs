@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     ffi::{CStr, CString},
     future::Future,
     io::{IoSlice, IoSliceMut},
@@ -13,12 +14,10 @@ use std::{
 };
 
 use spdk_sys::{
-    SPDK_BDEV_IO_STATUS_ABORTED, SPDK_BDEV_IO_STATUS_AIO_ERROR, SPDK_BDEV_IO_STATUS_FAILED,
-    SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED, SPDK_BDEV_IO_STATUS_MISCOMPARE,
-    SPDK_BDEV_IO_STATUS_NOMEM, SPDK_BDEV_IO_STATUS_NVME_ERROR, SPDK_BDEV_IO_STATUS_PENDING,
-    SPDK_BDEV_IO_STATUS_SCSI_ERROR, SPDK_BDEV_IO_STATUS_SUCCESS, spdk_bdev,
-    spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
-    spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread, spdk_bdev_io_status,
+    spdk_bdev, spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
+    spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread,
+    spdk_bdev_io_set_aio_status,
+    spdk_bdev_io_status::*,
     spdk_bdev_io_type, spdk_bdev_register, spdk_bdev_unregister,
     spdk_dif_pi_format::{
         self, SPDK_DIF_PI_FORMAT_16, SPDK_DIF_PI_FORMAT_32, SPDK_DIF_PI_FORMAT_64,
@@ -31,8 +30,8 @@ use ternary_rs::if_else;
 
 use crate::{
     Result,
-    block::{Any, Device, IoType, Owned, OwnedOps},
-    errors::{ECANCELED, EINPROGRESS, EINVAL, ENOMEM, ENOTSUP, Errno},
+    block::{Any, Device, IoError, IoResult, IoType, Owned, OwnedOps},
+    errors::{EINVAL, ENOMEM, ENOTSUP, Errno},
     task::{Promise, Promissory},
     thread::{self, Thread},
     to_result,
@@ -40,79 +39,11 @@ use crate::{
 
 use super::{Module, ModuleOps};
 
-/// The status of an I/O operation.
-///
-/// # Notes
-///
-/// These are mapped directly to the corresponding [`spdk_bdev_io_status`] values.
-#[derive(Copy, Clone)]
-pub enum IoStatus {
-    AioError = -8,
-    Aborted = -7,
-    FirstFusedFailed = -6,
-    Miscompare = -5,
-    NoMem = -4,
-    ScsiError = -3,
-    NvmeError = -2,
-    Failed = -1,
-    Pending = 0,
-    Success = 1,
-}
+#[cfg(feature = "nvmf")]
+use spdk_sys::spdk_bdev_io_set_nvme_status;
 
-impl From<spdk_bdev_io_status> for IoStatus {
-    fn from(value: spdk_bdev_io_status) -> Self {
-        match value {
-            SPDK_BDEV_IO_STATUS_AIO_ERROR => IoStatus::AioError,
-            SPDK_BDEV_IO_STATUS_ABORTED => IoStatus::Aborted,
-            SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED => IoStatus::FirstFusedFailed,
-            SPDK_BDEV_IO_STATUS_MISCOMPARE => IoStatus::Miscompare,
-            SPDK_BDEV_IO_STATUS_NOMEM => IoStatus::NoMem,
-            SPDK_BDEV_IO_STATUS_SCSI_ERROR => IoStatus::ScsiError,
-            SPDK_BDEV_IO_STATUS_NVME_ERROR => IoStatus::NvmeError,
-            SPDK_BDEV_IO_STATUS_FAILED => IoStatus::Failed,
-            SPDK_BDEV_IO_STATUS_PENDING => IoStatus::Pending,
-            SPDK_BDEV_IO_STATUS_SUCCESS => IoStatus::Success,
-            _ => unreachable!("unexpected spdk_bdev_io_status value"),
-        }
-    }
-}
-
-impl From<Errno> for IoStatus {
-    fn from(err: Errno) -> Self {
-        match err {
-            ENOMEM => IoStatus::NoMem,
-            EINPROGRESS => IoStatus::Pending,
-            ECANCELED => IoStatus::Aborted,
-            _ => IoStatus::Failed,
-        }
-    }
-}
-
-impl From<Result<()>> for IoStatus {
-    fn from(result: Result<()>) -> Self {
-        match result {
-            Ok(_) => IoStatus::Success,
-            Err(e) => e.into(),
-        }
-    }
-}
-
-impl From<IoStatus> for spdk_bdev_io_status {
-    fn from(val: IoStatus) -> spdk_bdev_io_status {
-        match val {
-            IoStatus::AioError => SPDK_BDEV_IO_STATUS_AIO_ERROR,
-            IoStatus::Aborted => SPDK_BDEV_IO_STATUS_ABORTED,
-            IoStatus::FirstFusedFailed => SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED,
-            IoStatus::Miscompare => SPDK_BDEV_IO_STATUS_MISCOMPARE,
-            IoStatus::NoMem => SPDK_BDEV_IO_STATUS_NOMEM,
-            IoStatus::ScsiError => SPDK_BDEV_IO_STATUS_SCSI_ERROR,
-            IoStatus::NvmeError => SPDK_BDEV_IO_STATUS_NVME_ERROR,
-            IoStatus::Failed => SPDK_BDEV_IO_STATUS_FAILED,
-            IoStatus::Pending => SPDK_BDEV_IO_STATUS_PENDING,
-            IoStatus::Success => SPDK_BDEV_IO_STATUS_SUCCESS,
-        }
-    }
-}
+#[cfg(feature = "scsi")]
+use spdk_sys::spdk_bdev_io_set_scsi_status;
 
 /// A trait for implementing the I/O channel operations for a BDev.
 pub trait BDevIoChannelOps: 'static {
@@ -123,17 +54,23 @@ pub trait BDevIoChannelOps: 'static {
     /// [`BDevIo::ctx_mut()`]: method@super::BDevIo::ctx_mut
     type IoContext: Default + 'static;
 
+    /// The error type returned by the [`submit_request`] method.
+    ///
+    /// [`submit_request`]: Self::submit_request
+    type Error: Error + Into<IoError>;
+
     /// Submit an I/O request to the BDev.
     fn submit_request(
         &mut self,
         io: &mut BDevIo<Self::IoContext>,
-    ) -> impl Future<Output = Result<()>>;
+    ) -> impl Future<Output = std::result::Result<(), Self::Error>>;
 }
 
 /// A stub trait implementation for the `BDevIoChannelOps` trait that does not support any I/O
 /// operations.
 impl BDevIoChannelOps for () {
     type IoContext = ();
+    type Error = Errno;
 
     async fn submit_request(&mut self, _io: &mut BDevIo<Self::IoContext>) -> Result<()> {
         Err(ENOTSUP)
@@ -207,7 +144,7 @@ where
 
 /// A type alias for the promissory that receives the buffer allocation from a call to the
 /// [`BDevIo<T>::allocate_buffers`] method.
-type AllocateBuffersPromissory<'a, T> = Promissory<(), PhantomData<&'a mut BDevIo<T>>>;
+type AllocateBuffersPromissory<'a, T> = Promissory<(), IoError, PhantomData<&'a mut BDevIo<T>>>;
 
 /// Represents driver-specific context for an I/O request.
 ///
@@ -242,7 +179,7 @@ where
     ///
     /// This function must only be called from the I/O submission callback to initialize a newly
     /// submitted I/O request. It initializes the driver's I/O context to a default value.
-    unsafe fn new(io: *mut spdk_bdev_io) -> Self {
+    unsafe fn new_in_place(io: *mut spdk_bdev_io) -> Self {
         unsafe {
             (*io)
                 .driver_ctx
@@ -359,7 +296,7 @@ where
             .upgrade()
             .expect("promissory has strong references");
 
-        Promissory::set_result(p, if_else!(success, Ok(()), Err(EINVAL)));
+        Promissory::set_result(p, if_else!(success, Ok(()), Err(EINVAL.into())));
     }
 
     /// Allocates buffers aligned to the BDev's requirement for the I/O request.
@@ -375,7 +312,7 @@ where
     ///
     /// Any buffers allocated by this method will automatically be freed on completion of this I/O
     /// request.
-    pub async fn allocate_buffers<'a>(&'a mut self, length: u64) -> Result<()> {
+    pub async fn allocate_buffers<'a>(&'a mut self, length: u64) -> IoResult<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(move |p| {
                 self.internal_ctx_mut()
@@ -393,16 +330,54 @@ where
 
     /// Completes the I/O request with the specified status.
     ///
+    /// # Safety
+    ///
+    /// This method may only be called on the thread used to submit the I/O operation.
+    ///
     /// # Panics
     ///
-    /// This method panics if not called on the thread associated with the I/O.
-    fn complete(mut self, status: IoStatus) {
-        assert!(self.thread().is_current());
+    /// This method panics on debug builds if not called on the thread associated with the I/O.
+    unsafe fn complete(mut self, status: IoResult<()>) {
+        debug_assert!(self.thread().is_current());
+
+        let io_status = match status {
+            Ok(_) => SPDK_BDEV_IO_STATUS_SUCCESS,
+            Err(e) => match e {
+                IoError::GeneralError(errno) => unsafe {
+                    spdk_bdev_io_set_aio_status(self.as_ptr(), -errno.errno())
+                },
+                IoError::Aborted => SPDK_BDEV_IO_STATUS_ABORTED,
+                IoError::FirstFusedFailed => SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED,
+                IoError::Miscompare => SPDK_BDEV_IO_STATUS_MISCOMPARE,
+                IoError::NoMem => SPDK_BDEV_IO_STATUS_NOMEM,
+                #[cfg(feature = "scsi")]
+                IoError::ScsiError(status) => unsafe {
+                    spdk_bdev_io_set_scsi_status(
+                        self.as_ptr(),
+                        status.sc.into(),
+                        status.sk.into(),
+                        status.asc,
+                        status.ascq,
+                    )
+                },
+                #[cfg(feature = "nvmf")]
+                IoError::NvmeError(status) => unsafe {
+                    spdk_bdev_io_set_nvme_status(
+                        self.as_ptr(),
+                        status.cdw0,
+                        status.sct.into(),
+                        status.sc.into(),
+                    )
+                },
+                IoError::Pending => panic!("I/O completed with pending status"),
+                _ => SPDK_BDEV_IO_STATUS_FAILED,
+            },
+        };
 
         unsafe {
             ptr::drop_in_place(self.io.as_mut().driver_ctx.as_mut_ptr() as *mut BDevIoCtx<T>);
 
-            spdk_bdev_io_complete(self.as_ptr(), status.into());
+            spdk_bdev_io_complete(self.as_ptr(), io_status);
         }
     }
 }
@@ -631,12 +606,15 @@ where
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
         let mut io_channel = unsafe { BDevIoChannel::<T::IoChannel>::from_raw(io_channel) };
-        let mut io = unsafe { BDevIo::new(io) };
+        let mut io = unsafe { BDevIo::new_in_place(io) };
+
+        debug_assert!(Thread::try_current().is_some());
 
         thread::spawn_local(async move {
             let res = io_channel.ctx_mut().submit_request(&mut io).await;
 
-            io.complete(res.into());
+            // SAFETY: The I/O is completed on the submission thread.
+            unsafe { io.complete(res.map_err(Into::into)) };
         });
     }
 

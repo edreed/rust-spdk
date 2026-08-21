@@ -1,7 +1,9 @@
-#![cfg(feature = "nvmf")]
+#![cfg(feature = "nvme")]
 
+mod status;
 mod transport_id;
 
+pub use status::NvmeStatus;
 pub use transport_id::TransportId;
 
 /// A value used to indicate a command applies to all namespaces or to retrieve

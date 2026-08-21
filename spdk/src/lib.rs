@@ -14,6 +14,7 @@ pub mod net;
 pub mod nvme;
 pub mod nvmf;
 pub mod runtime;
+pub mod scsi;
 pub mod task;
 pub mod thread;
 pub mod time;
