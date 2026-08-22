@@ -979,6 +979,7 @@ dependencies = [
  "spdk-sys",
  "static_init",
  "ternary-rs",
+ "thiserror",
 ]
 
 [[package]]

@@ -19,7 +19,7 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    errors::{EINVAL, ENOENT},
+    errors::{EINVAL, ENOENT, Errno},
     nvme::TransportId,
     task::{Promise, Promissory},
     to_poll_pending_on_ok, to_result,
@@ -187,7 +187,7 @@ impl Subsystem {
         cx: *mut c_void,
         status: i32,
     ) {
-        let p = unsafe { Promissory::<()>::from_raw(cx.cast()) };
+        let p = unsafe { Promissory::<(), Errno>::from_raw(cx.cast()) };
 
         Promissory::set_result(p, to_result!(status));
     }

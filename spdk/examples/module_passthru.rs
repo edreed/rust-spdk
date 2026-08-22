@@ -6,7 +6,7 @@ use std::{
 
 use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps, malloc},
-    block::{Any, Descriptor, Device, IoChannel, IoType, Owned},
+    block::{Any, Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned},
     dma::{self},
     errors::ENOTSUP,
     thread,
@@ -26,8 +26,9 @@ struct PassthruRsChannel {
 
 impl BDevIoChannelOps for PassthruRsChannel {
     type IoContext = ();
+    type Error = IoError;
 
-    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
+    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> IoResult<()> {
         match io.io_type() {
             IoType::Read => {
                 let num_blocks = io.num_blocks();
@@ -65,7 +66,7 @@ impl BDevIoChannelOps for PassthruRsChannel {
                     )
                     .await
             }
-            _ => Err(ENOTSUP),
+            _ => Err(IoError::GeneralError(ENOTSUP)),
         }
     }
 }

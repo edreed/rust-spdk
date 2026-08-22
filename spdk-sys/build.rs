@@ -29,16 +29,21 @@ impl ParseCallbacks for DoxygenCallbacks {
         // correctly, including it in the link. The following workaround removes the punctuation
         // from the link.
         let transformed =
-            regex_replace_all!(r"\[`((?:\w+)(?:\(\))?)(\W+)\`]", &transformed, "[`$1`]$2")
-                .to_string();
+            regex_replace_all!(r"\[`((?:\w+)(?:\(\))?)(\W+)\`]", &transformed, "[`$1`]$2");
 
-        Some(transformed)
+        // RustDoc assumes anything between `[` & `]` is a link and tries to resolve it. The
+        // following workaround escapes these brackets when the contained symbol does not appear to
+        // be an SPDK symbol.
+        let transformed = regex_replace_all!(r"\[(\w+)\]", &transformed, r"\[$1\]");
+
+        Some(transformed.into())
     }
 }
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed=ext.c");
 
     let spdk_src_dir = canonicalize("spdk").expect("spdk submodule to be initialized");
 
@@ -172,6 +177,17 @@ fn main() {
         defines.push("CARGO_FEATURE_NET=1");
     }
 
+    let include_target_nvme = env::var_os("CARGO_FEATURE_NVME").is_some();
+
+    if include_target_nvme {
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_nvme")
+                .expect("sppdk_nvme package config exists"),
+        );
+        defines.push("CARGO_FEATURE_NVMF=1");
+    }
+
     let include_target_nvmf = env::var_os("CARGO_FEATURE_NVMF").is_some();
 
     if include_target_nvmf {
@@ -186,6 +202,17 @@ fn main() {
                 .expect("spdk_event_nvmf package config exists"),
         );
         defines.push("CARGO_FEATURE_NVMF=1");
+    }
+
+    let include_target_scsi = env::var_os("CARGO_FEATURE_SCSI").is_some();
+
+    if include_target_scsi {
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_scsi")
+                .expect("spdk_scsi package config exists"),
+        );
+        defines.push("CARGO_FEATURE_SCSI=1");
     }
 
     let link_paths: Vec<PathBuf> = pkg_configs
@@ -252,6 +279,9 @@ fn main() {
         .wrap_static_fns_path(&spdk_wrappers)
         .wrap_unsafe_ops(true)
         .prepend_enum_name(false)
+        .constified_enum_module(r"spdk_bdev_io_status")
+        .constified_enum_module(r"spdk_nvme_(\w+)?status_code(_type)?")
+        .constified_enum_module(r"spdk_scsi_(asc|ascq|sense|status)")
         .rustified_enum("spdk_dif_.*")
         .generate_cstr(true)
         .layout_tests(false);
@@ -275,17 +305,19 @@ fn main() {
         .expect("spdk bindings generated")
         .write_to_file(out_dir.join("bindings.rs").as_path());
 
+    let mut extras = cc::Build::new();
+
     if spdk_wrappers.exists() {
-        let mut wrappers = cc::Build::new();
-
-        wrappers
-            .file(spdk_wrappers)
-            .include(".")
-            .includes(include_paths)
-            .flag("-Wno-unused-parameter");
-
-        defines.iter().for_each(|d| _ = wrappers.define(d, None));
-
-        wrappers.compile("spdk_wrappers");
+        extras.file(spdk_wrappers);
     }
+
+    extras
+        .file("ext.c")
+        .include(".")
+        .includes(include_paths)
+        .flag("-Wno-unused-parameter");
+
+    defines.iter().for_each(|d| _ = extras.define(d, None));
+
+    extras.compile("spdk_extras");
 }

@@ -24,7 +24,9 @@ bdev-malloc = ["bdev"]
 bdev-module = ["bdev"]
 json = []
 net = []
+nvme = ["bdev"]
 nvmf = ["bdev"]
+scsi = ["bdev"]
 
 [dependencies]
 bitfields = "3.0.0"

@@ -29,7 +29,7 @@ impl Descriptor {
     unsafe extern "C" fn handle_event(_type: u32, _bdev: *mut spdk_bdev, _ctx: *mut c_void) {}
 
     unsafe extern "C" fn open_complete(desc: *mut spdk_bdev_desc, status: c_int, ctx: *mut c_void) {
-        let p = unsafe { Promissory::<Descriptor>::from_raw(ctx.cast()) };
+        let p = unsafe { Promissory::<Descriptor, Errno>::from_raw(ctx.cast()) };
         let res = if_else!(
             status == 0,
             Descriptor::try_from(desc).map_err(|_| EINVAL),

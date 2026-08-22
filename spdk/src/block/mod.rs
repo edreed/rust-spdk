@@ -3,11 +3,13 @@
 mod any;
 mod descriptor;
 mod device;
+mod error;
 mod io_channel;
 mod owned;
 
 pub use any::Any;
 pub use descriptor::Descriptor;
 pub use device::{Device, Devices, IoType, devices};
+pub use error::{IoError, IoResult};
 pub use io_channel::IoChannel;
 pub use owned::{Owned, OwnedOps};

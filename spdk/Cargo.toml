@@ -19,6 +19,7 @@ spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
 static_init = "1.0.4"
 ternary-rs = "1.0.0"
 libanl = { version = "0.1.0", path = "../libanl" }
+thiserror = "2.0.20"
 
 [dev-dependencies]
 async-condvar-fair = { version = "1.0.1", features = ["parking_lot_0_12"] }
@@ -33,7 +34,9 @@ bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
 json = ["spdk-sys/json"]
 net = ["spdk-sys/net"]
-nvmf = ["bdev","spdk-sys/nvmf"]
+nvme = ["spdk-sys/nvme"]
+nvmf = ["bdev", "nvme", "spdk-sys/nvmf"]
+scsi = ["spdk-sys/scsi"]
 
 [[example]]
 name = "bdev_hello_world"

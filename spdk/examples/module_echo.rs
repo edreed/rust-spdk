@@ -12,7 +12,7 @@ use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
-    errors::ENOTSUP,
+    errors::{ENOTSUP, Errno},
     runtime::reactors,
     task::{self},
     thread::Thread,
@@ -106,6 +106,7 @@ impl EchoChannel {
 
 impl BDevIoChannelOps for EchoChannel {
     type IoContext = ();
+    type Error = Errno;
 
     async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
         match io.io_type() {
