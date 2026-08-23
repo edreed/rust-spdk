@@ -119,6 +119,29 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'nvmf'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=nvmf",
+                    "--package=spdk",
+                    "--features=nvmf,bdev-malloc"
+                ],
+                "filter": {
+                    "name": "nvmf",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all",
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'reactor'",
             "cargo": {
                 "args": [

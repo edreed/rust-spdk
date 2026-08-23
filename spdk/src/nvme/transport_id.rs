@@ -1,4 +1,10 @@
-use std::{cmp::Ordering, ffi::CString, mem::MaybeUninit, str::FromStr};
+use std::{
+    cmp::Ordering,
+    ffi::{CStr, CString},
+    mem::MaybeUninit,
+    slice,
+    str::FromStr,
+};
 
 use spdk_sys::{
     spdk_nvme_transport_id, spdk_nvme_transport_id_compare, spdk_nvme_transport_id_parse,
@@ -13,6 +19,15 @@ impl TransportId {
     pub(crate) fn as_ptr(&self) -> *const spdk_nvme_transport_id {
         &self.0
     }
+
+    /// Returns the NVMe transport name.
+    pub fn name(&self) -> &CStr {
+        let trstring = unsafe {
+            slice::from_raw_parts(self.0.trstring.as_ptr() as *const u8, self.0.trstring.len())
+        };
+
+        CStr::from_bytes_until_nul(trstring).expect("valid trstring")
+    }
 }
 
 impl FromStr for TransportId {
@@ -21,7 +36,7 @@ impl FromStr for TransportId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         unsafe {
             let s = CString::new(s).unwrap();
-            let mut transport_id = MaybeUninit::uninit();
+            let mut transport_id = MaybeUninit::zeroed();
 
             to_result!(spdk_nvme_transport_id_parse(
                 transport_id.as_mut_ptr(),

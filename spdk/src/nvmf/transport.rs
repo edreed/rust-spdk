@@ -30,12 +30,11 @@ use super::Target;
 ///
 /// # Notes
 ///
-/// These are mapped directly to the NVMe over Fabrics TRTYPE values, except for
-/// PCIe, which is a special case since NVMe over Fabrics does not define a
-/// TRTYPE for local PCIe.
+/// These are mapped directly to the NVMe over Fabrics TRTYPE values, except for PCIe, which is a
+/// special case since NVMe over Fabrics does not define a TRTYPE for local PCIe.
 ///
-/// Transports supported by SPDK but not defined in the NVMe-oF specification
-/// are given values outside of the 8-bit range of the TRTYPE value.
+/// Transports supported by SPDK but not defined in the NVMe-oF specification are given values
+/// outside of the 8-bit range of the TRTYPE value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransportType {
     /// A RDMA Transport.
@@ -248,23 +247,21 @@ unsafe impl Send for OwnershipState {}
 
 /// Represents a NVMe-oF transport.
 ///
-/// `Transport` wraps an `spdk_nvmf_transport` pointer and can be in one of
-/// three ownership states: owned, borrowed, or none.
+/// `Transport` wraps an `spdk_nvmf_transport` pointer and can be in one of three ownership states:
+/// owned, borrowed, or none.
 ///
-/// An owned transport owns the underlying `spdk_nvmf_transport` pointer and
-/// will destroy it when dropped. The caller must ensure that the drop occurs in
-/// the same thread that created the transport. It must also occur as part of
-/// thread event handling by explicitly calling [`task::yield_now`] before
-/// dropping the transport. However, it is easiest and safest to explicitly call
-/// [`Transport::destroy`] on the transport rather than let it drop naturally.
+/// An owned transport owns the underlying `spdk_nvmf_transport` pointer and will destroy it when
+/// dropped. The caller must ensure that the drop occurs in the same thread that created the
+/// transport. It must also occur as part of thread event handling by explicitly calling
+/// [`task::yield_now`] before dropping the transport. However, it is easiest and safest to
+/// explicitly call [`Transport::destroy`] on the transport rather than let it drop naturally.
 ///
-/// A borrowed transport borrows the underlying `spdk_nvmf_transport` pointer.
-/// Dropping a borrowed transport has no effect on the underlying
-/// `spdk_nvmf_transport` pointer.
+/// A borrowed transport borrows the underlying `spdk_nvmf_transport` pointer. Dropping a borrowed
+/// transport has no effect on the underlying `spdk_nvmf_transport` pointer.
 ///
-/// A transport with no ownership state can only be safely queried for ownership
-/// state or dropped. Any other operation will panic. A transport will be left
-/// in this state after the [`Transport::take`] method is called.
+/// A transport with no ownership state can only be safely queried for ownership state or dropped.
+/// Any other operation will panic. A transport will be left in this state after the
+/// [`Transport::take`] method is called.
 ///
 /// [`Transport::destroy`]: method@Transport::destroy
 /// [`Transport::take`]: method@Transport::take
@@ -275,20 +272,16 @@ pub struct Transport(OwnershipState);
 unsafe impl Send for Transport {}
 
 impl Transport {
-    /// Returns an owned transport from a raw `spdk_nvmf_transport` pointer.
-    pub fn from_ptr_owned(ptr: *const spdk_nvmf_transport) -> Self {
-        match NonNull::new(ptr as *mut spdk_nvmf_transport) {
-            Some(ptr) => Self(OwnershipState::Borrowed(ptr)),
-            None => panic!("transport pointer must not be null"),
-        }
+    /// Returns a borrowed transport from a raw `spdk_nvmf_transport` pointer.
+    pub(crate) fn from_ptr(ptr: *const spdk_nvmf_transport) -> Self {
+        Self::try_from_ptr(ptr).expect("transport pointer must not be null")
     }
 
-    /// Returns a borrowed transport from a raw `spdk_nvmf_transport` pointer.
-    pub fn from_ptr(ptr: *const spdk_nvmf_transport) -> Self {
-        match NonNull::new(ptr as *mut spdk_nvmf_transport) {
-            Some(ptr) => Self(OwnershipState::Borrowed(ptr)),
-            None => panic!("transport pointer must not be null"),
-        }
+    /// Attempts to return a borrowed transport from a raw `spdk_nvmf_transport` pointer.
+    ///
+    /// This function returns `None` if the pointer was null.
+    pub(crate) fn try_from_ptr(ptr: *const spdk_nvmf_transport) -> Option<Self> {
+        NonNull::new(ptr as *mut spdk_nvmf_transport).map(|ptr| Self(OwnershipState::Borrowed(ptr)))
     }
 
     /// Returns a pointer to the underlying `spdk_nvmf_transport` structure.
@@ -324,8 +317,7 @@ impl Transport {
         matches!(self.0, OwnershipState::None)
     }
 
-    /// Takes the value from this transport and replaces with a value having no
-    /// ownership.
+    /// Takes the value from this transport and replaces with a value having no ownership.
     pub fn take(&mut self) -> Self {
         mem::replace(self, Self(OwnershipState::None))
     }
@@ -344,10 +336,9 @@ impl Transport {
     ///
     /// # Returns
     ///
-    /// Only an owned transport can be destroyed. This function returns
-    /// `Err(EPERM)` if called on a borrowed transport and `Err(ENODEV)` if
-    /// called on a transport that neither owns nor borrows the underlying
-    /// `spdk_nvmf_transport` pointer.
+    /// Only an owned transport can be destroyed. This function returns `Err(EPERM)` if called on a
+    /// borrowed transport and `Err(ENODEV)` if called on a transport that neither owns nor borrows
+    /// the underlying `spdk_nvmf_transport` pointer.
     pub async fn destroy(mut self) -> Result<()> {
         match self.0 {
             OwnershipState::Borrowed(_) => Err(EPERM),

@@ -62,12 +62,21 @@ pub struct Subsystem(NonNull<spdk_nvmf_subsystem>);
 unsafe impl Send for Subsystem {}
 
 impl Subsystem {
-    /// Returns a subsystem from a raw `spdk_nvmf_subsystem`.
-    pub fn from_ptr(ptr: *mut spdk_nvmf_subsystem) -> Self {
+    /// Returns a subsystem from a raw [`spdk_nvmf_subsystem`] pointer.
+    ///
+    /// [`spdk_nvmf_subsystem`]: spdk_sys::spdk_nvmf_subsystem
+    pub(crate) fn from_ptr(ptr: *mut spdk_nvmf_subsystem) -> Self {
         match NonNull::new(ptr) {
             Some(subsys) => Self(subsys),
             None => panic!("subsystem pointer must not be null"),
         }
+    }
+
+    /// Attempts to return a [`Subsystem`] from a raw [`spdk_nvmf_subsystem`] pointer.
+    ///
+    /// [`spdk_nvmf_subsystem`]: spdk_sys::spdk_nvmf_subsystem
+    pub(crate) fn try_from_ptr(ptr: *mut spdk_nvmf_subsystem) -> Option<Self> {
+        NonNull::new(ptr).map(Subsystem)
     }
 
     /// Returns the pointer to the underlying `spdk_nvmf_subsystem` structure.
@@ -122,16 +131,14 @@ impl Subsystem {
         self.subtype() == SubsystemType::Discovery
     }
 
-    /// Sets whether the subsystem allows any host to connect or only hosts in
-    /// the allowed list.
+    /// Sets whether the subsystem allows any host to connect or only hosts in the allowed list.
     pub fn allow_any_host(&mut self, allow: bool) {
         unsafe {
             spdk_nvmf_subsystem_set_allow_any_host(self.as_ptr(), allow);
         }
     }
 
-    /// Returns whether the subsystem allows any host to connect or only hosts
-    /// in the allowed list.
+    /// Returns whether the subsystem allows any host to connect or only hosts in the allowed list.
     pub fn is_any_host_allowed(&self) -> bool {
         unsafe { spdk_nvmf_subsystem_get_allow_any_host(self.as_ptr()) }
     }
@@ -149,13 +156,13 @@ impl Subsystem {
 
     /// Removes a host NQN from the allowed list.
     ///
-    /// If a host with the given NQN is already connected, it will not be
-    /// disconnected. However, no new connections from the host will be allowed.
+    /// If a host with the given NQN is already connected, it will not be disconnected. However, no
+    /// new connections from the host will be allowed.
     ///
     /// # Returns
     ///
-    /// Returns `Ok(true)` if the host was removed from the allowed list, and
-    /// `Ok(false)` if the host was not in the allowed list.
+    /// Returns `Ok(true)` if the host was removed from the allowed list, and `Ok(false)` if the
+    /// host was not in the allowed list.
     pub fn deny_host(&mut self, host_nqn: &CStr) -> Result<bool> {
         let res = unsafe {
             to_result!(spdk_nvmf_subsystem_remove_host(
@@ -194,7 +201,7 @@ impl Subsystem {
 
     /// Starts the subsystem.
     ///
-    /// This method transitions of the subsystem from the Inactive to Active state.
+    /// This method transitions the subsystem from the Inactive to Active state.
     pub async fn start<'a>(&'a mut self) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
@@ -219,7 +226,7 @@ impl Subsystem {
 
     /// Stops the subsystem.
     ///
-    /// This method transitions of the subsystem from the Active to Inactive state.
+    /// This method transitions the subsystem from the Active to Inactive state.
     pub async fn stop<'a>(&'a mut self) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
@@ -244,12 +251,11 @@ impl Subsystem {
 
     /// Pauses the subsystem.
     ///
-    /// This method transitions of the subsystem from the Paused to Inactive state.
+    /// This method transitions the subsystem from the Paused to Inactive state.
     ///
-    /// In a paused state, all admin queues are frozen across the whole
-    /// subsystem. If a namespace identifier is provided, all commands to that
-    /// namespace are quiesced and incoming commands are queued until the
-    /// subsystem is resumed. A namespace identifier of 0 indicates that no
+    /// In a paused state, all admin queues are frozen across the whole subsystem. If a namespace
+    /// identifier is provided, all commands to that namespace are quiesced and incoming commands
+    /// are queued until the subsystem is resumed. A namespace identifier of 0 indicates that no
     /// namespace is paused while `SPDK_NVME_GLOBAL_NS_TAG` pauses all namespaces.
     pub async fn pause<'a>(&'a mut self, ns: u32) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
@@ -276,7 +282,7 @@ impl Subsystem {
 
     /// Resumes the subsystem.
     ///
-    /// This method transitions of the subsystem from the Inactive to Paused state.
+    /// This method transitions the subsystem from the Inactive to Paused state.
     pub async fn resume<'a>(&'a mut self) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
@@ -301,8 +307,7 @@ impl Subsystem {
 
     /// Adds the given block device as a namespace on the subsystem.
     ///
-    /// The subsystem must be in the Paused or Inactive states to add a
-    /// namespace.
+    /// The subsystem must be in the Paused or Inactive states to add a namespace.
     pub fn add_namespace(&mut self, device_name: &CStr) -> Result<Namespace> {
         unsafe {
             let nsid = spdk_nvmf_subsystem_add_ns_ext(
@@ -325,8 +330,7 @@ impl Subsystem {
 
     /// Removes a namespace from the subsystem.
     ///
-    /// The subsystem must be in the Paused or Inactive states to remove a
-    /// namespace.
+    /// The subsystem must be in the Paused or Inactive states to remove a namespace.
     pub fn remove_namespace(&mut self, nsid: u32) -> Result<()> {
         unsafe { to_result!(spdk_nvmf_subsystem_remove_ns(self.as_ptr(), nsid)) }
     }
@@ -338,8 +342,7 @@ impl Subsystem {
 
     /// Adds a listener on the specified transport to the subsystem.
     ///
-    /// The subsystem must be in the Paused or Inactive states to add a
-    /// listener.
+    /// The subsystem must be in the Paused or Inactive states to add a listener.
     pub async fn add_listener<'a>(&'a mut self, transport_id: &TransportId) -> Result<()> {
         Promise::with_context(PhantomData::<&'a mut Self>)
             .request(|p| {
@@ -363,8 +366,8 @@ impl Subsystem {
     ///
     /// # Returns
     ///
-    /// Returns `Ok(true)` if the listener was removed, and `Ok(false)` if no
-    /// listener was listening on the given transport.
+    /// Returns `Ok(true)` if the listener was removed, and `Ok(false)` if no listener was listening
+    /// on the given transport.
     pub fn remove_listener(&mut self, transport_id: &TransportId) -> Result<bool> {
         let res = unsafe {
             to_result!(spdk_nvmf_subsystem_remove_listener(

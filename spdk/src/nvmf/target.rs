@@ -3,24 +3,25 @@ use std::{
     io::Write,
     marker::PhantomData,
     mem::{self, MaybeUninit, size_of_val},
-    ptr::{NonNull, copy_nonoverlapping},
+    ptr::{NonNull, copy_nonoverlapping, null_mut},
     task::Poll,
 };
 
 use spdk_sys::{
     SPDK_NVMF_DISCOVERY_NQN, spdk_nvmf_get_first_tgt, spdk_nvmf_get_next_tgt,
-    spdk_nvmf_listen_opts_init, spdk_nvmf_subsystem_create, spdk_nvmf_subsystem_destroy,
-    spdk_nvmf_target_opts, spdk_nvmf_tgt, spdk_nvmf_tgt_add_transport, spdk_nvmf_tgt_create,
-    spdk_nvmf_tgt_destroy, spdk_nvmf_tgt_discovery_filter, spdk_nvmf_tgt_get_name,
-    spdk_nvmf_tgt_listen_ext,
+    spdk_nvmf_listen_opts_init, spdk_nvmf_subsystem_create_ext, spdk_nvmf_subsystem_destroy,
+    spdk_nvmf_subsystem_opts_init, spdk_nvmf_target_opts, spdk_nvmf_tgt,
+    spdk_nvmf_tgt_add_transport, spdk_nvmf_tgt_create, spdk_nvmf_tgt_destroy,
+    spdk_nvmf_tgt_discovery_filter, spdk_nvmf_tgt_find_subsystem, spdk_nvmf_tgt_get_name,
+    spdk_nvmf_tgt_get_transport, spdk_nvmf_tgt_listen_ext, spdk_nvmf_transport_stop_listen_async,
 };
 
 use crate::{
     Result,
-    errors::{EBADF, EINPROGRESS, ENOMEM, EPERM},
+    errors::{EBADF, EINPROGRESS, EINVAL, ENOMEM, EPERM},
     nvme::{SPDK_NVME_GLOBAL_NS_TAG, TransportId},
     task::{Promise, Promissory},
-    thread, to_poll_pending_on_err, to_result,
+    thread, to_poll_pending_on_err, to_poll_pending_on_ok, to_result,
 };
 
 use super::{
@@ -29,12 +30,10 @@ use super::{
     transport::Transports,
 };
 
-/// Builds a [`Target`] instance using the NVMe over Fabrics (NVMe-oF) target
-/// module of the SPDK.
+/// Builds a [`Target`] instance using the NVMe over Fabrics (NVMe-oF) target module of the SPDK.
 ///
-/// `Builder` implements a fluent-style interface enabling custom configuration
-/// through chaining function calls. The [`build`] method constructs a new
-/// `Target` instance.
+/// `Builder` implements a fluent-style interface enabling custom configuration through chaining
+/// function calls. The [`build`] method constructs a new `Target` instance.
 ///
 /// [`build`]: Builder::build
 pub struct Builder(spdk_nvmf_target_opts);
@@ -56,8 +55,7 @@ impl Builder {
         }
     }
 
-    /// Creates a new [`Target`] instance that owns the underlying
-    /// `spdk_nvmf_tgt` pointer.
+    /// Creates a new [`Target`] instance that owns the underlying `spdk_nvmf_tgt` pointer.
     pub fn build(self) -> Result<Target> {
         unsafe {
             match NonNull::new(spdk_nvmf_tgt_create(&self.0 as *const _ as *mut _)) {
@@ -99,23 +97,21 @@ unsafe impl Send for OwnershipState {}
 
 /// Represents a NVMe-oF target.
 ///
-/// `Target` wraps an `spdk_nvmf_tgt` pointer and can be in one of three
-/// ownership states: owned, borrowed, or none.
+/// `Target` wraps an `spdk_nvmf_tgt` pointer and can be in one of three ownership states: owned,
+/// borrowed, or none.
 ///
-/// An owned transport owns the underlying `spdk_nvmf_tgt` pointer and will
-/// destroy it when dropped. The caller must ensure that the drop occurs in the
-/// same thread that created the transport. It must also occur as part of thread
-/// event handling by explicitly calling [`task::yield_now`] before dropping the
-/// transport. However, it is easiest and safest to explicitly call
+/// An owned transport owns the underlying `spdk_nvmf_tgt` pointer and will destroy it when dropped.
+/// The caller must ensure that the drop occurs in the same thread that created the transport. It
+/// must also occur as part of thread event handling by explicitly calling [`task::yield_now`]
+/// before dropping the transport. However, it is easiest and safest to explicitly call
 /// [`Target::destroy`] on the transport rather than let it drop naturally.
 ///
-/// A borrowed transport borrows the underlying `spdk_nvmf_tgt` pointer.
-/// Dropping a borrowed transport has no effect on the underlying
-/// `spdk_nvmf_tgt` pointer.
+/// A borrowed transport borrows the underlying `spdk_nvmf_tgt` pointer. Dropping a borrowed
+/// transport has no effect on the underlying `spdk_nvmf_tgt` pointer.
 ///
-/// A transport with no ownership state can only be safely queried for ownership
-/// state or dropped. Any other operation will panic. A transport will be left
-/// in this state after the [`Target::take`] method is called.
+/// A transport with no ownership state can only be safely queried for ownership state or dropped.
+/// Any other operation will panic. A transport will be left in this state after the
+/// [`Target::take`] method is called.
 ///
 /// [`Target::destroy`]: method@Target::destroy
 /// [`Target::take`]: method@Target::take
@@ -125,8 +121,7 @@ pub struct Target(OwnershipState);
 unsafe impl Send for Target {}
 
 impl Target {
-    /// Creates a new NVMe-oF target that owns the underlying `spdk_nvmf_tgt`
-    /// pointer.
+    /// Creates a new NVMe-oF target that owns the underlying `spdk_nvmf_tgt` pointer.
     pub fn new(name: &str) -> Result<Self> {
         Builder::new(name).build()
     }
@@ -181,8 +176,7 @@ impl Target {
         matches!(self.0, OwnershipState::None)
     }
 
-    /// Takes the value from this NVMe-oF target and replaces with a value
-    /// having no ownership.
+    /// Takes the value from this NVMe-oF target and replaces with a value having no ownership.
     pub fn take(&mut self) -> Self {
         mem::replace(self, Target(OwnershipState::None))
     }
@@ -191,10 +185,9 @@ impl Target {
     ///
     /// # Returns
     ///
-    /// Only an owned target can be destroyed. This function returns
-    /// `Err(EPERM)` if called on a borrowed target and `Err(ENODEV)` if called
-    /// on a target that neither owns nor borrows the underlying `spdk_nvmf_tgt`
-    /// pointer.
+    /// Only an owned target can be destroyed. This function returns `Err(EPERM)` if called on a
+    /// borrowed target and `Err(ENODEV)` if called on a target that neither owns nor borrows the
+    /// underlying `spdk_nvmf_tgt` pointer.
     pub async fn destroy(mut self) -> Result<()> {
         match self.0 {
             OwnershipState::Owned(_) => {
@@ -242,21 +235,28 @@ impl Target {
 
         match res {
             Ok(()) => {
-                // The transport is now owned by the target, so we forget it to avoid
-                // destroying it.
+                // The transport is now owned by the target, so we forget it to avoid destroying it.
                 mem::forget(transport);
 
                 Ok(())
             }
             Err(e) => {
-                // Since adding the transport failed, explicitly destroy it
-                // rather then let it drop to avoid blocking current reactor from
-                // executing other tasks.
+                // Since adding the transport failed, explicitly destroy it rather then let it drop
+                // to avoid blocking current reactor from executing other tasks.
                 transport.destroy().await.expect("transport destroyed");
 
                 Err(e)
             }
         }
+    }
+
+    /// Searches this [`Target`] for a [`Transport`] by name.
+    ///
+    /// This method returns `None` if the `Transport` does not exist on this `Target`.
+    pub fn find_transport(&self, name: &CStr) -> Option<Transport> {
+        Transport::try_from_ptr(unsafe {
+            spdk_nvmf_tgt_get_transport(self.as_ptr(), name.as_ptr())
+        })
     }
 
     /// Returns an iterator over the transports on this target.
@@ -275,13 +275,11 @@ impl Target {
 
     /// Adds a subsystem to the target.
     ///
-    /// A subsystem is a collection of namespaces that are exported over
-    /// NVMe-oF. It can be in one of three states: Inactive, Active, or Paused.
-    /// This state affects which operations may be perform on the subsystem. On
-    /// creation, the subsystem is in the Inactive state and may be activated by
-    /// calling the subsystem's [`start`] method. No I/O will be processed in
-    /// the Inactive or Paused states but changes to the state of the subsystem
-    /// may be made.
+    /// A subsystem is a collection of namespaces that are exported over NVMe-oF. It can be in one
+    /// of three states: Inactive, Active, or Paused. This state affects which operations may be
+    /// perform on the subsystem. On creation, the subsystem is in the Inactive state and may be
+    /// activated by calling the subsystem's [`start`] method. No I/O will be processed in the
+    /// Inactive or Paused states but changes to the state of the subsystem may be made.
     ///
     /// [`start`]: method@Subsystem::start
     pub fn add_subsystem(
@@ -291,11 +289,19 @@ impl Target {
         num_ns: u32,
     ) -> Result<Subsystem> {
         let subsys = unsafe {
-            spdk_nvmf_subsystem_create(self.as_ptr(), nqn.as_ptr(), subtype.into(), num_ns)
+            let mut opts = MaybeUninit::uninit();
+
+            spdk_nvmf_subsystem_opts_init(subtype.into(), opts.as_mut_ptr(), size_of_val(&opts));
+
+            let mut opts = opts.assume_init();
+
+            opts.__bindgen_anon_1.max_namespaces = num_ns;
+
+            spdk_nvmf_subsystem_create_ext(self.as_ptr(), nqn.as_ptr(), subtype.into(), &opts)
         };
 
         if subsys.is_null() {
-            return Err(ENOMEM);
+            return Err(EINVAL);
         }
 
         Ok(Subsystem::from_ptr(subsys))
@@ -322,6 +328,15 @@ impl Target {
                 }
             })
             .await
+    }
+
+    /// Searches this [`Target`] for a [`Subsystem`] by NQN.
+    ///
+    /// This method returns `None` if the `Subsystem` does not exist on this `Target`.
+    pub fn find_subsystem(&self, nqn: &CStr) -> Option<Subsystem> {
+        Subsystem::try_from_ptr(unsafe {
+            spdk_nvmf_tgt_find_subsystem(self.as_ptr(), nqn.as_ptr())
+        })
     }
 
     /// Returns an iterator over the subsystems on this target.
@@ -380,6 +395,28 @@ impl Target {
                 &mut opts as *mut _
             ))
         }
+    }
+
+    /// Stops accepting new connections at the specified transport.
+    pub async fn stop_listening(&mut self, transport_id: &TransportId) -> Result<()> {
+        let transport = self.find_transport(transport_id.name()).ok_or(EINVAL)?;
+
+        Promise::new()
+            .request(|p| {
+                let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
+
+                unsafe {
+                    to_poll_pending_on_ok! {
+                        spdk_nvmf_transport_stop_listen_async(
+                            transport.as_ptr(),
+                            transport_id.as_ptr(),
+                            null_mut(),
+                            Some(cb_fn),
+                            cb_arg as *mut _)
+                    }
+                }
+            })
+            .await
     }
 }
 
