@@ -42,18 +42,15 @@ async fn main() {
     let args = Args::get();
 
     let transport_id = format!(
-        "trtype=TCP adrfam={} traddr={} trsvcid={} subnqn={}",
+        "trtype=TCP adrfam={} traddr={} trsvcid={}",
         if_else!(args.listen_addr.is_ipv4(), "IPv4", "IPv6"),
         args.listen_addr,
-        args.listen_port,
-        NQN.to_string_lossy()
+        args.listen_port
     )
     .parse::<TransportId>()
     .unwrap();
 
     target.listen(&transport_id).unwrap();
-
-    let mut subsys = target.add_subsystem(NQN, SubsystemType::NVMe, 1).unwrap();
 
     let malloc = malloc::Builder::new()
         .with_name(BDEV_NAME)
@@ -62,6 +59,7 @@ async fn main() {
         .build()
         .unwrap();
 
+    let mut subsys = target.add_subsystem(NQN, SubsystemType::NVMe, 1).unwrap();
     let malloc_ns = subsys.add_namespace(malloc.name()).unwrap();
 
     subsys.allow_any_host(true);
@@ -74,9 +72,10 @@ async fn main() {
         timer.tick().await;
     }
 
+    target.stop_listening(&transport_id).await.unwrap();
     target.stop_subsystems().await.unwrap();
-    subsys.remove_namespace(malloc_ns.id()).unwrap();
-    malloc.destroy().await.unwrap();
     subsys.remove_listener(&transport_id).unwrap();
+    subsys.remove_namespace(malloc_ns.id()).unwrap();
     target.remove_subsystem(subsys).await.unwrap();
+    malloc.destroy().await.unwrap();
 }
