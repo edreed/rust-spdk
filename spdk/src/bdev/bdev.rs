@@ -16,21 +16,18 @@ use std::{
 use spdk_sys::{
     spdk_bdev, spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
     spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread,
-    spdk_bdev_io_set_aio_status,
-    spdk_bdev_io_status::*,
-    spdk_bdev_io_type, spdk_bdev_register, spdk_bdev_unregister,
-    spdk_dif_pi_format::{
-        self, SPDK_DIF_PI_FORMAT_16, SPDK_DIF_PI_FORMAT_32, SPDK_DIF_PI_FORMAT_64,
-    },
-    spdk_dif_type::{self, SPDK_DIF_DISABLE},
-    spdk_get_io_channel, spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread,
-    spdk_io_device_register, spdk_io_device_unregister,
+    spdk_bdev_io_set_aio_status, spdk_bdev_io_status::*, spdk_bdev_io_type, spdk_bdev_register,
+    spdk_bdev_unregister, spdk_dif_pi_format_get_size, spdk_get_io_channel, spdk_io_channel,
+    spdk_io_channel_get_ctx, spdk_io_channel_get_thread, spdk_io_device_register,
+    spdk_io_device_unregister,
 };
 use ternary_rs::if_else;
 
 use crate::{
     Result,
-    block::{Any, Device, IoError, IoResult, IoType, Owned, OwnedOps},
+    block::{
+        Any, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType, Owned, OwnedOps,
+    },
     errors::{EINVAL, ENOMEM, ENOTSUP, Errno},
     task::{Promise, Promissory},
     thread::{self, Thread},
@@ -200,7 +197,7 @@ where
 
     /// Returns the type of the I/O request.
     pub fn io_type(&self) -> IoType {
-        (unsafe { self.io.as_ref().type_ as spdk_bdev_io_type }).into()
+        (unsafe { self.io.as_ref().type_ }).into()
     }
 
     /// Returns the thread associated with the I/O request. The I/O request must be completed on
@@ -675,10 +672,10 @@ where
     optimal_io_boundary: u32,
     metadata_size: Option<u32>,
     is_metadata_interleaved: bool,
-    dif_type: spdk_dif_type,
-    dif_pi_format: Option<spdk_dif_pi_format>,
+    dif_type: DifType,
+    dif_pi_format: Option<DifPiFormat>,
     dif_is_head_of_md: bool,
-    dif_check_flags: u32,
+    dif_check_flags: DifCheckFlag,
     numa_id: Option<i32>,
 
     _phantom: PhantomData<C>,
@@ -707,10 +704,10 @@ where
             optimal_io_boundary: 0,
             metadata_size: None,
             is_metadata_interleaved: false,
-            dif_type: SPDK_DIF_DISABLE,
+            dif_type: DifType::Disabled,
             dif_is_head_of_md: false,
             dif_pi_format: None,
-            dif_check_flags: 0,
+            dif_check_flags: DifCheckFlag::empty(),
             numa_id: None,
             _phantom: PhantomData,
         }
@@ -742,11 +739,11 @@ where
         bdev.md_len = self.metadata_size.unwrap_or(0);
         bdev.__bindgen_anon_1
             .set_md_interleave(self.is_metadata_interleaved as u32);
-        bdev.dif_type = self.dif_type;
+        bdev.dif_type = self.dif_type.into();
         bdev.__bindgen_anon_1
             .set_dif_is_head_of_md(self.dif_is_head_of_md as u32);
-        bdev.dif_pi_format = self.dif_pi_format.unwrap_or(SPDK_DIF_PI_FORMAT_16);
-        bdev.dif_check_flags = self.dif_check_flags;
+        bdev.dif_pi_format = self.dif_pi_format.unwrap_or(DifPiFormat::Guard16).into();
+        bdev.dif_check_flags = self.dif_check_flags.bits();
 
         if let Some(numa_id) = self.numa_id {
             bdev.numa.set_id(numa_id);
@@ -813,11 +810,10 @@ where
     ///
     /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
     pub fn with_metadata(mut self, size: u32, interleaved: bool) -> Self {
-        let min_md_size = match self.dif_pi_format {
-            Some(SPDK_DIF_PI_FORMAT_16) => 8,
-            Some(SPDK_DIF_PI_FORMAT_32) | Some(SPDK_DIF_PI_FORMAT_64) => 16,
-            None => 0,
-        };
+        let min_md_size = self
+            .dif_pi_format
+            .map(|f| unsafe { spdk_dif_pi_format_get_size(f.into()) })
+            .unwrap_or(0);
 
         assert!(
             size >= min_md_size,
@@ -836,10 +832,10 @@ where
     ///
     /// # Parameters
     ///
-    /// - `type`: A value from the [`spdk_dif_type`] enum specifying the DIF type. If
-    ///   `SPDK_DIF_DISABLE`, DIF is disabled for this block device and the remaining parameters are
+    /// - `type`: A value from the [`DifType`] enum specifying the DIF type. If
+    ///   `DifType::Disabled`, DIF is disabled for this block device and the remaining parameters are
     ///   ignored.
-    /// - `pi_format`: An optional value from the [`spdk_dif_pi_format`] enum specifying the
+    /// - `pi_format`: An optional value from the [`DifPiFormat`] enum specifying the
     ///   protection information format. This parameter is required to be specified as
     ///   `Some(pi_format)` if DIF is not disabled.
     /// - `is_head_of_md`: Specifies whether the DIF is set in the new `BDev`'s first or last 8|16
@@ -856,24 +852,22 @@ where
     /// [`spdk_dif_pi_format`]: spdk_sys::spdk_dif_pi_format
     pub fn with_dif(
         mut self,
-        r#type: spdk_dif_type,
-        pi_format: Option<spdk_dif_pi_format>,
+        r#type: DifType,
+        pi_format: Option<DifPiFormat>,
         is_head_of_md: bool,
-        check_flags: u32,
+        check_flags: DifCheckFlag,
     ) -> Self {
         assert!(
-            self.dif_type == SPDK_DIF_DISABLE,
+            self.dif_type == DifType::Disabled,
             "DIF parameters can only be set once"
         );
 
         self.dif_type = r#type;
 
-        if self.dif_type != SPDK_DIF_DISABLE {
-            let min_md_size = match pi_format {
-                Some(SPDK_DIF_PI_FORMAT_16) => 8,
-                Some(SPDK_DIF_PI_FORMAT_32) | Some(SPDK_DIF_PI_FORMAT_64) => 16,
-                None => panic!("PI format must be specified if DIF is enabled"),
-            };
+        if self.dif_type != DifType::Disabled {
+            let min_md_size = pi_format
+                .map(|f| unsafe { spdk_dif_pi_format_get_size(f.into()) })
+                .expect("PI format must be specified if DIF is enabled");
 
             match self.metadata_size {
                 None => self.metadata_size = Some(min_md_size),

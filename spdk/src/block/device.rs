@@ -3,7 +3,7 @@ use std::{
     ffi::CStr,
     fmt::{self, Debug, Formatter},
     future::Future,
-    mem,
+    mem::{self},
     pin::Pin,
     ptr::NonNull,
     task::{Context, Poll},
@@ -11,96 +11,23 @@ use std::{
 
 use futures::{FutureExt, Stream};
 use spdk_sys::{
-    SPDK_BDEV_IO_TYPE_ABORT, SPDK_BDEV_IO_TYPE_COMPARE, SPDK_BDEV_IO_TYPE_COMPARE_AND_WRITE,
-    SPDK_BDEV_IO_TYPE_COPY, SPDK_BDEV_IO_TYPE_FLUSH, SPDK_BDEV_IO_TYPE_GET_ZONE_INFO,
-    SPDK_BDEV_IO_TYPE_INVALID, SPDK_BDEV_IO_TYPE_NVME_ADMIN, SPDK_BDEV_IO_TYPE_NVME_IO,
-    SPDK_BDEV_IO_TYPE_NVME_IO_MD, SPDK_BDEV_IO_TYPE_NVME_IOV_MD, SPDK_BDEV_IO_TYPE_NVME_NSSR,
-    SPDK_BDEV_IO_TYPE_READ, SPDK_BDEV_IO_TYPE_RESET, SPDK_BDEV_IO_TYPE_SEEK_DATA,
-    SPDK_BDEV_IO_TYPE_SEEK_HOLE, SPDK_BDEV_IO_TYPE_UNMAP, SPDK_BDEV_IO_TYPE_WRITE,
-    SPDK_BDEV_IO_TYPE_WRITE_UNCORRECTABLE, SPDK_BDEV_IO_TYPE_WRITE_ZEROES, SPDK_BDEV_IO_TYPE_ZCOPY,
-    SPDK_BDEV_IO_TYPE_ZONE_APPEND, SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT, SPDK_ENV_NUMA_ID_ANY,
-    spdk_bdev, spdk_bdev_first, spdk_bdev_get_block_size, spdk_bdev_get_buf_align,
-    spdk_bdev_get_by_name, spdk_bdev_get_dif_pi_format, spdk_bdev_get_dif_type,
-    spdk_bdev_get_md_size, spdk_bdev_get_name, spdk_bdev_get_num_blocks, spdk_bdev_get_numa_id,
-    spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
+    SPDK_ENV_NUMA_ID_ANY, spdk_bdev, spdk_bdev_first, spdk_bdev_get_block_size,
+    spdk_bdev_get_buf_align, spdk_bdev_get_by_name, spdk_bdev_get_dif_pi_format,
+    spdk_bdev_get_dif_type, spdk_bdev_get_md_size, spdk_bdev_get_name, spdk_bdev_get_num_blocks,
+    spdk_bdev_get_numa_id, spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
     spdk_bdev_get_product_name, spdk_bdev_get_write_unit_size, spdk_bdev_has_write_cache,
-    spdk_bdev_io_type, spdk_bdev_io_type_supported, spdk_bdev_is_dif_check_enabled,
-    spdk_bdev_is_dif_head_of_md, spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
-    spdk_dif_check_type, spdk_dif_pi_format,
-    spdk_dif_type::{self, SPDK_DIF_DISABLE},
+    spdk_bdev_io_type_supported, spdk_bdev_is_dif_check_enabled, spdk_bdev_is_dif_head_of_md,
+    spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
 };
 
 use crate::{
     Result,
-    block::{Any, Owned, OwnedOps},
+    block::{Any, DifCheckFlag, DifCheckType, DifPiFormat, DifType, Owned, OwnedOps},
     errors::{ENODEV, EPERM},
     thread,
 };
 
-use super::Descriptor;
-
-/// The type of an I/O operation.
-///
-/// # Notes
-///
-/// These are mapped directly to the corresponding [`spdk_bdev_io_type`] values.
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum IoType {
-    Invalid,
-    Read,
-    Write,
-    Unmap,
-    Flush,
-    Reset,
-    NvmeAdmin,
-    NvmeIo,
-    NvmeIoMd,
-    WriteZeros,
-    ZeroCopy,
-    GetZoneInfo,
-    ZoneManagement,
-    ZoneAppend,
-    Compare,
-    CompareAndWrite,
-    Abort,
-    SeekHole,
-    SeekData,
-    Copy,
-    NvmeIovMd,
-    NvmeNssr,
-    WriteUncorrectable,
-}
-
-impl From<spdk_bdev_io_type> for IoType {
-    fn from(value: spdk_bdev_io_type) -> Self {
-        match value {
-            SPDK_BDEV_IO_TYPE_INVALID => IoType::Invalid,
-            SPDK_BDEV_IO_TYPE_READ => IoType::Read,
-            SPDK_BDEV_IO_TYPE_WRITE => IoType::Write,
-            SPDK_BDEV_IO_TYPE_UNMAP => IoType::Unmap,
-            SPDK_BDEV_IO_TYPE_FLUSH => IoType::Flush,
-            SPDK_BDEV_IO_TYPE_RESET => IoType::Reset,
-            SPDK_BDEV_IO_TYPE_NVME_ADMIN => IoType::NvmeAdmin,
-            SPDK_BDEV_IO_TYPE_NVME_IO => IoType::NvmeIo,
-            SPDK_BDEV_IO_TYPE_NVME_IO_MD => IoType::NvmeIoMd,
-            SPDK_BDEV_IO_TYPE_WRITE_ZEROES => IoType::WriteZeros,
-            SPDK_BDEV_IO_TYPE_ZCOPY => IoType::ZeroCopy,
-            SPDK_BDEV_IO_TYPE_GET_ZONE_INFO => IoType::GetZoneInfo,
-            SPDK_BDEV_IO_TYPE_ZONE_MANAGEMENT => IoType::ZoneManagement,
-            SPDK_BDEV_IO_TYPE_ZONE_APPEND => IoType::ZoneAppend,
-            SPDK_BDEV_IO_TYPE_COMPARE => IoType::Compare,
-            SPDK_BDEV_IO_TYPE_COMPARE_AND_WRITE => IoType::CompareAndWrite,
-            SPDK_BDEV_IO_TYPE_ABORT => IoType::Abort,
-            SPDK_BDEV_IO_TYPE_SEEK_HOLE => IoType::SeekHole,
-            SPDK_BDEV_IO_TYPE_SEEK_DATA => IoType::SeekData,
-            SPDK_BDEV_IO_TYPE_COPY => IoType::Copy,
-            SPDK_BDEV_IO_TYPE_NVME_IOV_MD => IoType::NvmeIovMd,
-            SPDK_BDEV_IO_TYPE_NVME_NSSR => IoType::NvmeNssr,
-            SPDK_BDEV_IO_TYPE_WRITE_UNCORRECTABLE => IoType::WriteUncorrectable,
-            _ => unreachable!("unexpected spdk_bdev_io_type value"),
-        }
-    }
-}
+use super::{Descriptor, IoType};
 
 /// Represents the ownership state of a [`Device`].
 enum OwnershipState<T: OwnedOps> {
@@ -326,8 +253,8 @@ impl<T: OwnedOps> Device<T> {
     /// Get the [Data Integrity Field (DIF)] type of this block device.
     ///
     /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
-    pub fn dif_type(&self) -> spdk_dif_type {
-        unsafe { spdk_bdev_get_dif_type(self.as_ptr()) }
+    pub fn dif_type(&self) -> DifType {
+        unsafe { spdk_bdev_get_dif_type(self.as_ptr()).into() }
     }
 
     /// Get the [Data Integrity Field (DIF)] protection information format of this block device.
@@ -337,9 +264,13 @@ impl<T: OwnedOps> Device<T> {
     /// Returns `Some(pi)` if DIF is enabled and `None` otherwise.
     ///
     /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
-    pub fn dif_pi_format(&self) -> Option<spdk_dif_pi_format> {
-        if self.dif_type() != SPDK_DIF_DISABLE {
-            return Some(unsafe { spdk_bdev_get_dif_pi_format(self.as_ptr()) });
+    pub fn dif_pi_format(&self) -> Option<DifPiFormat> {
+        if self.dif_type() != DifType::Disabled {
+            return Some(unsafe {
+                spdk_bdev_get_dif_pi_format(self.as_ptr())
+                    .try_into()
+                    .expect("valid PI format")
+            });
         }
 
         None
@@ -348,15 +279,15 @@ impl<T: OwnedOps> Device<T> {
     /// Get whether the specified [Data Integrity Field (DIF)] check is enabled.
     ///
     /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
-    pub fn is_dif_check_enabled(&self, check_type: spdk_dif_check_type) -> bool {
-        unsafe { spdk_bdev_is_dif_check_enabled(self.as_ptr(), check_type) }
+    pub fn is_dif_check_enabled(&self, check_type: DifCheckType) -> bool {
+        unsafe { spdk_bdev_is_dif_check_enabled(self.as_ptr(), check_type.into()) }
     }
 
     /// Get the bitmap of enabled [Data Integrity Field (DIF)] checks.
     ///
     /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
-    pub fn dif_check_flags(&self) -> u32 {
-        unsafe { (*self.as_ptr()).dif_check_flags }
+    pub fn dif_check_flags(&self) -> DifCheckFlag {
+        DifCheckFlag::from_bits_truncate(unsafe { (*self.as_ptr()).dif_check_flags })
     }
 
     /// Get whether the [Data Integrity Field (DIF)] is set in the first 8|16 bytes or last 8|16
@@ -404,7 +335,7 @@ impl<T: OwnedOps> Device<T> {
 
     /// Gets whether this block device supports the specified I/O type.
     pub fn io_type_supported(&self, io_type: IoType) -> bool {
-        unsafe { spdk_bdev_io_type_supported(self.as_ptr(), io_type as u32) }
+        unsafe { spdk_bdev_io_type_supported(self.as_ptr(), io_type.into()) }
     }
 
     /// Gets the first `BDev` in the global list.

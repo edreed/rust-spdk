@@ -279,10 +279,10 @@ fn main() {
         .wrap_static_fns_path(&spdk_wrappers)
         .wrap_unsafe_ops(true)
         .prepend_enum_name(false)
-        .constified_enum_module(r"spdk_bdev_io_status")
         .constified_enum_module(r"spdk_nvme_(\w+)?status_code(_type)?")
         .constified_enum_module(r"spdk_scsi_(asc|ascq|sense|status)")
         .rustified_enum("spdk_dif_.*")
+        .rustified_enum("spdk_bdev_io_(status|type)")
         .generate_cstr(true)
         .layout_tests(false);
 
