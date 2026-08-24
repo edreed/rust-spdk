@@ -7,6 +7,7 @@
 #include "spdk/bdev.h"
 #include "spdk/bdev_module.h"
 #include "spdk/bdev_zone.h"
+#include "spdk/dif.h"
 #endif
 
 #if defined(CARGO_FEATURE_BDEV_MALLOC)

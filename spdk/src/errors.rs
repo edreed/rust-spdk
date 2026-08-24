@@ -280,3 +280,29 @@ impl From<Errno> for std::io::Error {
         std::io::Error::from_raw_os_error(e.0)
     }
 }
+
+/// An error type returned when an unknown variant value is encountered when converting an SPDK
+/// enum variant value into a Rust enum variant.
+#[derive(Debug)]
+pub struct UnknownEnumVariantError<T>
+where
+    T: Display + Debug,
+{
+    pub(crate) enum_name: &'static str,
+    pub(crate) variant_value: T,
+}
+
+impl<T> Display for UnknownEnumVariantError<T>
+where
+    T: Display + Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the value \"{}\" corresponds to no known variant of enum \"{}\"",
+            self.variant_value, self.enum_name
+        )
+    }
+}
+
+impl<T> Error for UnknownEnumVariantError<T> where T: Display + Debug {}
