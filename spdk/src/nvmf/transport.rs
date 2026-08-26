@@ -7,19 +7,20 @@ use std::{
 };
 
 use spdk_sys::{
-    SPDK_NVME_TRANSPORT_CUSTOM, SPDK_NVME_TRANSPORT_FC, SPDK_NVME_TRANSPORT_NAME_CUSTOM,
-    SPDK_NVME_TRANSPORT_NAME_FC, SPDK_NVME_TRANSPORT_NAME_PCIE, SPDK_NVME_TRANSPORT_NAME_RDMA,
-    SPDK_NVME_TRANSPORT_NAME_TCP, SPDK_NVME_TRANSPORT_NAME_VFIOUSER, SPDK_NVME_TRANSPORT_PCIE,
-    SPDK_NVME_TRANSPORT_RDMA, SPDK_NVME_TRANSPORT_TCP, SPDK_NVME_TRANSPORT_VFIOUSER,
-    spdk_nvme_transport_type, spdk_nvmf_get_transport_name, spdk_nvmf_get_transport_type,
-    spdk_nvmf_transport, spdk_nvmf_transport_create_async, spdk_nvmf_transport_destroy,
-    spdk_nvmf_transport_get_first, spdk_nvmf_transport_get_next, spdk_nvmf_transport_opts,
-    spdk_nvmf_transport_opts_init,
+    SPDK_NVME_TRANSPORT_NAME_CUSTOM, SPDK_NVME_TRANSPORT_NAME_FC, SPDK_NVME_TRANSPORT_NAME_PCIE,
+    SPDK_NVME_TRANSPORT_NAME_RDMA, SPDK_NVME_TRANSPORT_NAME_TCP,
+    spdk_nvme_transport_type::{self, *},
+    spdk_nvmf_get_transport_name, spdk_nvmf_get_transport_type, spdk_nvmf_transport,
+    spdk_nvmf_transport_create_async, spdk_nvmf_transport_destroy, spdk_nvmf_transport_get_first,
+    spdk_nvmf_transport_get_next, spdk_nvmf_transport_opts, spdk_nvmf_transport_opts_init,
 };
+
+#[cfg(feature = "nvme-vfio-user")]
+use spdk_sys::SPDK_NVME_TRANSPORT_NAME_VFIOUSER;
 
 use crate::{
     Result,
-    errors::{EINVAL, ENODEV, ENOMEM, EPERM, Errno},
+    errors::{EINVAL, ENODEV, ENOMEM, EPERM, Errno, UnknownEnumVariantError},
     task::{Promise, Promissory},
     thread, to_poll_pending_on_ok,
 };
@@ -50,6 +51,7 @@ pub enum TransportType {
     PCIE = 256,
 
     /// A user-mode vfio transport.
+    #[cfg(feature = "nvme-vfio-user")]
     VFIOUSER = 1024,
 
     /// A custom transport.
@@ -64,21 +66,33 @@ impl From<TransportType> for &'static CStr {
             TransportType::PCIE => SPDK_NVME_TRANSPORT_NAME_PCIE,
             TransportType::RDMA => SPDK_NVME_TRANSPORT_NAME_RDMA,
             TransportType::TCP => SPDK_NVME_TRANSPORT_NAME_TCP,
+
+            #[cfg(feature = "nvme-vfio-user")]
             TransportType::VFIOUSER => SPDK_NVME_TRANSPORT_NAME_VFIOUSER,
         }
     }
 }
 
-impl From<spdk_nvme_transport_type> for TransportType {
-    fn from(transport_type: spdk_nvme_transport_type) -> Self {
+impl TryFrom<spdk_nvme_transport_type> for TransportType {
+    type Error = UnknownEnumVariantError<u32>;
+
+    fn try_from(
+        transport_type: spdk_nvme_transport_type,
+    ) -> std::result::Result<Self, Self::Error> {
         match transport_type {
-            SPDK_NVME_TRANSPORT_CUSTOM => TransportType::CUSTOM,
-            SPDK_NVME_TRANSPORT_FC => TransportType::FC,
-            SPDK_NVME_TRANSPORT_PCIE => TransportType::PCIE,
-            SPDK_NVME_TRANSPORT_RDMA => TransportType::RDMA,
-            SPDK_NVME_TRANSPORT_TCP => TransportType::TCP,
-            SPDK_NVME_TRANSPORT_VFIOUSER => TransportType::VFIOUSER,
-            _ => unreachable!("invalid transport type"),
+            SPDK_NVME_TRANSPORT_CUSTOM => Ok(TransportType::CUSTOM),
+            SPDK_NVME_TRANSPORT_FC => Ok(TransportType::FC),
+            SPDK_NVME_TRANSPORT_PCIE => Ok(TransportType::PCIE),
+            SPDK_NVME_TRANSPORT_RDMA => Ok(TransportType::RDMA),
+            SPDK_NVME_TRANSPORT_TCP => Ok(TransportType::TCP),
+
+            #[cfg(feature = "nvme-vfio-user")]
+            SPDK_NVME_TRANSPORT_VFIOUSER => Ok(TransportType::VFIOUSER),
+
+            _ => Err(UnknownEnumVariantError {
+                enum_name: "spdk_nvme_transport_type",
+                variant_value: transport_type as u32,
+            }),
         }
     }
 }
@@ -87,7 +101,7 @@ impl Display for TransportType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s: &CStr = (*self).into();
 
-        write!(f, "{}", s.to_string_lossy())
+        f.write_str(s.to_string_lossy().as_ref())
     }
 }
 
@@ -329,7 +343,11 @@ impl Transport {
 
     /// Returns the type of the transport.
     pub fn r#type(&self) -> TransportType {
-        unsafe { spdk_nvmf_get_transport_type(self.as_ptr()).into() }
+        unsafe {
+            spdk_nvmf_get_transport_type(self.as_ptr())
+                .try_into()
+                .expect("valid transport type")
+        }
     }
 
     /// Destroys the transport asynchronously.

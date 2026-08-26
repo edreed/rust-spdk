@@ -1,14 +1,17 @@
-use std::{ffi::CStr, net::IpAddr, time::Duration};
+use std::{
+    ffi::{CStr, CString},
+    time::Duration,
+};
 
 use spdk::{
     bdev::malloc,
     cli::Parser,
-    nvme::TransportId,
-    nvmf::{self, SubsystemType, TransportType},
+    net::SocketAddr,
+    nvme::TransportAddr,
+    nvmf::{self, SubsystemType},
     runtime::Runtime,
     time::interval,
 };
-use ternary_rs::if_else;
 
 const BDEV_NAME: &CStr = c"Malloc0";
 const NUM_BLOCKS: u64 = 32768;
@@ -16,11 +19,11 @@ const BLOCK_SIZE: u32 = 512;
 
 const NQN: &CStr = c"nqn.2016-06.io.spdk:cnode1";
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 struct Args {
     /// The IP address to listen on.
     #[spdk_arg(short = 'l', value_name = "IPADDR", default = "127.0.0.1".parse().unwrap())]
-    listen_addr: IpAddr,
+    listen_addr: CString,
 
     /// The port to listen on.
     #[spdk_arg(short = 'P', value_name = "PORT", default = 4420)]
@@ -31,7 +34,7 @@ struct Args {
 async fn main() {
     let mut target = nvmf::targets().next().unwrap();
 
-    let transport = nvmf::TransportBuilder::new(TransportType::TCP)
+    let transport = nvmf::TransportBuilder::new(nvmf::TransportType::TCP)
         .unwrap()
         .build()
         .await
@@ -41,14 +44,8 @@ async fn main() {
 
     let args = Args::get();
 
-    let transport_id = format!(
-        "trtype=TCP adrfam={} traddr={} trsvcid={}",
-        if_else!(args.listen_addr.is_ipv4(), "IPv4", "IPv6"),
-        args.listen_addr,
-        args.listen_port
-    )
-    .parse::<TransportId>()
-    .unwrap();
+    let listen_addr = SocketAddr::new(args.listen_addr.clone(), args.listen_port);
+    let transport_id = TransportAddr::TCP(listen_addr).into();
 
     target.listen(&transport_id).unwrap();
 

@@ -91,7 +91,7 @@ pub enum SocketAddr {
 impl SocketAddr {
     /// Creates a new `SocketAddr` from a string containing an IPv4 or IPv6 address.
     pub fn new(host: CString, port: u16) -> Self {
-        if regex_is_match!(r#"\d+.\d+\d+.\d+"#, &host.to_string_lossy()) {
+        if regex_is_match!(r#"\d+\.\d+\.\d+\.\d+"#, &host.to_string_lossy()) {
             Self::V4(SocketAddrV4::new(host, port))
         } else {
             Self::V6(SocketAddrV6::new(host, port))
