@@ -6,20 +6,21 @@ use std::{
 };
 
 use spdk_sys::{
-    SPDK_NVMF_SUBTYPE_DISCOVERY, SPDK_NVMF_SUBTYPE_NVME, spdk_nvmf_subsystem,
-    spdk_nvmf_subsystem_add_host, spdk_nvmf_subsystem_add_listener, spdk_nvmf_subsystem_add_ns_ext,
-    spdk_nvmf_subsystem_get_allow_any_host, spdk_nvmf_subsystem_get_first,
-    spdk_nvmf_subsystem_get_mn, spdk_nvmf_subsystem_get_next, spdk_nvmf_subsystem_get_nqn,
-    spdk_nvmf_subsystem_get_ns, spdk_nvmf_subsystem_get_sn, spdk_nvmf_subsystem_get_type,
-    spdk_nvmf_subsystem_host_allowed, spdk_nvmf_subsystem_pause, spdk_nvmf_subsystem_remove_host,
-    spdk_nvmf_subsystem_remove_listener, spdk_nvmf_subsystem_remove_ns, spdk_nvmf_subsystem_resume,
+    spdk_nvmf_subsystem, spdk_nvmf_subsystem_add_host, spdk_nvmf_subsystem_add_listener,
+    spdk_nvmf_subsystem_add_ns_ext, spdk_nvmf_subsystem_get_allow_any_host,
+    spdk_nvmf_subsystem_get_first, spdk_nvmf_subsystem_get_mn, spdk_nvmf_subsystem_get_next,
+    spdk_nvmf_subsystem_get_nqn, spdk_nvmf_subsystem_get_ns, spdk_nvmf_subsystem_get_sn,
+    spdk_nvmf_subsystem_get_type, spdk_nvmf_subsystem_host_allowed, spdk_nvmf_subsystem_pause,
+    spdk_nvmf_subsystem_remove_host, spdk_nvmf_subsystem_remove_listener,
+    spdk_nvmf_subsystem_remove_ns, spdk_nvmf_subsystem_resume,
     spdk_nvmf_subsystem_set_allow_any_host, spdk_nvmf_subsystem_set_mn, spdk_nvmf_subsystem_set_sn,
-    spdk_nvmf_subsystem_start, spdk_nvmf_subsystem_stop, spdk_nvmf_subtype,
+    spdk_nvmf_subsystem_start, spdk_nvmf_subsystem_stop,
+    spdk_nvmf_subtype::{self, *},
 };
 
 use crate::{
     Result,
-    errors::{EINVAL, ENOENT, Errno},
+    errors::{EINVAL, ENOENT, Errno, UnknownEnumVariantError},
     nvme::TransportId,
     task::{Promise, Promissory},
     to_poll_pending_on_ok, to_result,
@@ -37,12 +38,17 @@ pub enum SubsystemType {
     NVMe = 2,
 }
 
-impl From<spdk_nvmf_subtype> for SubsystemType {
-    fn from(value: spdk_nvmf_subtype) -> Self {
+impl TryFrom<spdk_nvmf_subtype> for SubsystemType {
+    type Error = UnknownEnumVariantError<u32>;
+
+    fn try_from(value: spdk_nvmf_subtype) -> std::result::Result<Self, Self::Error> {
         match value {
-            SPDK_NVMF_SUBTYPE_DISCOVERY => Self::Discovery,
-            SPDK_NVMF_SUBTYPE_NVME => Self::NVMe,
-            _ => unreachable!("invalid subsystem type"),
+            SPDK_NVMF_SUBTYPE_DISCOVERY => Ok(Self::Discovery),
+            SPDK_NVMF_SUBTYPE_NVME => Ok(Self::NVMe),
+            _ => Err(UnknownEnumVariantError {
+                enum_name: "spdk_nvmf_subtype",
+                variant_value: value as u32,
+            }),
         }
     }
 }
@@ -123,7 +129,11 @@ impl Subsystem {
 
     /// Return the type of the subsystem.
     pub fn subtype(&self) -> SubsystemType {
-        unsafe { spdk_nvmf_subsystem_get_type(self.as_ptr()).into() }
+        unsafe {
+            spdk_nvmf_subsystem_get_type(self.as_ptr())
+                .try_into()
+                .expect("valid subsystem type")
+        }
     }
 
     /// Returns whether the subsystems is the Discovery controller.

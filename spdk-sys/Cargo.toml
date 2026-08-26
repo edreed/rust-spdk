@@ -25,6 +25,7 @@ bdev-module = ["bdev"]
 json = []
 net = []
 nvme = ["bdev"]
+nvme-vfio-user = ["nvme"]
 nvmf = ["bdev"]
 scsi = ["bdev"]
 

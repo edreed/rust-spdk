@@ -1,10 +1,10 @@
 #![cfg(feature = "nvme")]
 
 mod status;
-mod transport_id;
+mod transport;
 
 pub use status::NvmeStatus;
-pub use transport_id::TransportId;
+pub use transport::{FibreChannelAddr, PciAddr, TransportAddr, TransportId};
 
 /// A value used to indicate a command applies to all namespaces or to retrieve
 /// global log pages.

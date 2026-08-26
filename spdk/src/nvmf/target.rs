@@ -2,7 +2,7 @@ use std::{
     ffi::CStr,
     io::Write,
     marker::PhantomData,
-    mem::{self, MaybeUninit, size_of_val},
+    mem::{self, MaybeUninit, size_of_val, transmute},
     ptr::{NonNull, copy_nonoverlapping, null_mut},
     task::Poll,
 };
@@ -12,13 +12,15 @@ use spdk_sys::{
     spdk_nvmf_listen_opts_init, spdk_nvmf_subsystem_create_ext, spdk_nvmf_subsystem_destroy,
     spdk_nvmf_subsystem_opts_init, spdk_nvmf_target_opts, spdk_nvmf_tgt,
     spdk_nvmf_tgt_add_transport, spdk_nvmf_tgt_create, spdk_nvmf_tgt_destroy,
-    spdk_nvmf_tgt_discovery_filter, spdk_nvmf_tgt_find_subsystem, spdk_nvmf_tgt_get_name,
-    spdk_nvmf_tgt_get_transport, spdk_nvmf_tgt_listen_ext, spdk_nvmf_transport_stop_listen_async,
+    spdk_nvmf_tgt_discovery_filter::{self, *},
+    spdk_nvmf_tgt_find_subsystem, spdk_nvmf_tgt_get_name, spdk_nvmf_tgt_get_transport,
+    spdk_nvmf_tgt_listen_ext, spdk_nvmf_transport_stop_listen_async,
 };
+use static_assertions::const_assert_eq;
 
 use crate::{
     Result,
-    errors::{EBADF, EINPROGRESS, EINVAL, ENOMEM, EPERM},
+    errors::{EBADF, EINPROGRESS, EINVAL, ENOMEM, EPERM, UnknownEnumVariantError},
     nvme::{SPDK_NVME_GLOBAL_NS_TAG, TransportId},
     task::{Promise, Promissory},
     thread, to_poll_pending_on_err, to_poll_pending_on_ok, to_result,
@@ -29,6 +31,70 @@ use super::{
     subsystem::{SubsystemType, Subsystems},
     transport::Transports,
 };
+
+/// An enumeration of filter rules applied during discovery log generation.
+pub enum DiscoveryFilter {
+    /// Log all listeners in the discovery log page.
+    Any,
+
+    /// Only log listeners with the same transport type on which the DISCOVERY command was received.
+    ByType,
+
+    /// Only log listeners with the same transport address on which the DISCOVERY command was received.
+    ByAddress,
+
+    /// Only log listeners with the same transport service ID on which the DISCOVERY command was received.
+    ByServiceId,
+
+    /// Check with the customer discovery filter.
+    Custom,
+}
+
+const_assert_eq!(
+    DiscoveryFilter::Any as u32,
+    SPDK_NVMF_TGT_DISCOVERY_FILTER_ANY as u32
+);
+const_assert_eq!(
+    DiscoveryFilter::ByType as u32,
+    SPDK_NVMF_TGT_DISCOVERY_FILTER_TYPE as u32
+);
+const_assert_eq!(
+    DiscoveryFilter::ByAddress as u32,
+    SPDK_NVMF_TGT_DISCOVERY_FILTER_ADDRESS as u32
+);
+const_assert_eq!(
+    DiscoveryFilter::ByServiceId as u32,
+    SPDK_NVMF_TGT_DISCOVERY_FILTER_SVCID as u32
+);
+const_assert_eq!(
+    DiscoveryFilter::Custom as u32,
+    SPDK_NVMF_TGT_DISCOVERY_FILTER_CUSTOM as u32
+);
+
+impl TryFrom<spdk_nvmf_tgt_discovery_filter> for DiscoveryFilter {
+    type Error = UnknownEnumVariantError<u32>;
+
+    fn try_from(value: spdk_nvmf_tgt_discovery_filter) -> std::result::Result<Self, Self::Error> {
+        if value as u32 >= SPDK_NVMF_TGT_DISCOVERY_FILTER_ANY as u32
+            && value as u32 <= SPDK_NVMF_TGT_DISCOVERY_FILTER_CUSTOM as u32
+        {
+            // SAFETY: The specified value is within the correct range for direct transmutation.
+            return Ok(unsafe { transmute::<u8, Self>(value as u8) });
+        }
+
+        Err(UnknownEnumVariantError {
+            enum_name: "spdk_nvmf_tgt_discovery_filter",
+            variant_value: value as u32,
+        })
+    }
+}
+
+impl From<DiscoveryFilter> for spdk_nvmf_tgt_discovery_filter {
+    fn from(value: DiscoveryFilter) -> Self {
+        // SAFETY: `DiscoveryFilter` has a 1:1 mapping to `spdk_nvmf_tgt_discovery_filter` values.
+        unsafe { transmute(value as u32) }
+    }
+}
 
 /// Builds a [`Target`] instance using the NVMe over Fabrics (NVMe-oF) target module of the SPDK.
 ///
@@ -80,8 +146,8 @@ impl Builder {
     }
 
     /// Sets the filter rule applied during discovery log generation.
-    pub fn with_discovery_filter(mut self, filter: spdk_nvmf_tgt_discovery_filter) -> Self {
-        self.0.discovery_filter = filter;
+    pub fn with_discovery_filter(mut self, filter: DiscoveryFilter) -> Self {
+        self.0.discovery_filter = filter as u32;
         self
     }
 }

@@ -63,8 +63,11 @@ fn main() {
         dir::copy(spdk_src_dir, out_dir.clone(), &copy_options).expect("$OUT_DIR is writeable");
     }
 
+    let include_target_nvme_vfio_user = env::var_os("CARGO_FEATURE_NVME_VFIO_USER").is_some();
+
     if !spdk_pkgconfig_dir.exists() {
         let mut config = autotools::Config::new(spdk_dir);
+
         config
             .forbid("--disable-shared")
             .forbid("--enable-static")
@@ -73,8 +76,13 @@ fn main() {
             .disable("tests", None)
             .disable("unit-tests", None)
             .config_option("prefix", Some(""))
-            .insource(true)
-            .make_target("all");
+            .insource(true);
+
+        if include_target_nvme_vfio_user {
+            config.with("vfio-user", None);
+        }
+
+        config.make_target("all");
 
         if env::var("DEBUG").unwrap_or("false".into()).parse().unwrap() {
             config.enable("debug", None);
@@ -183,9 +191,18 @@ fn main() {
         pkg_configs.push(
             pkg_config
                 .probe("spdk_nvme")
-                .expect("sppdk_nvme package config exists"),
+                .expect("spdk_nvme package config exists"),
         );
-        defines.push("CARGO_FEATURE_NVMF=1");
+        defines.push("CARGO_FEATURE_NVME=1");
+    }
+
+    if include_target_nvme_vfio_user {
+        pkg_configs.push(
+            pkg_config
+                .probe("spdk_vfio_user")
+                .expect("spdk_vfio_user package config exists"),
+        );
+        defines.push("CARGO_FEATURE_NVME_VFIO_USER=1");
     }
 
     let include_target_nvmf = env::var_os("CARGO_FEATURE_NVMF").is_some();
@@ -283,6 +300,7 @@ fn main() {
         .constified_enum_module(r"spdk_scsi_(asc|ascq|sense|status)")
         .rustified_enum("spdk_dif_.*")
         .rustified_enum("spdk_bdev_io_(status|type)")
+        .rustified_non_exhaustive_enum("spdk_nvm(e|f)_.*")
         .generate_cstr(true)
         .layout_tests(false);
 
