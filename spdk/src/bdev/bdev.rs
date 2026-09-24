@@ -19,12 +19,12 @@ use spdk_sys::{
     spdk_bdev_io_set_aio_status, spdk_bdev_io_status::*, spdk_bdev_io_type, spdk_bdev_register,
     spdk_bdev_unregister, spdk_dif_pi_format_get_size, spdk_get_io_channel, spdk_io_channel,
     spdk_io_channel_get_ctx, spdk_io_channel_get_thread, spdk_io_device_register,
-    spdk_io_device_unregister,
+    spdk_io_device_unregister, spdk_uuid_copy,
 };
 use ternary_rs::if_else;
 
 use crate::{
-    Result,
+    Result, Uuid,
     block::{
         Any, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType, Owned, OwnedOps,
     },
@@ -664,6 +664,7 @@ where
 {
     module: &'a Module<M>,
     name: &'a CStr,
+    uuid: Option<Uuid>,
     block_size: u32,
     num_blocks: u64,
     write_cache_present: bool,
@@ -696,6 +697,7 @@ where
         Self {
             module,
             name,
+            uuid: None,
             block_size,
             num_blocks,
             write_cache_present: false,
@@ -727,6 +729,11 @@ where
     unsafe fn init_bdev(&self, bdev: &mut spdk_bdev, ctx: *mut c_void) {
         bdev.ctxt = ctx;
         bdev.name = self.name.to_owned().into_raw();
+
+        if let Some(uuid) = &self.uuid {
+            unsafe { spdk_uuid_copy(&mut bdev.uuid, uuid.as_ptr()) };
+        }
+
         bdev.product_name = M::product_name().as_ptr() as *mut _;
         bdev.module = self.module.as_ptr() as *mut _;
         bdev.fn_table = BDevImpl::<C>::vtable() as *const _;

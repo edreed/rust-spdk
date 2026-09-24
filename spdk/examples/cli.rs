@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use spdk::{self, cli::Parser};
+use spdk::{self, Uuid, cli::Parser};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -14,6 +14,10 @@ struct Args {
 
     /// If specified, creates a new block device.
     create_new: bool,
+
+    /// The UUID of the block device. If not specified, a new UUID will be generated.
+    #[spdk_arg(default = Uuid::new(), value_name = "UUID")]
+    uuid: Uuid,
 }
 
 #[spdk::main(cli_args = Args::parse())]

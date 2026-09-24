@@ -18,11 +18,14 @@ pub mod scsi;
 pub mod task;
 pub mod thread;
 pub mod time;
+pub mod uuid;
 
 pub use spdk_macros::main;
 
 #[cfg(feature = "bdev-module")]
 pub use spdk_macros::module;
+
+pub use uuid::Uuid;
 
 /// A specialized `Result` type for SPDK operations.
 pub type Result<T> = std::result::Result<T, errors::Errno>;

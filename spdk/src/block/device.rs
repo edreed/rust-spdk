@@ -15,13 +15,13 @@ use spdk_sys::{
     spdk_bdev_get_buf_align, spdk_bdev_get_by_name, spdk_bdev_get_dif_pi_format,
     spdk_bdev_get_dif_type, spdk_bdev_get_md_size, spdk_bdev_get_name, spdk_bdev_get_num_blocks,
     spdk_bdev_get_numa_id, spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
-    spdk_bdev_get_product_name, spdk_bdev_get_write_unit_size, spdk_bdev_has_write_cache,
-    spdk_bdev_io_type_supported, spdk_bdev_is_dif_check_enabled, spdk_bdev_is_dif_head_of_md,
-    spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
+    spdk_bdev_get_product_name, spdk_bdev_get_uuid, spdk_bdev_get_write_unit_size,
+    spdk_bdev_has_write_cache, spdk_bdev_io_type_supported, spdk_bdev_is_dif_check_enabled,
+    spdk_bdev_is_dif_head_of_md, spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
 };
 
 use crate::{
-    Result,
+    Result, Uuid,
     block::{Any, DifCheckFlag, DifCheckType, DifPiFormat, DifType, Owned, OwnedOps},
     errors::{ENODEV, EPERM},
     thread,
@@ -192,6 +192,13 @@ impl<T: OwnedOps> Device<T> {
     /// Get the name of this block device.
     pub fn name(&self) -> &CStr {
         unsafe { CStr::from_ptr(spdk_bdev_get_name(self.as_ptr())) }
+    }
+
+    /// Get the UUID of this block device.
+    pub fn uuid(&self) -> Uuid {
+        // SAFETY: `spdk_bdev_get_uuid` returns a valid pointer to an `spdk_uuid` associated with
+        // this block device.
+        unsafe { Uuid::from_ptr_unchecked(spdk_bdev_get_uuid(self.as_ptr())) }
     }
 
     /// Get the product name of this block device.
