@@ -32,6 +32,7 @@ itertools = "0.15.0"
 [features]
 default = []
 bdev = ["spdk-sys/bdev"]
+bdev-aio = ["bdev", "spdk-sys/bdev-aio"]
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
 json = ["spdk-sys/json"]

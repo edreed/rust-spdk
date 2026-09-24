@@ -22,6 +22,7 @@ ternary-rs = "1.0.0"
 default = ["base"]
 base = []
 bdev = ["base"]
+bdev-aio = ["base", "bdev"]
 bdev-malloc = ["base", "bdev"]
 bdev-module = ["base", "bdev"]
 json = ["base"]

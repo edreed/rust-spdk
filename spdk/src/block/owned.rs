@@ -32,9 +32,13 @@ pub struct Owned {
 }
 
 impl Owned {
-    /// Consumes the specified device and returns a new [`Device<Owned>`]
-    /// instance.
-    pub(crate) fn new<T>(device: T) -> Device<Self>
+    /// Consumes the specified device and returns a new [`Device<Owned>`] instance.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the provided device is valid and that the resulting
+    /// `Device<Owned>` will be the only instance ownning the underlying `spdk_bdev` pointer.
+    pub(crate) unsafe fn new<T>(device: T) -> Device<Self>
     where
         T: OwnedOps,
     {

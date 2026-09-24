@@ -123,14 +123,13 @@ impl<T: OwnedOps> Device<T> {
         }
     }
 
-    /// Consumes this device and returns a [`Device<Owned>`] assuming ownership of the underlying
-    /// `spdk_bdev` pointer.
-    pub fn into_owned(&mut self) -> Option<Device<Owned>> {
-        match self.0 {
-            OwnershipState::Owned(_) => match mem::replace(&mut self.0, OwnershipState::None) {
-                OwnershipState::Owned(dev) => Some(Owned::new(dev)),
-                _ => unreachable!(),
-            },
+    /// If this [`Device`] currently owns the underlying `spdk_bdev` pointer, return a
+    /// [`Device<Owned>`] instance assuming ownership of the underlying `spdk_bdev` pointer.
+    /// Otherwise, return `None`. This `Device` is consumed in the process.
+    pub fn into_owned(mut self) -> Option<Device<Owned>> {
+        match mem::replace(&mut self.0, OwnershipState::None) {
+            // SAFETY: We have already checked that the device is owned, so it is safe to call `Owned::new`.
+            OwnershipState::Owned(dev) => Some(unsafe { Owned::new(dev) }),
             _ => None,
         }
     }

@@ -23,7 +23,12 @@ use spdk_sys::{
 };
 use ternary_rs::if_else;
 
-use crate::{errors::Errno, net::SocketAddr, nvmf::TransportType, to_result};
+use crate::{
+    errors::{EINVAL, Errno},
+    net::SocketAddr,
+    nvmf::TransportType,
+    to_result,
+};
 
 /// The address of a device on the PCIe bus.
 #[derive(Debug)]
@@ -363,7 +368,7 @@ impl FromStr for TransportId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         unsafe {
-            let s = CString::new(s).unwrap();
+            let s = CString::new(s).map_err(|_| EINVAL)?;
             let mut transport_id = MaybeUninit::zeroed();
 
             to_result!(spdk_nvme_transport_id_parse(
