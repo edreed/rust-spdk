@@ -2,6 +2,7 @@
 #include "spdk/env.h"
 #include "spdk/event.h"
 #include "spdk/thread.h"
+#include "spdk/uuid.h"
 
 #if defined(CARGO_FEATURE_BDEV)
 #include "spdk/bdev.h"

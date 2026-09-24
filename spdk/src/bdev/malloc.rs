@@ -11,10 +11,11 @@ use std::{
 
 use spdk_sys::{
     create_malloc_disk, delete_malloc_disk, malloc_bdev_opts, spdk_bdev, spdk_bdev_get_name,
+    spdk_uuid_copy,
 };
 
 use crate::{
-    Result,
+    Result, Uuid,
     block::{Device, Owned, OwnedOps},
     task::{Promise, Promissory},
     to_result,
@@ -41,6 +42,14 @@ impl Builder {
     /// Sets the device name.
     pub fn with_name(mut self, name: &CStr) -> Self {
         self.0.name = name.as_ptr() as *mut c_char;
+        self
+    }
+
+    /// Sets the UUID of the device.
+    ///
+    /// If no UUID is explicitly set, a new UUID will be generated.
+    pub fn with_uuid(mut self, uuid: &Uuid) -> Self {
+        unsafe { spdk_uuid_copy(&mut self.0.uuid, uuid.as_ptr()) };
         self
     }
 
