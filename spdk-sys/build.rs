@@ -248,7 +248,7 @@ impl<'a> Feature<'a> {
 }
 
 /// An array of all features supported by the `spdk-sys` crate.
-const ALL_FEATURES: [Feature; 10] = [
+const ALL_FEATURES: [Feature; 11] = [
     Feature::new(
         "CARGO_FEATURE_BASE",
         [
@@ -287,6 +287,15 @@ const ALL_FEATURES: [Feature; 10] = [
             RustifiedEnum("spdk_bdev_io_(status|type)"),
         ]
         .as_slice(),
+    ),
+    Feature::new(
+        "CARGO_FEATURE_BDEV_AIO",
+        [].as_slice(),
+        ["spdk_bdev_aio"].as_slice(),
+        [].as_slice(),
+        [].as_slice(),
+        [].as_slice(),
+        [AllowFunction(r"\w+_aio_\w+")].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_BDEV_MALLOC",

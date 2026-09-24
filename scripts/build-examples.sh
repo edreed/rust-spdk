@@ -18,6 +18,7 @@ build_example() {
     echo
 }
 
+build_example bdev_aio --features="bdev-aio"
 build_example bdev_hello_world --features="bdev-malloc"
 build_example cli
 build_example devices --features="bdev-malloc"

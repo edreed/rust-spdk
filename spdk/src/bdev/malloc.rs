@@ -124,6 +124,8 @@ impl OwnedOps for Malloc {
 
 impl From<Owned> for Malloc {
     fn from(owned: Owned) -> Self {
+        // SAFETY: We are creating a `Malloc` instance from an `Owned` device, which guarantees that
+        // the underlying `spdk_bdev` pointer is valid and uniquely owned.
         Self(unsafe { NonNull::new_unchecked(owned.into_ptr()) })
     }
 }

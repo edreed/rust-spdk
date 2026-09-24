@@ -10,11 +10,16 @@
 #[cfg(feature = "bdev-malloc")]
 pub mod malloc;
 
+#[cfg(feature = "bdev-aio")]
+mod aio;
 #[cfg(feature = "bdev-module")]
 #[allow(clippy::module_inception)]
 mod bdev;
 #[cfg(feature = "bdev-module")]
 mod module;
+
+#[cfg(feature = "bdev-aio")]
+pub use aio::Aio;
 
 #[cfg(feature = "bdev-module")]
 pub use bdev::{BDevBuilder, BDevImpl, BDevIo, BDevIoChannel, BDevIoChannelOps, BDevOps};

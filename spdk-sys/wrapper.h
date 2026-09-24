@@ -11,6 +11,10 @@
 #include "spdk/dif.h"
 #endif
 
+#if defined(CARGO_FEATURE_BDEV_AIO)
+#include "bdev/aio/bdev_aio.h"
+#endif
+
 #if defined(CARGO_FEATURE_BDEV_MALLOC)
 #include "bdev/malloc/bdev_malloc.h"
 #endif

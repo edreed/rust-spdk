@@ -20,6 +20,7 @@ run_example() {
 
 COMMON_ARGS=("--iova-mode=va" "--huge-dir=/mnt/hugepages")
 
+run_example bdev_aio --features="bdev-aio" -- "${COMMON_ARGS[@]}"
 run_example bdev_hello_world --features="bdev-malloc" -- "${COMMON_ARGS[@]}"
 run_example cli -- "${COMMON_ARGS[@]}" --block-size=4096 --create-new
 run_example devices --features="bdev-malloc" -- "${COMMON_ARGS[@]}"
