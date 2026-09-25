@@ -4,6 +4,7 @@
 //! [SPDK]: https://www.spdk.io
 mod ffi {
     #![allow(clippy::doc_lazy_continuation)]
+    #![allow(clippy::manual_div_ceil)]
     #![allow(clippy::missing_safety_doc)]
     #![allow(clippy::ptr_offset_with_cast)]
     #![allow(clippy::too_many_arguments)]

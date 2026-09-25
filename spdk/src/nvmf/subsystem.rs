@@ -8,13 +8,11 @@ use std::{
 use spdk_sys::{
     spdk_nvmf_subsystem, spdk_nvmf_subsystem_add_host, spdk_nvmf_subsystem_add_listener,
     spdk_nvmf_subsystem_add_ns_ext, spdk_nvmf_subsystem_get_allow_any_host,
-    spdk_nvmf_subsystem_get_first, spdk_nvmf_subsystem_get_mn, spdk_nvmf_subsystem_get_next,
-    spdk_nvmf_subsystem_get_nqn, spdk_nvmf_subsystem_get_ns, spdk_nvmf_subsystem_get_sn,
-    spdk_nvmf_subsystem_get_type, spdk_nvmf_subsystem_host_allowed, spdk_nvmf_subsystem_pause,
-    spdk_nvmf_subsystem_remove_host, spdk_nvmf_subsystem_remove_listener,
-    spdk_nvmf_subsystem_remove_ns, spdk_nvmf_subsystem_resume,
-    spdk_nvmf_subsystem_set_allow_any_host, spdk_nvmf_subsystem_set_mn, spdk_nvmf_subsystem_set_sn,
-    spdk_nvmf_subsystem_start, spdk_nvmf_subsystem_stop,
+    spdk_nvmf_subsystem_get_first, spdk_nvmf_subsystem_get_next, spdk_nvmf_subsystem_get_nqn,
+    spdk_nvmf_subsystem_get_ns, spdk_nvmf_subsystem_get_opts, spdk_nvmf_subsystem_host_allowed,
+    spdk_nvmf_subsystem_pause, spdk_nvmf_subsystem_remove_host,
+    spdk_nvmf_subsystem_remove_listener, spdk_nvmf_subsystem_remove_ns, spdk_nvmf_subsystem_resume,
+    spdk_nvmf_subsystem_set_allow_any_host, spdk_nvmf_subsystem_start, spdk_nvmf_subsystem_stop,
     spdk_nvmf_subtype::{self, *},
 };
 
@@ -90,36 +88,24 @@ impl Subsystem {
         self.0.as_ptr()
     }
 
-    /// Sets the serial number of the subsystem.
-    pub fn set_serial_number(&mut self, sn: &CStr) -> Result<()> {
-        unsafe {
-            if spdk_nvmf_subsystem_set_sn(self.as_ptr(), sn.as_ptr()) < 0 {
-                return Err(EINVAL);
-            }
-        }
-
-        Ok(())
-    }
-
     /// Returns the serial number of the subsystem.
     pub fn serial_number(&self) -> &CStr {
-        unsafe { CStr::from_ptr(spdk_nvmf_subsystem_get_sn(self.as_ptr())) }
-    }
-
-    /// Sets the model number of the subsystem.
-    pub fn set_model_number(&mut self, mn: &CStr) -> Result<()> {
         unsafe {
-            if spdk_nvmf_subsystem_set_mn(self.as_ptr(), mn.as_ptr()) < 0 {
-                return Err(EINVAL);
-            }
-        }
+            let opts = spdk_nvmf_subsystem_get_opts(self.as_ptr());
 
-        Ok(())
+            CStr::from_ptr((*opts).sn.as_ptr())
+        }
     }
 
     /// Returns the model number of the subsystem.
     pub fn model_number(&self) -> &CStr {
-        unsafe { CStr::from_ptr(spdk_nvmf_subsystem_get_mn(self.as_ptr())) }
+        unsafe {
+            let opts = spdk_nvmf_subsystem_get_opts(self.as_ptr());
+
+            // SAFETY: `opts` is a valid pointer to `spdk_nvmf_subsystem_opts` obtained from the
+            // subsystem and the `mn` field contains a valid C string.
+            CStr::from_ptr((*opts).mn.as_ptr())
+        }
     }
 
     /// Returns the NQN of the subsystem.
@@ -130,9 +116,9 @@ impl Subsystem {
     /// Return the type of the subsystem.
     pub fn subtype(&self) -> SubsystemType {
         unsafe {
-            spdk_nvmf_subsystem_get_type(self.as_ptr())
-                .try_into()
-                .expect("valid subsystem type")
+            let opts = spdk_nvmf_subsystem_get_opts(self.as_ptr());
+
+            (*opts).type_.try_into().expect("valid subsystem type")
         }
     }
 

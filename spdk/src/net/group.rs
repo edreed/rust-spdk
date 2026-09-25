@@ -13,8 +13,9 @@ use std::{
 
 use futures::task::noop_waker_ref;
 use spdk_sys::{
-    spdk_sock, spdk_sock_group, spdk_sock_group_add_sock, spdk_sock_group_close,
-    spdk_sock_group_create, spdk_sock_group_poll, spdk_sock_group_remove_sock, spdk_sock_opts,
+    spdk_sock, spdk_sock_get_user_ctx, spdk_sock_group, spdk_sock_group_add_sock,
+    spdk_sock_group_close, spdk_sock_group_create, spdk_sock_group_opts, spdk_sock_group_poll,
+    spdk_sock_group_remove_sock, spdk_sock_opts,
 };
 
 use crate::{
@@ -44,6 +45,50 @@ where
 {
     fn handle_event(self: Pin<&mut Self>) {
         unreachable!("handle_event called on uninitialized data");
+    }
+}
+
+struct RawGroupedVtable {
+    handle_event: unsafe fn(*const ()),
+}
+
+struct RawGrouped {
+    data: *const (),
+    vtable: &'static RawGroupedVtable,
+}
+
+impl RawGrouped {
+    /// Creates a new `RawGrouped` instance with the specified virtual function table and data pointer.
+    unsafe fn new(data: *const (), vtable: &'static RawGroupedVtable) -> Box<Self> {
+        Box::new(Self { data, vtable })
+    }
+
+    fn handle_event(&self) {
+        unsafe { (self.vtable.handle_event)(self.data) }
+    }
+}
+
+fn grouped_listener_handle_event(data: *const ()) {
+    let listener = unsafe { &mut *(data as *mut Grouped<TcpListenerSocket>) };
+
+    unsafe { Pin::new_unchecked(&mut listener.sock) }.handle_event();
+}
+
+fn grouped_listener_vtable() -> &'static RawGroupedVtable {
+    &RawGroupedVtable {
+        handle_event: grouped_listener_handle_event,
+    }
+}
+
+fn grouped_stream_handle_event(data: *const ()) {
+    let stream = unsafe { &mut *(data as *mut Grouped<TcpStreamSocket>) };
+
+    unsafe { Pin::new_unchecked(&mut stream.sock) }.handle_event();
+}
+
+fn grouped_stream_vtable() -> &'static RawGroupedVtable {
+    &RawGroupedVtable {
+        handle_event: grouped_stream_handle_event,
     }
 }
 
@@ -86,17 +131,6 @@ where
         // SAFETY: The group member has just been initialized.
         unsafe { transmute(this) }
     }
-
-    /// Handles an event notification from the socket group.
-    unsafe extern "C" fn handle_event(
-        arg: *mut c_void,
-        _group: *mut spdk_sock_group,
-        _sock: *mut spdk_sock,
-    ) {
-        let grouped = unsafe { &mut *(arg as *mut Grouped<T>) };
-
-        unsafe { Pin::new_unchecked(&mut grouped.sock) }.handle_event();
-    }
 }
 
 impl<T> Drop for Grouped<T>
@@ -104,10 +138,7 @@ where
     T: SocketGroupEvent,
 {
     fn drop(&mut self) {
-        self.group
-            .polled()
-            .remove(&self.sock)
-            .expect("socket removed");
+        self.group.polled().remove(&self.sock);
     }
 }
 
@@ -349,8 +380,23 @@ impl SocketGroupInner {
     /// Creates a new [`SocketGroupInner`] instance, initializing it in-place.
     fn new_in_place(mut this: Pin<&mut MaybeUninit<Self>>) {
         let this = this.write(Self { group: null_mut() });
+        let opts = spdk_sock_group_opts {
+            size: size_of::<spdk_sock_group_opts>(),
+            ctx: this as *mut _ as *mut _,
+            rx_cb: Some(Self::handle_event),
+        };
 
-        this.group = unsafe { spdk_sock_group_create(this as *mut _ as *mut _) };
+        this.group = unsafe { spdk_sock_group_create(&opts) };
+    }
+
+    unsafe extern "C" fn handle_event(
+        data: *mut c_void,
+        _group: *mut spdk_sock_group,
+        _sock: *mut spdk_sock,
+    ) {
+        let raw_group = unsafe { &mut *(data as *mut RawGrouped) };
+
+        raw_group.handle_event();
     }
 
     /// Creates a new [`TcpListener`] bound to the specified socket address and attached to this
@@ -362,16 +408,23 @@ impl SocketGroupInner {
     ///
     /// [`TcpSocketExt::local_addr()`]: crate::net::TcpSocketExt::local_addr
     fn bind(this: &Rc<Poller<Self>>, addr: SocketAddr) -> Result<TcpListener> {
-        let mut listener = Grouped::new(this.clone(), TcpListenerSocket::bind(addr)?);
+        let listener = Grouped::new(this.clone(), TcpListenerSocket::bind(addr)?);
+        let mut raw_grouped = unsafe {
+            RawGrouped::new(
+                listener.as_ref() as *const _ as *const (),
+                grouped_listener_vtable(),
+            )
+        };
 
         to_result!(unsafe {
             spdk_sock_group_add_sock(
                 this.polled().group,
                 listener.sock.as_raw_sock(),
-                Some(Grouped::<TcpListenerSocket>::handle_event),
-                listener.as_mut() as *mut _ as *mut _,
+                raw_grouped.as_mut() as *mut _ as *mut _,
             )
         })?;
+
+        Box::leak(raw_grouped);
 
         // SAFETY: The `vtable` matches the `data` pointer type.
         Ok(TcpListener::new(unsafe {
@@ -381,16 +434,23 @@ impl SocketGroupInner {
 
     /// Adds a new incoming connection producing a [`TcpStream`] attached to this [`SocketGroup`].
     fn add(this: &Rc<Poller<Self>>, accepted: Accepted) -> Result<TcpStream> {
-        let mut stream = Grouped::new(this.clone(), accepted.into_socket());
+        let stream = Grouped::new(this.clone(), accepted.into_socket());
+        let mut raw_grouped = unsafe {
+            RawGrouped::new(
+                stream.as_ref() as *const _ as *const (),
+                grouped_stream_vtable(),
+            )
+        };
 
         to_result!(unsafe {
             spdk_sock_group_add_sock(
                 this.polled().group,
                 stream.sock.as_raw_sock(),
-                Some(Grouped::<TcpStreamSocket>::handle_event),
-                stream.as_mut() as *mut _ as *mut _,
+                raw_grouped.as_mut() as *mut _ as *mut _,
             )
         })?;
+
+        Box::leak(raw_grouped);
 
         // SAFETY: The `vtable` matches the `data` pointer type.
         Ok(TcpStream::new(unsafe {
@@ -405,18 +465,25 @@ impl SocketGroupInner {
         addr: SocketAddr,
         opts: &spdk_sock_opts,
     ) -> Result<TcpStream> {
-        let mut stream = Grouped::new_in_place(this.clone(), |stream| {
+        let stream = Grouped::new_in_place(this.clone(), |stream| {
             TcpStreamSocket::connect_in_place(stream, addr, opts)
         });
+        let mut raw_grouped = unsafe {
+            RawGrouped::new(
+                stream.as_ref() as *const _ as *const (),
+                grouped_stream_vtable(),
+            )
+        };
 
         to_result!(unsafe {
             spdk_sock_group_add_sock(
                 this.polled().group,
                 stream.sock.as_raw_sock(),
-                Some(Grouped::<TcpStreamSocket>::handle_event),
-                stream.as_mut() as *mut _ as *mut _,
+                raw_grouped.as_mut() as *mut _ as *mut _,
             )
         })?;
+
+        Box::leak(raw_grouped);
 
         // SAFETY: The `vtable` matches the `data` pointer type.
         Connector::new(unsafe { RawTcpStream::new(Box::into_raw(stream).cast(), stream_vtable()) })
@@ -428,11 +495,16 @@ impl SocketGroupInner {
     /// This method is called from the [`Grouped<T: AsRawSock>::drop()`] method when a
     /// [`TcpListener`] or [`TcpStream`] (via [`RawTcpListener`] or [`RawTcpStream`], respectively)
     /// group member is dropped. It is not necessary to manually call this method.
-    fn remove<T>(&self, sock: &T) -> Result<()>
+    fn remove<T>(&self, sock: &T)
     where
         T: AsRawSock,
     {
-        to_result!(unsafe { spdk_sock_group_remove_sock(self.group, sock.as_raw_sock()) })
+        let raw_sock = sock.as_raw_sock();
+        let _raw_grouped =
+            unsafe { Box::from_raw(spdk_sock_get_user_ctx(raw_sock) as *mut RawGrouped) };
+
+        to_result!(unsafe { spdk_sock_group_remove_sock(self.group, raw_sock) })
+            .expect("socket removed");
     }
 }
 
