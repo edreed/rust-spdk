@@ -17,9 +17,13 @@ mod aio;
 mod bdev;
 #[cfg(feature = "bdev-module")]
 mod module;
+#[cfg(feature = "bdev-uring")]
+pub mod uring;
 
 #[cfg(feature = "bdev-aio")]
 pub use aio::Aio;
+#[cfg(feature = "bdev-uring")]
+pub use uring::{Builder as UringBuilder, Uring};
 
 #[cfg(feature = "bdev-module")]
 pub use bdev::{BDevBuilder, BDevImpl, BDevIo, BDevIoChannel, BDevIoChannelOps, BDevOps};

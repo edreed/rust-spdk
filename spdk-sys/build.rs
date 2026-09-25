@@ -12,7 +12,7 @@ use pkg_config::Library;
 use ternary_rs::if_else;
 
 use crate::{
-    AutotoolsOption::Disable,
+    AutotoolsOption::{Disable, With},
     BindgenOption::{
         AllowFunction, AllowType, AllowVar, BlockType, ConstifiedEnumModule, OpaqueType,
         RustifiedEnum, RustifiedNonExhaustiveEnum,
@@ -248,7 +248,7 @@ impl<'a> Feature<'a> {
 }
 
 /// An array of all features supported by the `spdk-sys` crate.
-const ALL_FEATURES: [Feature; 11] = [
+const ALL_FEATURES: [Feature; 12] = [
     Feature::new(
         "CARGO_FEATURE_BASE",
         [
@@ -318,6 +318,15 @@ const ALL_FEATURES: [Feature; 11] = [
         [].as_slice(),
         [].as_slice(),
         [].as_slice(),
+    ),
+    Feature::new(
+        "CARGO_FEATURE_BDEV_URING",
+        [With("uring", None)].as_slice(),
+        ["spdk_bdev_uring"].as_slice(),
+        ["cargo:rustc-link-lib=static=uring"].as_slice(),
+        ["/usr/lib64"].as_slice(),
+        [].as_slice(),
+        [AllowFunction(r"\w+_uring_\w+"), AllowType(r"\w+_uring_\w+")].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_JSON",

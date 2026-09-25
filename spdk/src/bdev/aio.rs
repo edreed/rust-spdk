@@ -22,6 +22,7 @@ use crate::{
 /// A Linux AIO-based BDev providing block layer access to a backing file or block device.
 ///
 /// # Examples
+///
 /// ```no_run
 #[doc = include_str!("../../examples/bdev_aio.rs")]
 /// ```

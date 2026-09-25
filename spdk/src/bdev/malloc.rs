@@ -73,9 +73,6 @@ impl Builder {
     /// The returned [`Device<Malloc>`] instance owns the underlying `spdk_bdev`
     /// pointer and will destroy it when dropped. See [`Device<T>`] for a detailed
     /// discussion of ownership semantics and requirements.
-    ///
-    /// [`Device<Malloc>::destroy`]: method@crate::block::Device<Malloc>::destroy
-    /// [`task::yield_now`]: function@crate::task::yield_now
     pub fn build(self) -> Result<Device<Malloc>> {
         let mut malloc = null_mut();
 

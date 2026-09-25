@@ -19,6 +19,10 @@
 #include "bdev/malloc/bdev_malloc.h"
 #endif
 
+#if defined(CARGO_FEATURE_BDEV_URING)
+#include "bdev/uring/bdev_uring.h"
+#endif
+
 #if defined(CARGO_FEATURE_JSON)
 #include "spdk/json.h"
 #endif
