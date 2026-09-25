@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     future::Future,
+    marker::PhantomData,
     mem::ManuallyDrop,
     pin::Pin,
     sync::Arc,
@@ -152,29 +153,30 @@ pub(crate) const fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVT
 }
 
 /// Orchestrates the execution of a [`Future`] on another [`Reactor`] or [`Thread`].
-pub(crate) struct RemoteTask<E, F, T>
+pub(crate) struct RemoteTask<'a, E, F, R>
 where
     E: Executor + 'static,
-    F: Future<Output = T> + 'static,
-    T: Send + 'static,
+    F: Future<Output = R> + 'a,
+    R: Send + 'static,
 {
     executor: Option<E>,
-    result: Mutex<ResultState<T>>,
+    result: Mutex<ResultState<R>>,
     future: RefCell<F>,
+    _marker: PhantomData<&'a F>,
 }
 
-unsafe impl<E, F, T> Send for RemoteTask<E, F, T>
+unsafe impl<'a, E, F, R> Send for RemoteTask<'a, E, F, R>
 where
     E: Executor + 'static,
-    F: Future<Output = T> + 'static,
-    T: Send + 'static,
+    F: Future<Output = R> + 'a,
+    R: Send + 'static,
 {
 }
 
-impl<F, T> RemoteTask<Thread, F, T>
+impl<'a, F, R> RemoteTask<'a, Thread, F, R>
 where
-    F: Future<Output = T> + 'static,
-    T: Send + 'static,
+    F: Future<Output = R> + 'a,
+    R: Send + 'static,
 {
     /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Thread`].
     pub(crate) fn with_future(executor: Option<Thread>, fut: F) -> Arc<Self> {
@@ -182,14 +184,15 @@ where
             executor,
             result: Mutex::new(ResultState::Empty),
             future: RefCell::new(fut),
+            _marker: PhantomData,
         })
     }
 }
 
-impl<F, T> TaskBase for RemoteTask<Thread, F, T>
+impl<'a, F, R> TaskBase for RemoteTask<'a, Thread, F, R>
 where
-    F: Future<Output = T> + 'static,
-    T: Send + 'static,
+    F: Future<Output = R> + 'a,
+    R: Send + 'static,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor
@@ -199,10 +202,10 @@ where
     }
 }
 
-impl<F, T> RemoteTask<Reactor, F, T>
+impl<'a, F, R> RemoteTask<'a, Reactor, F, R>
 where
-    T: Send + 'static,
-    F: Future<Output = T> + 'static,
+    R: Send + 'static,
+    F: Future<Output = R> + 'a,
 {
     /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Reactor`].
     pub(crate) fn with_future(executor: Reactor, fut: F) -> Arc<Self> {
@@ -210,28 +213,29 @@ where
             executor: Some(executor),
             result: Mutex::new(ResultState::Empty),
             future: RefCell::new(fut),
+            _marker: PhantomData,
         })
     }
 }
 
-impl<F, T> TaskBase for RemoteTask<Reactor, F, T>
+impl<'a, F, R> TaskBase for RemoteTask<'a, Reactor, F, R>
 where
-    T: Send + 'static,
-    F: Future<Output = T> + 'static,
+    R: Send + 'static,
+    F: Future<Output = R> + 'a,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor.unwrap()
     }
 }
 
-impl<E, F, T> ArcTask for RemoteTask<E, F, T>
+impl<'a, E, F, R> ArcTask for RemoteTask<'a, E, F, R>
 where
     E: Executor + 'static,
-    T: Send + 'static,
-    F: Future<Output = T> + 'static,
-    RemoteTask<E, F, T>: TaskBase,
+    R: Send + 'static,
+    F: Future<Output = R> + 'a,
+    RemoteTask<'a, E, F, R>: TaskBase,
 {
-    type Output = T;
+    type Output = R;
 
     fn run(arc_self: &Arc<Self>) -> bool {
         match arc_self.future.try_borrow_mut() {
@@ -273,17 +277,17 @@ where
 ///
 /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
 /// may not be `Send` once started.
-pub(crate) fn spawn_on_thread<G, F, T>(thread: Thread, fut_gen: G) -> JoinHandle<T>
+pub(crate) fn spawn_on_thread<'a, G, F, R>(thread: Thread, fut_gen: G) -> JoinHandle<'a, F, R>
 where
-    G: FnOnce() -> F + Send + 'static,
-    F: Future<Output = T> + 'static,
-    T: Send + 'static,
+    G: FnOnce() -> F + Send + 'a,
+    F: Future<Output = R> + 'a,
+    R: Send + 'static,
 {
-    let task = RemoteTask::<Thread, F, T>::with_future(Some(thread), fut_gen());
+    let task = RemoteTask::<'a, Thread, F, R>::with_future(Some(thread), fut_gen());
 
     ArcTask::schedule_by_ref(&task);
 
-    task.into()
+    JoinHandle::from_remote_task(task)
 }
 
 /// Schedules a new asynchronous task to be executed on the given [`Reactor`] and returns a
@@ -291,15 +295,15 @@ where
 ///
 /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
 /// may not be `Send` once started.
-pub(crate) fn spawn_on_reactor<G, F, T>(reactor: Reactor, fut_gen: G) -> JoinHandle<T>
+pub(crate) fn spawn_on_reactor<'a, G, F, R>(reactor: Reactor, fut_gen: G) -> JoinHandle<'a, F, R>
 where
-    G: FnOnce() -> F + Send + 'static,
-    F: Future<Output = T> + 'static,
-    T: Send + 'static,
+    G: FnOnce() -> F + Send + 'a,
+    F: Future<Output = R> + 'a,
+    R: Send + 'static,
 {
-    let task = RemoteTask::<Reactor, F, T>::with_future(reactor, fut_gen());
+    let task = RemoteTask::<'a, Reactor, F, R>::with_future(reactor, fut_gen());
 
     ArcTask::schedule_by_ref(&task);
 
-    task.into()
+    JoinHandle::from_remote_task(task)
 }

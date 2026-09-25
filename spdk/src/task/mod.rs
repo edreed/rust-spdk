@@ -83,11 +83,11 @@ pub(crate) trait Executor {
     /// Schedules a task for execution on this executor.
     fn schedule<F>(&self, f: F)
     where
-        F: FnOnce() + 'static;
+        F: FnOnce();
 }
 
 /// A trait defining the base interface for a task.
-pub(crate) trait TaskBase: Send + 'static {
+pub(crate) trait TaskBase: Send {
     /// Returns the executor on which this task should be executed.
     fn executor(&self) -> impl Executor + 'static;
 }

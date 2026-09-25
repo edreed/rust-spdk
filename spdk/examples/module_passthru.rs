@@ -141,11 +141,11 @@ async fn main() {
 
     // Create the Passthru block device.
     let passthru = PassthruRs::try_new(malloc.borrow(), malloc_desc).unwrap();
-    let passthru_desc = passthru.open(true).await.unwrap();
 
     let devname = passthru.name().to_string_lossy().to_string();
 
-    thread::spawn_local(async move {
+    thread::spawn_local(async {
+        let passthru_desc = passthru.open(true).await.unwrap();
         let mut io_chan = passthru_desc.io_channel().unwrap();
         let layout = passthru_desc.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);

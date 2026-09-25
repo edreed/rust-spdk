@@ -1,5 +1,6 @@
 use std::{
     future::Future,
+    marker::PhantomData,
     rc::Rc,
     sync::Arc,
     task::{Context, Poll},
@@ -17,14 +18,14 @@ use crate::task::{
 /// [`RawJoinHandle`] object. The vtable is used to construct a [`RawJoinHandle`] that is embedded
 /// in a [`JoinHandle`]. The vtable is used by `JoinHandle` to orchestrate receiving the result of
 /// an asynchronous operation.
-pub(crate) struct RawJoinHandleVTable<T>
+pub(crate) struct RawJoinHandleVTable<R>
 where
-    T: 'static,
+    R: 'static,
 {
     /// This function is called when a [`JoinHandle`] is polled through its [`Future`] trait
     /// implementation. It returns a [`Poll<T>`] value indicating whether the task has completed
     /// and, if so, the result of the task.
-    pub(crate) poll_result: unsafe fn(*const (), &mut Context<'_>) -> Poll<T>,
+    pub(crate) poll_result: unsafe fn(*const (), &mut Context<'_>) -> Poll<R>,
 
     /// This function is called when a [`JoinHandle`] is dropped. It should perform any necessary
     /// cleanup for the task.
@@ -32,11 +33,11 @@ where
 }
 
 /// A raw handle to a task that can be used to await the result of the task.
-pub(crate) struct RawJoinHandle<T>
+pub(crate) struct RawJoinHandle<R>
 where
-    T: 'static,
+    R: 'static,
 {
-    vtable: &'static RawJoinHandleVTable<T>,
+    vtable: &'static RawJoinHandleVTable<R>,
     data: *mut (),
 }
 
@@ -46,67 +47,69 @@ where
 /// it or obtain its result.
 ///
 /// A [`JoinHandle`] is created when a task is spawned.
-pub struct JoinHandle<T>
+pub struct JoinHandle<'a, F, R>
 where
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
-    raw: RawJoinHandle<T>,
+    raw: RawJoinHandle<R>,
+    _task: PhantomData<&'a F>,
 }
 
-impl<T> JoinHandle<T>
+impl<'a, F, R> JoinHandle<'a, F, R>
 where
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
     /// Creates a new `JoinHandle` with the specified `data` pointer and `vtable`.
-    pub(crate) const unsafe fn new(data: *mut (), vtable: &'static RawJoinHandleVTable<T>) -> Self {
+    const unsafe fn new(data: *mut (), vtable: &'static RawJoinHandleVTable<R>) -> Self {
         Self {
             raw: RawJoinHandle { vtable, data },
+            _task: PhantomData,
         }
+    }
+
+    /// Creates a `JoinHandle` from a local task reference counted by `Rc`.
+    pub(crate) fn from_local_task<T>(rc: Rc<T>) -> Self
+    where
+        T: RcTask<Output = R>,
+    {
+        let vtable = local_task::join_handle_vtable::<T>();
+        let data = Rc::into_raw(rc).cast_mut() as *mut _;
+
+        unsafe { Self::new(data, vtable) }
+    }
+
+    /// Creates a `JoinHandle` from a remote task reference counted by `Arc`.
+    pub(crate) fn from_remote_task<T>(arc: Arc<T>) -> Self
+    where
+        T: ArcTask<Output = R>,
+    {
+        let vtable = remote_task::join_handle_vtable::<T>();
+        let data = Arc::into_raw(arc).cast_mut() as *mut _;
+
+        unsafe { Self::new(data, vtable) }
     }
 }
 
-impl<T> Future for JoinHandle<T>
+impl<'a, F, R> Future for JoinHandle<'a, F, R>
 where
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
-    type Output = T;
+    type Output = R;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         unsafe { (self.raw.vtable.poll_result)(self.raw.data, cx) }
     }
 }
 
-impl<T> Drop for JoinHandle<T>
+impl<'a, F, R> Drop for JoinHandle<'a, F, R>
 where
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
     fn drop(&mut self) {
         unsafe { (self.raw.vtable.drop)(self.raw.data) }
-    }
-}
-
-impl<T, U> From<Rc<T>> for JoinHandle<U>
-where
-    T: RcTask<Output = U> + 'static,
-    U: 'static,
-{
-    fn from(rc: Rc<T>) -> Self {
-        let vtable = local_task::join_handle_vtable::<T>();
-        let data = Rc::into_raw(rc).cast_mut() as *mut _;
-
-        unsafe { Self::new(data, vtable) }
-    }
-}
-
-impl<T, U> From<Arc<T>> for JoinHandle<U>
-where
-    T: ArcTask<Output = U> + 'static,
-    U: Send + 'static,
-{
-    fn from(arc: Arc<T>) -> Self {
-        let vtable = remote_task::join_handle_vtable::<T>();
-        let data = Arc::into_raw(arc).cast_mut() as *mut _;
-
-        unsafe { Self::new(data, vtable) }
     }
 }

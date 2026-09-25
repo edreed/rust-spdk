@@ -107,12 +107,9 @@ impl Reactor {
 
     pub fn send_event<F>(&self, f: F) -> Result<()>
     where
-        F: FnOnce() + 'static,
+        F: FnOnce(),
     {
-        unsafe extern "C" fn handle_event<F: FnOnce() + 'static>(
-            arg1: *mut c_void,
-            _arg2: *mut c_void,
-        ) {
+        unsafe extern "C" fn handle_event<F: FnOnce()>(arg1: *mut c_void, _arg2: *mut c_void) {
             let f = unsafe { Box::from_raw(arg1.cast::<F>()) };
 
             f();
@@ -143,11 +140,11 @@ impl Reactor {
     ///
     /// The indirection of `fut_gen` instead of receiving a `Future` directly
     /// allows for futures that may not be `Send` once started.
-    pub fn spawn<G, F, T>(&self, fut_gen: G) -> JoinHandle<T>
+    pub fn spawn<'a, G, F, R>(&self, fut_gen: G) -> JoinHandle<'a, F, R>
     where
-        G: FnOnce() -> F + Send + 'static,
-        F: Future<Output = T> + 'static,
-        T: Send + 'static,
+        G: FnOnce() -> F + Send + 'a,
+        F: Future<Output = R> + 'a,
+        R: Send + 'static,
     {
         task::spawn_on_reactor(*self, fut_gen)
     }
@@ -160,7 +157,7 @@ impl Executor for Reactor {
 
     fn schedule<F>(&self, f: F)
     where
-        F: FnOnce() + 'static,
+        F: FnOnce(),
     {
         self.send_event(f).expect("send event");
     }
@@ -168,10 +165,10 @@ impl Executor for Reactor {
 
 /// Spawns a new asynchronous task to be executed on the current SPDK reactor and
 /// returns a [`JoinHandle`] to await results.
-pub fn spawn_local<F, T>(fut: F) -> JoinHandle<T>
+pub fn spawn_local<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
-    F: Future<Output = T> + 'static,
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
     task::spawn_on_current_reactor(fut)
 }

@@ -24,12 +24,11 @@ async fn main() {
         .unwrap();
     let devname = malloc.name().to_string_lossy().to_string();
 
-    // Open the underlying block device and spawn an asynchronous task to scope
-    // the lifetime of the returned descriptor and I/O channel. These must
-    // be dropped before the Malloc block device can be destroyed.
-    let desc = malloc.open(true).await.unwrap();
-
-    thread::spawn_local(async move {
+    thread::spawn_local(async {
+        // Open the underlying block device in a separate asynchronous task to scope the lifetime of
+        // the descriptor and I/O channel. These must be dropped before the Malloc block device can
+        // be destroyed.
+        let desc = malloc.open(true).await.unwrap();
         let mut io_chan = desc.io_channel().unwrap();
         let layout = desc.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
