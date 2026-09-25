@@ -4,46 +4,42 @@ use std::{
     io::{Read, Write},
 };
 
-use spdk::{bdev, dma, thread};
+use spdk::{bdev::uring, dma, thread};
 
-const BDEV_NAME: &CStr = c"Aio0";
-const FILENAME: &str = "/tmp/aio0.img";
+const BDEV_NAME: &CStr = c"Uring0";
+const FILENAME: &CStr = c"/tmp/uring0.img";
 const NUM_BLOCKS: u64 = 32768;
 const BLOCK_SIZE: u32 = 512;
 
 const DATA: &str = "Hello, World!";
 
 fn create_file() {
-    let aio_file = File::create(FILENAME).unwrap();
+    let uring_file = File::create(FILENAME.to_str().unwrap()).unwrap();
 
-    aio_file.set_len(NUM_BLOCKS * BLOCK_SIZE as u64).unwrap();
+    uring_file.set_len(NUM_BLOCKS * BLOCK_SIZE as u64).unwrap();
 }
 
 #[spdk::main]
 async fn main() {
-    // Create the backing file for the AIO block device.
+    // Create the backing file for the io_uring block device.
     create_file();
 
-    // Create a new AIO block device.
-    let aio = bdev::Aio::new(
-        BDEV_NAME,
-        FILENAME,
-        Some(BLOCK_SIZE),
-        false,
-        false,
-        None,
-        false,
-    )
-    .unwrap()
-    .into_owned()
-    .unwrap();
+    // Create a new io_uring block device.
+    let uring = uring::Builder::new()
+        .with_name(BDEV_NAME)
+        .with_filename(FILENAME)
+        .with_block_size(BLOCK_SIZE)
+        .build()
+        .unwrap()
+        .into_owned()
+        .unwrap();
 
-    let devname = aio.name().to_string_lossy().to_string();
+    let devname = uring.name().to_string_lossy().to_string();
 
     // Open the underlying block device and spawn an asynchronous task to scope
     // the lifetime of the returned descriptor and I/O channel. These must
-    // be dropped before the AIO block device can be destroyed.
-    let desc = aio.open(true).await.unwrap();
+    // be dropped before the io_uring block device can be destroyed.
+    let desc = uring.open(true).await.unwrap();
 
     thread::spawn_local(async move {
         let mut io_chan = desc.io_channel().unwrap();
@@ -73,6 +69,6 @@ async fn main() {
     })
     .await;
 
-    // Destroy the AIO block device.
-    aio.destroy().await.unwrap();
+    // Destroy the io_uring block device.
+    uring.destroy().await.unwrap();
 }

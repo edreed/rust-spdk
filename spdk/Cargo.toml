@@ -35,6 +35,7 @@ bdev = ["spdk-sys/bdev"]
 bdev-aio = ["bdev", "spdk-sys/bdev-aio"]
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
+bdev-uring = ["bdev", "spdk-sys/bdev-uring"]
 json = ["spdk-sys/json"]
 net = ["spdk-sys/net"]
 nvme = ["spdk-sys/nvme"]
@@ -43,8 +44,16 @@ nvmf = ["bdev", "net", "nvme", "spdk-sys/nvmf"]
 scsi = ["spdk-sys/scsi"]
 
 [[example]]
+name = "bdev_aio"
+required-features = ["bdev-aio"]
+
+[[example]]
 name = "bdev_hello_world"
 required-features = ["bdev-malloc"]
+
+[[example]]
+name = "bdev_uring"
+required-features = ["bdev-uring"]
 
 [[example]]
 name = "module_echo"
