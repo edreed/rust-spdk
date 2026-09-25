@@ -1,13 +1,15 @@
 //! The implementation of a TCP socket server.
 use std::{
-    mem::ManuallyDrop,
+    mem::{ManuallyDrop, MaybeUninit},
     pin::Pin,
-    ptr,
     task::{Context, Poll, Waker},
 };
 
 use futures::{Stream, StreamExt};
-use spdk_sys::{spdk_sock, spdk_sock_accept, spdk_sock_close, spdk_sock_listen};
+use spdk_sys::{
+    spdk_sock, spdk_sock_accept, spdk_sock_close, spdk_sock_get_default_opts, spdk_sock_listen,
+    spdk_sock_opts,
+};
 
 use crate::{
     Result,
@@ -129,7 +131,17 @@ pub(crate) struct TcpListenerSocket {
 impl TcpListenerSocket {
     /// Creates a new [`TcpListenerSocket`] bound to the specified socket address.
     pub(crate) fn bind(addr: SocketAddr) -> Result<Self> {
-        let sock = unsafe { spdk_sock_listen(addr.ip().as_ptr(), addr.port() as i32, ptr::null()) };
+        let mut opts = MaybeUninit::<spdk_sock_opts>::uninit();
+
+        unsafe { spdk_sock_get_default_opts(opts.as_mut_ptr()) };
+
+        let sock = unsafe {
+            spdk_sock_listen(
+                addr.ip().as_ptr(),
+                addr.port() as i32,
+                &mut opts.assume_init(),
+            )
+        };
 
         if !sock.is_null() {
             return Ok(Self { sock, waker: None });

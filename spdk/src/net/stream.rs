@@ -11,7 +11,7 @@ use std::{
 
 use futures::{AsyncRead, AsyncWrite};
 use spdk_sys::{
-    iovec as IoVec, spdk_sock, spdk_sock_close, spdk_sock_connect_async, spdk_sock_flush,
+    iovec as IoVec, spdk_sock, spdk_sock_close, spdk_sock_connect, spdk_sock_flush,
     spdk_sock_get_default_opts, spdk_sock_is_connected, spdk_sock_opts, spdk_sock_readv,
     spdk_sock_recv, spdk_sock_writev,
 };
@@ -68,7 +68,7 @@ impl Future for Connector {
 /// The internal socket implementation for a [`TcpStream`].
 #[derive(Debug)]
 pub(crate) struct TcpStreamSocket {
-    /// A pointer to an `spdk_sock` returned by the [`spdk_sock_connect_async`] or [`spdk_sock_accept`] functions.
+    /// A pointer to an `spdk_sock` returned by the [`spdk_sock_connect`] or [`spdk_sock_accept`] functions.
     ///
     /// [`spdk_sock_accept`]: spdk_sys::spdk_sock_accept
     sock: *mut spdk_sock,
@@ -82,7 +82,7 @@ pub(crate) struct TcpStreamSocket {
 
 impl TcpStreamSocket {
     /// Creates a new `TcpStreamSocket` instance from an `spdk_sock` returned by the
-    /// [`spdk_sock_connect_async`] or [`spdk_sock_accept`] functions.
+    /// [`spdk_sock_connect`] or [`spdk_sock_accept`] functions.
     ///
     /// [`spdk_sock_accept`]: spdk_sys::spdk_sock_accept
     pub(crate) fn new(sock: *mut spdk_sock) -> Self {
@@ -118,10 +118,9 @@ impl TcpStreamSocket {
         });
 
         this.sock = unsafe {
-            spdk_sock_connect_async(
+            spdk_sock_connect(
                 addr.ip().as_ptr(),
                 addr.port().into(),
-                ptr::null_mut(),
                 opts as *const _ as *mut _,
                 Some(Self::connect_complete),
                 this as *mut _ as *mut _,

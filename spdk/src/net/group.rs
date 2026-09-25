@@ -3,7 +3,7 @@
 //! An SPDK socket group provides a more efficient polling mechanism for multiple sockets than
 //! creating separate pollers for each.
 use std::{
-    mem::{MaybeUninit, transmute},
+    mem::{MaybeUninit, offset_of, transmute},
     os::raw::c_void,
     pin::Pin,
     ptr::null_mut,
@@ -14,7 +14,8 @@ use std::{
 use futures::task::noop_waker_ref;
 use spdk_sys::{
     spdk_sock, spdk_sock_group, spdk_sock_group_add_sock, spdk_sock_group_close,
-    spdk_sock_group_create, spdk_sock_group_poll, spdk_sock_group_remove_sock, spdk_sock_opts,
+    spdk_sock_group_create, spdk_sock_group_opts, spdk_sock_group_poll,
+    spdk_sock_group_remove_sock, spdk_sock_opts,
 };
 
 use crate::{
@@ -47,11 +48,15 @@ where
     }
 }
 
+/// A function that handles a raw event notification from a socket group.
+type RawEventHandler = unsafe fn(*const ());
+
 /// A member of a socket group.
 struct Grouped<T>
 where
     T: SocketGroupEvent,
 {
+    raw_handle_event: RawEventHandler,
     group: Rc<Poller<SocketGroupInner>>,
     sock: T,
 }
@@ -62,7 +67,11 @@ where
 {
     /// Creates a new instance of a socket group member.
     fn new(group: Rc<Poller<SocketGroupInner>>, sock: T) -> Box<Self> {
-        Box::new(Self { group, sock })
+        Box::new(Self {
+            raw_handle_event: Self::raw_handle_event,
+            group,
+            sock,
+        })
     }
 }
 
@@ -77,6 +86,7 @@ where
     {
         let mut this = Box::new_uninit();
         let this_ref = this.write(Grouped {
+            raw_handle_event: Self::raw_handle_event,
             group,
             sock: MaybeUninit::uninit(),
         });
@@ -87,15 +97,23 @@ where
         unsafe { transmute(this) }
     }
 
-    /// Handles an event notification from the socket group.
-    unsafe extern "C" fn handle_event(
-        arg: *mut c_void,
-        _group: *mut spdk_sock_group,
-        _sock: *mut spdk_sock,
-    ) {
-        let grouped = unsafe { &mut *(arg as *mut Grouped<T>) };
+    /// Handles a raw event notification from a socket group.
+    unsafe fn raw_handle_event(data: *const ()) {
+        assert!(
+            !data.is_null(),
+            "raw_handle_event called with null data pointer"
+        );
 
-        unsafe { Pin::new_unchecked(&mut grouped.sock) }.handle_event();
+        // The `data` parameter is a pointer to the `raw_handle_event` function pointer field of a
+        // `Grouped<T>` instance. We need to calculate the offset of the `raw_handle_event` field
+        // within the `Grouped<T>` struct to get a reference to the start of the struct.
+        let this = unsafe {
+            &mut *(data.byte_offset(-(offset_of!(Self, raw_handle_event) as isize)) as *mut Self)
+        };
+
+        // SAFETY: The `this` pointer is valid and points to a `Grouped<T>` instance allocated on
+        // the heap.
+        unsafe { Pin::new_unchecked(&mut this.sock).handle_event() };
     }
 }
 
@@ -104,10 +122,7 @@ where
     T: SocketGroupEvent,
 {
     fn drop(&mut self) {
-        self.group
-            .polled()
-            .remove(&self.sock)
-            .expect("socket removed");
+        self.group.polled().remove(&self.sock);
     }
 }
 
@@ -349,8 +364,28 @@ impl SocketGroupInner {
     /// Creates a new [`SocketGroupInner`] instance, initializing it in-place.
     fn new_in_place(mut this: Pin<&mut MaybeUninit<Self>>) {
         let this = this.write(Self { group: null_mut() });
+        let opts = spdk_sock_group_opts {
+            size: size_of::<spdk_sock_group_opts>(),
+            ctx: this as *mut _ as *mut _,
+            rx_cb: Some(Self::handle_event),
+        };
 
-        this.group = unsafe { spdk_sock_group_create(this as *mut _ as *mut _) };
+        this.group = unsafe { spdk_sock_group_create(&opts) };
+    }
+
+    /// A callback function that receives event notifications from a socket group.
+    unsafe extern "C" fn handle_event(
+        data: *mut c_void,
+        _group: *mut spdk_sock_group,
+        _sock: *mut spdk_sock,
+    ) {
+        // The `data` parameter is a pointer to the `raw_handle_event` function pointer field of a
+        // `Grouped<T>` instance.
+        let raw_handle_event = unsafe { *(data as *const RawEventHandler) };
+
+        // Invoke the `raw_handle_event` function pointer, which will call the `handle_event` method of
+        // the `Grouped<T>` instance to handle the event.
+        unsafe { raw_handle_event(data as *const ()) };
     }
 
     /// Creates a new [`TcpListener`] bound to the specified socket address and attached to this
@@ -368,8 +403,7 @@ impl SocketGroupInner {
             spdk_sock_group_add_sock(
                 this.polled().group,
                 listener.sock.as_raw_sock(),
-                Some(Grouped::<TcpListenerSocket>::handle_event),
-                listener.as_mut() as *mut _ as *mut _,
+                &mut listener.raw_handle_event as *mut _ as *mut _,
             )
         })?;
 
@@ -387,8 +421,7 @@ impl SocketGroupInner {
             spdk_sock_group_add_sock(
                 this.polled().group,
                 stream.sock.as_raw_sock(),
-                Some(Grouped::<TcpStreamSocket>::handle_event),
-                stream.as_mut() as *mut _ as *mut _,
+                &mut stream.raw_handle_event as *mut _ as *mut _,
             )
         })?;
 
@@ -413,8 +446,7 @@ impl SocketGroupInner {
             spdk_sock_group_add_sock(
                 this.polled().group,
                 stream.sock.as_raw_sock(),
-                Some(Grouped::<TcpStreamSocket>::handle_event),
-                stream.as_mut() as *mut _ as *mut _,
+                &mut stream.raw_handle_event as *mut _ as *mut _,
             )
         })?;
 
@@ -428,11 +460,12 @@ impl SocketGroupInner {
     /// This method is called from the [`Grouped<T: AsRawSock>::drop()`] method when a
     /// [`TcpListener`] or [`TcpStream`] (via [`RawTcpListener`] or [`RawTcpStream`], respectively)
     /// group member is dropped. It is not necessary to manually call this method.
-    fn remove<T>(&self, sock: &T) -> Result<()>
+    fn remove<T>(&self, sock: &T)
     where
         T: AsRawSock,
     {
         to_result!(unsafe { spdk_sock_group_remove_sock(self.group, sock.as_raw_sock()) })
+            .expect("socket removed");
     }
 }
 

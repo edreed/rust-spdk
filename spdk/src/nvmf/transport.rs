@@ -186,13 +186,6 @@ impl Builder {
         self
     }
 
-    /// Sets the I/O unit size.
-    pub fn with_io_unit_size(mut self, io_unit_size: u32) -> Self {
-        self.opts.io_unit_size = io_unit_size;
-
-        self
-    }
-
     /// Sets the maximum AQ depth.
     pub fn with_max_aq_depth(mut self, max_aq_depth: u32) -> Self {
         self.opts.max_aq_depth = max_aq_depth;
@@ -200,20 +193,16 @@ impl Builder {
         self
     }
 
-    /// Sets the number of shared buffers.
-    pub fn with_num_shared_buffers(mut self, num_shared_buffers: u32) -> Self {
-        self.opts.num_shared_buffers = num_shared_buffers;
-
-        self
-    }
-
     /// Sets the buffer cache size.
     pub fn with_iobuf_small_cache_size(mut self, iobuf_small_cache_size: u32) -> Self {
-        self.opts.__bindgen_anon_1.iobuf_small_cache_size = iobuf_small_cache_size;
+        self.opts.iobuf_small_cache_size = iobuf_small_cache_size;
 
         self
     }
 
+    /// Sets whether to insert or strip the [Data Integrity Field (DIF)].
+    ///
+    /// [Data Integrity Field (DIF)]: https://en.wikipedia.org/wiki/Data_Integrity_Field
     pub fn with_dif_insert_or_strip(mut self, dif_insert_or_strip: bool) -> Self {
         self.opts.dif_insert_or_strip = dif_insert_or_strip;
 
