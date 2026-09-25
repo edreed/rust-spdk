@@ -47,7 +47,9 @@ async fn handle_client(client: Accepted) -> spdk::Result<()> {
         .await
 }
 
-fn run_server(args: &'static Args) -> JoinHandle<spdk::Result<()>> {
+fn run_server<'a>(
+    args: &'a Args,
+) -> JoinHandle<'a, impl Future<Output = spdk::Result<()>>, spdk::Result<()>> {
     thread::spawn_local(async move {
         let mut listener = TcpListener::bind(args.host.as_str()).await?;
 
@@ -62,7 +64,9 @@ fn run_server(args: &'static Args) -> JoinHandle<spdk::Result<()>> {
     })
 }
 
-fn run_client(args: &'static Args) -> JoinHandle<spdk::Result<()>> {
+fn run_client<'a>(
+    args: &'a Args,
+) -> JoinHandle<'a, impl Future<Output = spdk::Result<()>>, spdk::Result<()>> {
     thread::spawn_local(async move {
         println!("CLIENT: Connecting to {}", args.host);
 

@@ -15,7 +15,7 @@ async fn main() {
             let name = CString::new(format!("thread_{}", core.id())).unwrap();
             let t = Thread::new(name.as_c_str(), &core.into()).unwrap();
 
-            t.spawn(move || async move {
+            t.spawn(|| async {
                 time::sleep(Duration::from_secs(core.id() as u64)).await;
 
                 println!(

@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     future::Future,
+    marker::PhantomData,
     mem::ManuallyDrop,
     pin::Pin,
     rc::Rc,
@@ -154,29 +155,30 @@ pub(crate) const fn join_handle_vtable<J: RcTask>() -> &'static RawJoinHandleVTa
 }
 
 /// Orchestrates the execution of a [`Future`] on the current [`Reactor`] or [`Thread`].
-pub(crate) struct LocalTask<E, F, T>
+pub(crate) struct LocalTask<'a, E, F, T>
 where
     E: Executor + 'static,
-    F: Future<Output = T> + 'static,
+    F: Future<Output = T> + 'a,
     T: 'static,
 {
     executor: Option<E>,
     result: RefCell<ResultState<T>>,
     future: RefCell<F>,
+    _marker: PhantomData<&'a F>,
 }
 
-unsafe impl<E, F, T> Send for LocalTask<E, F, T>
+unsafe impl<'a, E, F, T> Send for LocalTask<'a, E, F, T>
 where
     E: Executor + 'static,
-    F: Future<Output = T> + 'static,
+    F: Future<Output = T> + 'a,
     T: 'static,
 {
 }
 
-impl<F, T> LocalTask<Thread, F, T>
+impl<'a, F, R> LocalTask<'a, Thread, F, R>
 where
-    F: Future<Output = T> + 'static,
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
     /// Constructs a new `LocalTask` from a [`Future`] to be scheduled on the current [`Thread`].
     pub(crate) fn with_future(fut: F) -> Rc<Self> {
@@ -184,14 +186,15 @@ where
             executor: Thread::try_current(),
             result: RefCell::new(ResultState::Empty),
             future: RefCell::new(fut),
+            _marker: PhantomData,
         })
     }
 }
 
-impl<F, T> TaskBase for LocalTask<Thread, F, T>
+impl<'a, F, R> TaskBase for LocalTask<'a, Thread, F, R>
 where
-    F: Future<Output = T> + 'static,
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor
@@ -201,10 +204,10 @@ where
     }
 }
 
-impl<F, T> LocalTask<Reactor, F, T>
+impl<'a, F, R> LocalTask<'a, Reactor, F, R>
 where
-    T: 'static,
-    F: Future<Output = T> + 'static,
+    R: 'static,
+    F: Future<Output = R> + 'a,
 {
     /// Constructs a new `LocalTask` from a [`Future`] to be scheduled on the current [`Reactor`].
     pub(crate) fn with_future(fut: F) -> Rc<Self> {
@@ -212,28 +215,29 @@ where
             executor: Some(Reactor::current()),
             result: RefCell::new(ResultState::Empty),
             future: RefCell::new(fut),
+            _marker: PhantomData,
         })
     }
 }
 
-impl<F, T> TaskBase for LocalTask<Reactor, F, T>
+impl<'a, F, R> TaskBase for LocalTask<'a, Reactor, F, R>
 where
-    T: 'static,
-    F: Future<Output = T> + 'static,
+    R: 'static,
+    F: Future<Output = R> + 'a,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor.unwrap()
     }
 }
 
-impl<E, F, T> RcTask for LocalTask<E, F, T>
+impl<'a, E, F, R> RcTask for LocalTask<'a, E, F, R>
 where
     E: Executor + 'static,
-    T: 'static,
-    F: Future<Output = T> + 'static,
-    LocalTask<E, F, T>: TaskBase,
+    R: 'static,
+    F: Future<Output = R> + 'a,
+    LocalTask<'a, E, F, R>: TaskBase,
 {
-    type Output = T;
+    type Output = R;
 
     fn run(rc_self: &Rc<Self>) -> bool {
         match rc_self.future.try_borrow_mut() {
@@ -272,28 +276,28 @@ where
 
 /// Schedules a new asynchronous task to be executed on the current [`Thread`] and returns a
 /// [`JoinHandle`] to await results.
-pub(crate) fn spawn_on_current_thread<F, T>(fut: F) -> JoinHandle<T>
+pub(crate) fn spawn_on_current_thread<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
-    F: Future<Output = T> + 'static,
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
-    let task = LocalTask::<Thread, F, T>::with_future(fut);
+    let task = LocalTask::<'a, Thread, F, R>::with_future(fut);
 
     RcTask::schedule_by_ref(&task);
 
-    task.into()
+    JoinHandle::from_local_task(task)
 }
 
 /// Schedules a new asynchronous task to be executed on the current [`Reactor`] and returns a
 /// [`JoinHandle`] to await results.
-pub(crate) fn spawn_on_current_reactor<F, T>(fut: F) -> JoinHandle<T>
+pub(crate) fn spawn_on_current_reactor<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
-    F: Future<Output = T> + 'static,
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
-    let task = LocalTask::<Reactor, F, T>::with_future(fut);
+    let task = LocalTask::<'a, Reactor, F, R>::with_future(fut);
 
     RcTask::schedule_by_ref(&task);
 
-    task.into()
+    JoinHandle::from_local_task(task)
 }

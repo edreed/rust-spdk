@@ -162,11 +162,9 @@ async fn main() {
 
     let echo = Echo::try_new(c"echo").unwrap();
 
-    let echo_writer = echo.borrow();
-
     let write_thread = Thread::new(c"write", &reactors[0].core().into()).unwrap();
-    let write_task = write_thread.spawn(move || async move {
-        let writer = echo_writer.open(true).await.unwrap();
+    let write_task = write_thread.spawn(|| async {
+        let writer = echo.open(true).await.unwrap();
         let mut writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
@@ -182,11 +180,9 @@ async fn main() {
         println!("Write complete.");
     });
 
-    let echo_reader = echo.borrow();
-
     let read_thread = Thread::new(c"read", &reactors[1].core().into()).unwrap();
-    let read_task = read_thread.spawn(move || async move {
-        let reader = echo_reader.open(true).await.unwrap();
+    let read_task = read_thread.spawn(|| async {
+        let reader = echo.open(true).await.unwrap();
         let mut reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);

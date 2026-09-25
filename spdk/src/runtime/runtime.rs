@@ -224,7 +224,7 @@ impl Runtime {
     where
         F: Future<Output = ()> + 'static,
     {
-        let task = LocalTask::<Thread, F, ()>::with_future(fut);
+        let task = LocalTask::<'_, Thread, F, ()>::with_future(fut);
         let ctx = Rc::into_raw(task).cast_mut();
 
         let res =
