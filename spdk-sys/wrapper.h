@@ -57,3 +57,14 @@
  */
 enum spdk_bdev_io_status spdk_bdev_io_get_status(struct spdk_bdev_io *bdev_io);
 #endif
+
+#if defined(CARGO_FEATURE_NET)
+/**
+ * Return the user context associated with a socket.
+ *
+ * @param sock A pointer to an `spdk_sock` structure.
+ *
+ * @return The user context associated with the socket.
+ */
+void* spdk_sock_get_user_ctx(struct spdk_sock *sock);
+#endif
