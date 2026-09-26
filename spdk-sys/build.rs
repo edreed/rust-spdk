@@ -378,7 +378,7 @@ const ALL_FEATURES: [Feature; 12] = [
         [].as_slice(),
         [
             AllowVar("g_spdk_.*"),
-            OpaqueType("spdk_nvmf_fabric_.*"),
+            OpaqueType("spdk_nvmf_(fabric_.*|discovery_log_page_entry)"),
             RustifiedNonExhaustiveEnum("spdk_nvmf_.*"),
         ]
         .as_slice(),

@@ -19,9 +19,9 @@ spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
 static_init = "1.0.4"
 ternary-rs = "1.0.0"
 libanl = { version = "0.1.0", path = "../libanl" }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 static_assertions = "1.1.0"
-bitflags = "2.13.1"
+bitflags = "2.13.2"
 
 [dev-dependencies]
 async-condvar-fair = { version = "1.0.1", features = ["parking_lot_0_12"] }
