@@ -35,8 +35,7 @@ async fn main() {
         false,
     )
     .unwrap()
-    .into_owned()
-    .unwrap();
+    .into_owned();
 
     let devname = aio.name().to_string_lossy().to_string();
 

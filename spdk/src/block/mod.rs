@@ -10,10 +10,10 @@ mod owned;
 
 pub use any::Any;
 pub use descriptor::Descriptor;
-pub use device::{Device, Devices, devices};
+pub use device::{AsRawBDev, Device, devices};
 pub use dif::{
     CheckFlag as DifCheckFlag, CheckType as DifCheckType, PiFormat as DifPiFormat, Type as DifType,
 };
 pub use io::{IoError, IoResult, IoType};
 pub use io_channel::IoChannel;
-pub use owned::{Owned, OwnedOps};
+pub use owned::{Owned, OwnedBy, OwnedOps};

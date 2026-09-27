@@ -20,8 +20,7 @@ async fn main() {
         .with_block_size(BLOCK_SIZE)
         .build()
         .unwrap()
-        .into_owned()
-        .unwrap();
+        .into_owned();
     let devname = malloc.name().to_string_lossy().to_string();
 
     thread::spawn_local(async {

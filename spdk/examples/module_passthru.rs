@@ -4,9 +4,10 @@ use std::{
     slice::{self},
 };
 
+use libc::EINVAL;
 use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps, malloc},
-    block::{Any, Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned},
+    block::{Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned, OwnedOps},
     dma::{self},
     errors::ENOTSUP,
     thread,
@@ -32,10 +33,10 @@ impl BDevIoChannelOps for PassthruRsChannel {
         match io.io_type() {
             IoType::Read => {
                 let num_blocks = io.num_blocks();
+                let block_size = io.device().logical_block_size() as u64;
                 let offset_blocks = io.offset_blocks();
 
-                io.allocate_buffers(num_blocks * io.device().logical_block_size() as u64)
-                    .await?;
+                io.allocate_buffers(num_blocks * block_size).await?;
                 self.ch
                     .read_vectored_blocks_at(io.buffers_mut(), offset_blocks, num_blocks)
                     .await
@@ -72,7 +73,6 @@ impl BDevIoChannelOps for PassthruRsChannel {
 }
 
 struct PassthruRs {
-    base: Device<Any>,
     desc: Descriptor,
 }
 
@@ -87,7 +87,7 @@ impl BDevOps for PassthruRs {
     }
 
     fn io_type_supported(&self, io_type: IoType) -> bool {
-        self.base.io_type_supported(io_type)
+        self.desc.device().io_type_supported(io_type)
     }
 
     fn new_io_channel(&mut self) -> spdk::Result<PassthruRsChannel> {
@@ -98,8 +98,13 @@ impl BDevOps for PassthruRs {
 }
 
 impl PassthruRs {
-    pub fn try_new(base: Device<Any>, desc: Descriptor) -> spdk::Result<Device<Owned>> {
-        let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy())).unwrap();
+    pub async fn try_new<T>(base: &Device<T>) -> spdk::Result<Device<Owned>>
+    where
+        T: OwnedOps,
+    {
+        let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy()))
+            .map_err(|_| EINVAL)?;
+        let desc = base.open(true).await?;
 
         PassthruRsModule::new_bdev_builder(
             name.as_c_str(),
@@ -116,7 +121,7 @@ impl PassthruRs {
             base.is_dif_head_of_metadata(),
             base.dif_check_flags(),
         )
-        .build_with_context(PassthruRs { base, desc })
+        .build_with_context(PassthruRs { desc })
     }
 }
 
@@ -135,12 +140,10 @@ async fn main() {
         .with_block_size(BLOCK_SIZE)
         .build()
         .unwrap()
-        .into_owned()
-        .unwrap();
-    let malloc_desc = malloc.open(true).await.unwrap();
+        .into_owned();
 
     // Create the Passthru block device.
-    let passthru = PassthruRs::try_new(malloc.borrow(), malloc_desc).unwrap();
+    let passthru = PassthruRs::try_new(&malloc).await.unwrap();
 
     let devname = passthru.name().to_string_lossy().to_string();
 

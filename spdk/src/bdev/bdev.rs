@@ -26,7 +26,8 @@ use ternary_rs::if_else;
 use crate::{
     Result, Uuid,
     block::{
-        Any, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType, Owned, OwnedOps,
+        AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType, Owned,
+        OwnedBy, OwnedOps,
     },
     errors::{EINVAL, ENOMEM, ENOTSUP, Errno},
     task::{Promise, Promissory},
@@ -209,10 +210,10 @@ where
     }
 
     /// Returns the block device associated with the I/O request.
-    pub fn device(&self) -> Device<Any> {
+    pub fn device(&self) -> Device<OwnedBy<'_, Self>> {
         // SAFETY: The block device associated with the I/O request is guaranteed to be non-null and
-        // valid.
-        unsafe { Device::<Any>::from_ptr_unchecked(self.io.as_ref().bdev) }
+        // valid for the lifetime of the I/O request.
+        unsafe { Device::with_owner(self, self.io.as_ref().bdev) }
     }
 
     /// Returns the buffers associated with the I/O request.
@@ -513,7 +514,7 @@ where
 
     /// Consumes the boxed instance and returns a [`Device<Owned>`] instance that owns the BDev.
     pub fn into_device(self: Box<Self>) -> Device<Owned> {
-        Device::new(OwnedImpl::new(self)).into_owned().unwrap()
+        Device::new(OwnedImpl::new(self)).into_owned()
     }
 
     /// Consumes the boxed BDev instance and returns a raw pointer to the BDev.
@@ -735,7 +736,7 @@ where
         }
 
         bdev.product_name = M::product_name().as_ptr() as *mut _;
-        bdev.module = self.module.as_ptr() as *mut _;
+        bdev.module = self.module.as_ptr();
         bdev.fn_table = BDevImpl::<C>::vtable() as *const _;
         bdev.write_cache = self.write_cache_present as i32;
         bdev.blocklen = self.block_size;
@@ -990,11 +991,13 @@ impl<T: BDevOps> OwnedImpl<T> {
     }
 }
 
-impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
-    fn as_ptr(&self) -> *mut spdk_bdev {
+impl<T: BDevOps> AsRawBDev for OwnedImpl<T> {
+    fn as_raw_bdev(&self) -> *mut spdk_bdev {
         addr_of!(self.0.bdev) as *mut _
     }
+}
 
+impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
     async fn destroy(self) -> Result<()> {
         // The BDev implementation's `destruct` method is invoked by the call to unregister the
         // device and will take care of dropping the box. We avoid dropping the box here to prevent
@@ -1006,7 +1009,11 @@ impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
                 let (cb_fn, cb_arg) = Promissory::callback_with_status(p);
 
                 unsafe {
-                    spdk_bdev_unregister(bdev.as_ptr(), Some(cb_fn), cb_arg.cast_mut() as *mut _);
+                    spdk_bdev_unregister(
+                        bdev.as_raw_bdev(),
+                        Some(cb_fn),
+                        cb_arg.cast_mut() as *mut _,
+                    );
                 }
 
                 Poll::Pending
@@ -1017,6 +1024,6 @@ impl<T: BDevOps> OwnedOps for OwnedImpl<T> {
 
 impl<T: BDevOps> From<Owned> for OwnedImpl<T> {
     fn from(value: Owned) -> Self {
-        Self(unsafe { Box::from_raw(value.as_ptr().cast()) })
+        Self(unsafe { Box::from_raw(value.as_raw_bdev().cast()) })
     }
 }

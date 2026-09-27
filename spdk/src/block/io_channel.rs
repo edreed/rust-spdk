@@ -22,14 +22,14 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    block::IoResult,
+    block::{IoResult, OwnedBy},
     errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
     thread::Thread,
     to_poll_pending_on_ok,
 };
 
-use super::{Any, Descriptor, Device, IoError};
+use super::{Descriptor, Device, IoError};
 
 #[cfg(feature = "nvmf")]
 use crate::nvme::NvmeStatus;
@@ -97,10 +97,10 @@ impl IoChannel {
     }
 
     /// Returns the block device associated with this [`IoChannel`].
-    pub fn device(&self) -> Device<Any> {
+    pub fn device(&self) -> Device<OwnedBy<'_, Self>> {
         // SAFETY: The descriptor associated with the I/O channel is guaranteed
-        // to be non-null and valid.
-        unsafe { Device::<Any>::from_ptr_unchecked(spdk_bdev_desc_get_bdev(self.desc.as_ptr())) }
+        // to be non-null and valid for the lifetime of the I/O channel.
+        unsafe { Device::with_owner(self, spdk_bdev_desc_get_bdev(self.desc.as_ptr())) }
     }
 
     /// Returns the raw [`spdk_bdev`] pointer associated with this [`IoChannel`].

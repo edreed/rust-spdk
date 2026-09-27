@@ -1,4 +1,4 @@
-use std::{ffi::CStr, fmt::Debug, future::Future};
+use std::{ffi::CStr, fmt::Debug, future::Future, marker::PhantomData};
 
 use spdk_sys::{
     spdk_bdev, spdk_bdev_module, spdk_bdev_module_examine_done, spdk_bdev_module_fini_done,
@@ -6,11 +6,48 @@ use spdk_sys::{
 };
 
 use crate::{
-    block::{Any, Device},
+    block::{Device, OwnedBy},
     thread::{self},
 };
 
 use super::{BDevBuilder, BDevOps};
+
+/// A type representing the examiner of block devices. It is used to limit the lifetime of borrowed
+/// block devices to the scope of the examination performed by [`Module::examine_config`] and
+/// [`Module::examine_disk`].
+pub struct Examiner<T>(PhantomData<&'static T>)
+where
+    T: ModuleOps + 'static;
+
+impl<T> Examiner<T>
+where
+    T: ModuleOps + 'static,
+{
+    /// Creates a new `Examiner` instance.
+    fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> Default for Examiner<T>
+where
+    T: ModuleOps + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Drop for Examiner<T>
+where
+    T: ModuleOps + 'static,
+{
+    fn drop(&mut self) {
+        unsafe {
+            spdk_bdev_module_examine_done(T::instance().as_ptr());
+        }
+    }
+}
 
 /// A trait implemented by the [`module`] attribute macro to provide access to the singleton
 /// [`Module`] instance.
@@ -57,7 +94,7 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
     /// synchronously.
     ///
     /// The default implementation claims no devices.
-    fn examine_config(&self, _bdev: Device<Any>) {}
+    fn examine_config<'a>(&self, _bdev: Device<OwnedBy<'a, Examiner<Self>>>) {}
 
     /// Examines the specified block device to determine whether it should be claimed by a Virtual
     /// BDev implemented by this module.
@@ -67,7 +104,10 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
     /// device in this method and the decision whether to claim can be made asynchronously.
     ///
     /// The default implementation claims no devices.
-    fn examine_disk(&self, _bdev: Device<Any>) -> impl std::future::Future<Output = ()> {
+    fn examine_disk<'a>(
+        &self,
+        _bdev: Device<OwnedBy<'a, Examiner<Self>>>,
+    ) -> impl Future<Output = ()> + 'a {
         async {}
     }
 
@@ -142,8 +182,8 @@ where
     }
 
     /// Returns a pointer to the underlying `spdk_bdev_module` structure.
-    pub(crate) fn as_ptr(&self) -> *const ::spdk_sys::spdk_bdev_module {
-        &self.module as *const _
+    pub(crate) fn as_ptr(&self) -> *mut spdk_bdev_module {
+        &self.module as *const _ as *mut _
     }
 
     /// Returns a reference to the module context.
@@ -157,7 +197,7 @@ where
             T::instance().ctx.init().await;
 
             unsafe {
-                spdk_bdev_module_init_done(T::instance().as_ptr() as *mut _);
+                spdk_bdev_module_init_done(T::instance().as_ptr());
             }
         });
 
@@ -190,9 +230,11 @@ where
     ///
     /// The default implementation claims no devices.
     unsafe extern "C" fn examine_config(bdev: *mut spdk_bdev) {
-        T::instance().ctx.examine_config(bdev.into());
+        let examiner = Examiner::new();
+        // SAFETY: The `bdev` pointer is guaranteed to be non-null and valid for the lifetime of the examiner.
+        let bdev = unsafe { Device::with_owner(&examiner, bdev) };
 
-        unsafe { spdk_bdev_module_examine_done(T::instance().as_ptr() as *mut _) }
+        T::instance().ctx.examine_config(bdev);
     }
 
     /// Examines the specified block device to determine whether it should be claimed by a Virtual
@@ -205,12 +247,12 @@ where
     ///
     /// The default implementation claims no devices.
     unsafe extern "C" fn examine_disk(bdev: *mut spdk_bdev) {
-        let bdev = bdev.into();
-
         thread::spawn_local_detached(async move {
-            T::instance().ctx.examine_disk(bdev).await;
+            let examiner = Examiner::new();
+            // SAFETY: The `bdev` pointer is guaranteed to be non-null and valid for the lifetime of the examiner.
+            let bdev = unsafe { Device::with_owner(&examiner, bdev) };
 
-            unsafe { spdk_bdev_module_examine_done(T::instance().as_ptr() as *mut _) }
+            T::instance().ctx.examine_disk(bdev).await;
         });
     }
 }

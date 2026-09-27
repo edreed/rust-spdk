@@ -5,7 +5,7 @@ use spdk_sys::{
     spdk_nvmf_subsystem_get_next_ns,
 };
 
-use crate::block::{self, Any};
+use crate::block::{Device, OwnedBy};
 
 use super::Subsystem;
 
@@ -32,12 +32,10 @@ impl Namespace {
     }
 
     /// Returns the block device backing the namespace.
-    pub fn device(&self) -> block::Device<Any> {
-        let bdev = unsafe { spdk_nvmf_ns_get_bdev(self.as_ptr()) };
-
-        assert!(!bdev.is_null());
-
-        block::Device::<Any>::from_ptr(bdev)
+    pub fn device(&self) -> Device<OwnedBy<'_, Self>> {
+        // SAFETY: The block device associated with this namespace is guaranteed to be non-null and
+        // valid lifetime of the namespace.
+        unsafe { Device::with_owner(self, spdk_nvmf_ns_get_bdev(self.as_ptr())) }
     }
 }
 

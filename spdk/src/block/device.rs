@@ -2,185 +2,72 @@ use std::{
     alloc::{Layout, LayoutError},
     ffi::CStr,
     fmt::{self, Debug, Formatter},
-    future::Future,
-    mem::{self},
     pin::Pin,
-    ptr::NonNull,
     task::{Context, Poll},
 };
 
-use futures::{FutureExt, Stream};
+use futures::Stream;
 use spdk_sys::{
     SPDK_ENV_NUMA_ID_ANY, spdk_bdev, spdk_bdev_first, spdk_bdev_get_block_size,
-    spdk_bdev_get_buf_align, spdk_bdev_get_by_name, spdk_bdev_get_dif_pi_format,
-    spdk_bdev_get_dif_type, spdk_bdev_get_md_size, spdk_bdev_get_name, spdk_bdev_get_num_blocks,
-    spdk_bdev_get_numa_id, spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
+    spdk_bdev_get_buf_align, spdk_bdev_get_dif_pi_format, spdk_bdev_get_dif_type,
+    spdk_bdev_get_md_size, spdk_bdev_get_name, spdk_bdev_get_num_blocks, spdk_bdev_get_numa_id,
+    spdk_bdev_get_optimal_io_boundary, spdk_bdev_get_physical_block_size,
     spdk_bdev_get_product_name, spdk_bdev_get_uuid, spdk_bdev_get_write_unit_size,
     spdk_bdev_has_write_cache, spdk_bdev_io_type_supported, spdk_bdev_is_dif_check_enabled,
     spdk_bdev_is_dif_head_of_md, spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
 };
 
-use crate::{
-    Result, Uuid,
-    block::{Any, DifCheckFlag, DifCheckType, DifPiFormat, DifType, Owned, OwnedOps},
-    errors::{ENODEV, EPERM},
-    thread,
+use crate::{Result, Uuid};
+
+use super::{
+    Any, Descriptor, DifCheckFlag, DifCheckType, DifPiFormat, DifType, IoType, Owned, OwnedBy,
+    OwnedOps,
 };
 
-use super::{Descriptor, IoType};
-
-/// Represents the ownership state of a [`Device`].
-enum OwnershipState<T: OwnedOps> {
-    Owned(T),
-    Borrowed(NonNull<spdk_bdev>),
-    None,
+/// A trait for block devices providing access to the raw `spdk_bdev` pointer.
+pub trait AsRawBDev {
+    /// Returns a raw pointer to the underlying `spdk_bdev` structure.
+    fn as_raw_bdev(&self) -> *mut spdk_bdev;
 }
-
-unsafe impl<T: OwnedOps> Send for OwnershipState<T> {}
 
 /// Represents a block device.
 ///
-/// `Device` wraps an `spdk_bdev` pointer and can be in one of three ownership states: owned,
-/// borrowed, or none.
+/// The type `T` determines how the `Device` manages the underlying `spdk_bdev` lifetime. If `T`
+/// implements [`OwnedOps`] it means that the `Device` is responsible for managing the lifetime of
+/// the underlying `spdk_bdev`. The [`Device::destroy()`] method must be used to explicitly destroy
+/// the device when it is no longer needed. `Device` instances that own the lifetime of the
+/// underlying `spdk_bdev` can be shared with other SPDK threads by reference safely and are
+/// therefore `Sync` as long as `T` is also `Sync`. Since the `Device::destroy()` method must be
+/// called on the thread on which the block device was created, it is not `Send`.
 ///
-/// An owned device owns the underlying `spdk_bdev` pointer and will destroy it when dropped. The
-/// caller must ensure that the drop occurs in the same thread that created the device. It must also
-/// occur as part of thread event handling by explicitly calling [`task::yield_now`] before dropping
-/// the device. However, it is easiest and safest to explicitly call [`Device<T>::destroy`] on the
-/// device rather than let it drop naturally.
-///
-/// A borrowed device borrows the underlying `spdk_bdev` pointer. Dropping a borrowed device has no
-/// effect on the underlying `spdk_bdev` pointer.
-///
-/// A device with no ownership state can only be safely queried for ownership state or dropped. Any
-/// other operation will panic. A device will be left in this state after the [`Device<T>::take`]
-/// method is called.
-///
-/// [`Device<T>::destroy`]: method@Device<T>::destroy
-/// [`Device<T>::take`]: method@Device<T>::take
-/// [`task::yield_now`]: function@crate::task::yield_now
-pub struct Device<T: OwnedOps>(OwnershipState<T>);
+/// If `T` does not implement [`OwnedOps`] (e.g. [`OwnedBy`] and [`Any`]), the `Device` does not
+/// manage the lifetime of the underlying `spdk_bdev` and may be shared by reference or by value
+/// across threads safely. It is both `Send` and `Sync` in this case as long as `T` is also `Send`
+/// and `Sync`.
+pub struct Device<T>(T)
+where
+    T: AsRawBDev;
 
-unsafe impl<T: OwnedOps> Send for Device<T> {}
-unsafe impl<T: OwnedOps> Sync for Device<T> {}
+unsafe impl<T> Sync for Device<T> where T: AsRawBDev + Sync {}
 
-impl<T: OwnedOps> Device<T> {
+impl<T> Device<T>
+where
+    T: AsRawBDev,
+{
     /// Get an owned [`Device`] for a block device.
-    pub fn new(dev: T) -> Self {
-        Self(OwnershipState::Owned(dev))
+    pub(crate) fn new(dev: T) -> Self {
+        Self(dev)
     }
 
-    /// Get a borrowed [`Device`] by its name.
-    ///
-    /// # Returns
-    ///
-    /// This function returns [`None`] if no block device with the given name exists.
-    pub fn from_name(name: &CStr) -> Option<Device<Any>> {
-        let bdev = unsafe { spdk_bdev_get_by_name(name.as_ptr()) };
-
-        NonNull::new(bdev).map(|b| Device::<Any>(OwnershipState::Borrowed(b)))
-    }
-
-    /// Attempt to get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Some(dev)` if `bdev` is non-null and `None` otherwise.
-    pub fn try_from_ptr(bdev: *mut spdk_bdev) -> Option<Device<Any>> {
-        NonNull::new(bdev).map(|b| Device::<Any>(OwnershipState::Borrowed(b)))
-    }
-
-    /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if `bdev` is null.
-    pub fn from_ptr(bdev: *mut spdk_bdev) -> Device<Any> {
-        Self::try_from_ptr(bdev).expect("device pointer must not be null")
-    }
-
-    /// Get a borrowed [`Device`] for a raw `spdk_bdev` pointer.
-    ///
-    /// # Safety
-    ///
-    /// `bdev` must be non-null.
-    pub unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Device<Any> {
-        Device::<Any>(OwnershipState::Borrowed(unsafe {
-            NonNull::new_unchecked(bdev)
-        }))
+    /// Get an `Any` instance representing this block device.
+    pub async fn as_any(&self) -> Result<Any> {
+        // SAFETY: The `spdk_bdev` pointer returned by `as_raw_device()`is non-null and valid.
+        unsafe { Any::from_ptr_unchecked(self.0.as_raw_bdev()).await }
     }
 
     /// Get a pointer to the underlying `spdk_bdev` struct.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if this device has no ownership state.
     pub fn as_ptr(&self) -> *mut spdk_bdev {
-        match &self.0 {
-            OwnershipState::Owned(dev) => dev.as_ptr(),
-            OwnershipState::Borrowed(bdev) => bdev.as_ptr(),
-            _ => panic!("no device"),
-        }
-    }
-
-    /// If this [`Device`] currently owns the underlying `spdk_bdev` pointer, return a
-    /// [`Device<Owned>`] instance assuming ownership of the underlying `spdk_bdev` pointer.
-    /// Otherwise, return `None`. This `Device` is consumed in the process.
-    pub fn into_owned(mut self) -> Option<Device<Owned>> {
-        match mem::replace(&mut self.0, OwnershipState::None) {
-            // SAFETY: We have already checked that the device is owned, so it is safe to call `Owned::new`.
-            OwnershipState::Owned(dev) => Some(unsafe { Owned::new(dev) }),
-            _ => None,
-        }
-    }
-
-    /// Borrow this device.
-    pub fn borrow(&self) -> Device<Any> {
-        match &self.0 {
-            OwnershipState::Owned(dev) => Device::<Any>(OwnershipState::Borrowed(unsafe {
-                NonNull::new_unchecked(dev.as_ptr())
-            })),
-            OwnershipState::Borrowed(bdev) => Device::<Any>(OwnershipState::Borrowed(*bdev)),
-            OwnershipState::None => panic!("no device"),
-        }
-    }
-
-    /// Returns whether this device is owned.
-    pub fn is_owned(&self) -> bool {
-        matches!(self.0, OwnershipState::Owned(_))
-    }
-
-    /// Returns whether this device is borrowed.
-    pub fn is_borrowed(&self) -> bool {
-        matches!(self.0, OwnershipState::Borrowed(_))
-    }
-
-    /// Returns whether this device has no ownership state.
-    pub fn is_none(&self) -> bool {
-        matches!(self.0, OwnershipState::None)
-    }
-
-    /// Takes the value from this device and replaces with a value having no ownership.
-    pub fn take(&mut self) -> Self {
-        mem::replace(self, Self(OwnershipState::None))
-    }
-
-    /// Destroy the block device asynchronously.
-    ///
-    /// # Returns
-    ///
-    /// Only an owned device can be destroyed. This function returns `Err(EPERM)` if called on a
-    /// borrowed device and `Err(ENODEV)` if called on a device that neither owns nor borrows the
-    /// underlying `spdk_bdev` pointer.
-    pub async fn destroy(mut self) -> Result<()> {
-        match self.0 {
-            OwnershipState::Borrowed(_) => Err(EPERM),
-            OwnershipState::None => Err(ENODEV),
-            OwnershipState::Owned(_) => match mem::replace(&mut self.0, OwnershipState::None) {
-                OwnershipState::Owned(dev) => dev.destroy().await,
-                _ => unreachable!(),
-            },
-        }
+        self.0.as_raw_bdev()
     }
 
     /// Opens the device asynchronously.
@@ -343,100 +230,175 @@ impl<T: OwnedOps> Device<T> {
     pub fn io_type_supported(&self, io_type: IoType) -> bool {
         unsafe { spdk_bdev_io_type_supported(self.as_ptr(), io_type.into()) }
     }
+}
 
-    /// Gets the first `BDev` in the global list.
-    ///
-    /// Returns `None` if there are no `BDev`s currently registered.
-    fn first() -> Option<Device<Any>> {
-        Self::try_from_ptr(unsafe { spdk_bdev_first() })
+impl<T> Device<T>
+where
+    T: OwnedOps + From<Owned>,
+{
+    /// Returns a type-erased [`Device<Owned>`] instance assuming ownership of the underlying
+    /// `spdk_bdev` pointer. This `Device` is consumed in the process.
+    pub fn into_owned(self) -> Device<Owned> {
+        // SAFETY: The `spdk_bdev` pointer is guaranteed to be valid and non-null, and this `Device`
+        // instance, the sole onwer of it, is consumed in the conversion.
+        unsafe { Owned::new(self.0) }
     }
 
-    /// Gets the next `BDev` in the global list.
-    ///
-    /// Returns `None` if there are no more `BDev`s in the list.
-    fn next(&self) -> Option<Device<Any>> {
-        Self::try_from_ptr(unsafe { spdk_bdev_next(self.as_ptr()) })
+    /// Destroy an owned block device asynchronously.
+    pub async fn destroy(self) -> Result<()> {
+        self.0.destroy().await
     }
 }
 
-impl<T: OwnedOps> Drop for Device<T> {
-    fn drop(&mut self) {
-        if self.is_owned() {
-            let dev = self.take();
-
-            thread::block_on(async move { dev.destroy().await }).unwrap();
-        }
-    }
-}
-
-impl<T: OwnedOps> Debug for Device<T> {
+impl<T> Debug for Device<T>
+where
+    T: AsRawBDev,
+{
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Device({})", self.name().to_string_lossy())
+        write!(f, "Device({:?})", self.name().to_string_lossy())
     }
 }
 
-impl From<*mut spdk_bdev> for Device<Any> {
-    fn from(bdev: *mut spdk_bdev) -> Self {
-        Device::<Any>::from_ptr(bdev)
+impl<'a, O> Device<OwnedBy<'a, O>> {
+    /// Gets a borrowed block device from an object that logically owns the device while it is in
+    /// use, e.g. [`BDevIo`] & [`IoChannel`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `bdev` is a non-null pointer to an `spdk_bdev` structure whose
+    /// lifetime is tied to the owner.
+    ///
+    /// [`BDevIo`]: crate::bdev::BDevIo
+    /// [`IoChannel`]: crate::block::IoChannel
+    pub(crate) unsafe fn with_owner(_owner: &'a O, bdev: *mut spdk_bdev) -> Device<OwnedBy<'a, O>> {
+        Device::<OwnedBy<'a, O>>(unsafe { OwnedBy::new_unchecked(bdev) })
     }
 }
+
+/// Since `Device<OwnedBy<'_, O>>` does not manage the underlying `spdk_bdev`'s lifetime, it is safe
+/// to send it across threads.
+unsafe impl<O> Send for Device<OwnedBy<'_, O>> {}
+
+impl Device<Any> {
+    /// Get a [`Device`] by its name.
+    ///
+    /// A `Device<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
+    /// It ensures that the underlying `spdk_bdev` remains valid for the lifetime of the
+    /// `Device<Any>` instance but cannot destroy it. However, a call to [`Device::destroy()`] by
+    /// another task will be deferred until all `Device<Any>` instances referencing the same
+    /// `spdk_bdev` are dropped.
+    ///
+    /// # Returns
+    ///
+    /// This method returns `Ok(dev)` if the device exists and `Err(`[`ENODEV`]`)` if no block device
+    /// with the given name exists. It may return other errors if initialization of the
+    /// `Device<Any>` instance fails. See [`Any`] for details.
+    ///
+    /// [`ENODEV`]: crate::errors::ENODEV
+    pub async fn from_name(name: &CStr) -> Result<Device<Any>> {
+        Any::with_name(name).await.map(Device::<Any>)
+    }
+
+    /// Get a [`Device`] for a raw `spdk_bdev` pointer.
+    ///
+    /// A `Device<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
+    /// It ensures that the underlying `spdk_bdev` remains valid for the lifetime of the
+    /// `Device<Any>` instance but cannot destry it. However, a call to [`Device::destroy()`] by
+    /// another task will be deferred until all `Device<Any>` instances referencing the same
+    /// `spdk_bdev` are dropped.
+    ///
+    /// # Returns
+    ///
+    /// This method may return an error if initialization of the `Device<Any>` instance fails. See
+    /// [`Any`] for details.
+    ///
+    /// # Safety
+    ///
+    /// `bdev` must be non-null and a pointer to a valid `spdk_bdev` structure.
+    pub(crate) async unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Device<Any>> {
+        unsafe { Any::from_ptr_unchecked(bdev).await.map(Device::<Any>) }
+    }
+}
+
+/// Since `Device<Any>` does not manage the underlying `spdk_bdev`'s lifetime, it is safe to send it
+/// across threads.
+unsafe impl Send for Device<Any> {}
+
+type DevicesFuture = Pin<Box<dyn Future<Output = Option<(Device<Any>, Option<Device<Any>>)>>>>;
 
 /// An asynchronous iterator over all block devices.
 pub struct Devices {
-    current: Option<Device<Any>>,
-    desc: Option<Descriptor>,
-    open_fut: Option<Pin<Box<dyn Future<Output = Result<Descriptor>>>>>,
+    next_fut: Option<DevicesFuture>,
+}
+
+impl Devices {
+    /// Creates a new asynchronous iterator over all block devices.
+    fn new() -> Self {
+        Self {
+            next_fut: Some(Box::pin(async {
+                let current = Self::get_device(unsafe { spdk_bdev_first() }).await;
+
+                Self::get_next_state(current).await
+            })),
+        }
+    }
+
+    /// Gets the next available block device starting from the given 'spdk_bdev' pointer.
+    async fn get_device(mut bdev: *mut spdk_bdev) -> Option<Device<Any>> {
+        while !bdev.is_null() {
+            if let Ok(device) = unsafe { Device::from_ptr_unchecked(bdev) }.await {
+                return Some(device);
+            }
+
+            bdev = unsafe { spdk_bdev_next(bdev) };
+        }
+
+        None
+    }
+
+    /// Gets the next state in the iteration.
+    async fn get_next_state(
+        current: Option<Device<Any>>,
+    ) -> Option<(Device<Any>, Option<Device<Any>>)> {
+        if let Some(current) = current {
+            let next_bdev = unsafe { spdk_bdev_next(current.as_ptr()) };
+            let next = Self::get_device(next_bdev).await;
+
+            return Some((current, next));
+        }
+
+        None
+    }
+}
+
+impl Default for Devices {
+    fn default() -> Self {
+        Devices::new()
+    }
 }
 
 impl Stream for Devices {
     type Item = Device<Any>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while let Some(dev) = &self.current {
-            let dev = dev.borrow();
+        let next_state = match &mut self.next_fut {
+            Some(next_fut) => next_fut.as_mut().poll(cx),
+            None => Poll::Ready(None),
+        };
 
-            // Open a read-only descriptor on the block device to prevent it
-            // from being unregistered (and deleted) while it is in use by the
-            // caller. Since this is an asynchronous operation, we store a
-            // future to the open call and delegate polling for a result to it.
-            if self.open_fut.is_none() {
-                let dev = dev.borrow();
+        match next_state {
+            Poll::Ready(Some((current, next))) => {
+                self.next_fut = Some(Box::pin(async move { Self::get_next_state(next).await }));
 
-                self.open_fut = Some(async move { dev.open(false).await }.boxed_local())
+                Poll::Ready(Some(current))
             }
+            Poll::Ready(None) => {
+                self.next_fut = None;
 
-            // Poll the block device open future and process the result.
-            match self.open_fut.as_mut().unwrap().poll_unpin(cx) {
-                // The device was opened successfully. Store the descriptor,
-                // advance the iterator to the next device and return the
-                // current device to the caller.
-                Poll::Ready(Ok(desc)) => {
-                    self.current = dev.next();
-                    self.desc = Some(desc);
-                    self.open_fut = None;
-
-                    return Poll::Ready(Some(dev.borrow()));
-                }
-
-                // An error occurred during the open: skip this device and
-                // advance the iterator to the next one.
-                Poll::Ready(Err(_)) => {
-                    self.current = dev.next();
-                    self.desc = None;
-                    self.open_fut = None;
-                    continue;
-                }
-
-                // The open operation is pending.
-                Poll::Pending => return Poll::Pending,
+                Poll::Ready(None)
             }
+            Poll::Pending => Poll::Pending,
         }
-
-        // There are no more devices to be iterated. Close the current
-        // descriptor and return `None` to end the iteration.
-        self.desc = None;
-
-        Poll::Ready(None)
     }
 }
 
@@ -448,9 +410,5 @@ impl Stream for Devices {
 #[doc = include_str!("../../examples/devices.rs")]
 /// ```
 pub fn devices() -> Devices {
-    Devices {
-        current: Device::<Any>::first(),
-        desc: None,
-        open_fut: None,
-    }
+    Devices::new()
 }

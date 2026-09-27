@@ -322,7 +322,6 @@ impl Thread {
     ///
     /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
     /// that may not be `Send` once started.
-    #[inline(always)]
     pub fn spawn_detached<G, F, R>(&self, fut_gen: G)
     where
         G: FnOnce() -> F + Send + 'static,
