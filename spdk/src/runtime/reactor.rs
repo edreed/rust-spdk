@@ -16,8 +16,8 @@ use crate::{
 
 use super::{CpuCore, CpuCores, CpuSet, cpu_cores};
 
-/// Represents an event loop running in a OS thread bound to a dedicated CPU
-/// core that drives execution of asynchronous tasks.
+/// Represents an event loop running in a OS thread bound to a dedicated CPU core that drives
+/// execution of asynchronous tasks.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Reactor(CpuCore);
 
@@ -40,8 +40,7 @@ impl Reactor {
             return None;
         }
 
-        // Create a new SPDK thread for this reactor and bind it to the
-        // reactor's core.
+        // Create a new SPDK thread for this reactor and bind it to the reactor's core.
         let name = CString::new(format!("reactor_thread_{}", self.core().id())).unwrap();
         let cpu_mask: CpuSet = self.core().into();
 
@@ -49,13 +48,13 @@ impl Reactor {
 
         owned_thread.bind(true);
 
-        // Spawn an asynchronous task to wait for the reactor to exit. We borrow
-        // the reactor thread so that we can transfer ownership to the
-        // asynchronous task and exit the thread when it is dropped.
+        // Spawn an asynchronous task to wait for the reactor to exit. We borrow the reactor thread
+        // so that we can transfer ownership to the asynchronous task and exit the thread when it is
+        // dropped.
         let (exit_sx, exit_rx) = oneshot::channel::<()>();
         let borrowed_thread = owned_thread.borrow();
 
-        borrowed_thread.spawn(move || async move {
+        borrowed_thread.spawn_detached(move || async move {
             let _ = exit_rx.await;
 
             drop(owned_thread)
@@ -69,9 +68,8 @@ impl Reactor {
     ///
     /// # Returns
     ///
-    /// If the current system thread is running an SPDK Reactor, this function
-    /// returns `Some(r)` where `r` is the current reactor. Otherwise, this
-    /// function returns `None`.
+    /// If the current system thread is running an SPDK Reactor, this function returns `Some(r)`
+    /// where `r` is the current reactor. Otherwise, this function returns `None`.
     pub fn try_current() -> Option<Self> {
         CpuCore::try_current().map(Self)
     }
@@ -80,8 +78,7 @@ impl Reactor {
     ///
     /// # Panics
     ///
-    /// This function panics if the current system thread is not running an SPDK
-    /// Reactor.
+    /// This function panics if the current system thread is not running an SPDK Reactor.
     pub fn current() -> Self {
         Self::try_current().expect("must be called on an SPDK Reactor")
     }
@@ -135,11 +132,12 @@ impl Reactor {
         Ok(())
     }
 
-    /// Spawns a new asynchronous task to be executed on this reactor and
-    /// returns a [`JoinHandle`] to await results.
+    /// Spawns a new asynchronous task to be executed on this reactor and returns a [`JoinHandle`]
+    /// to await results.
     ///
-    /// The indirection of `fut_gen` instead of receiving a `Future` directly
-    /// allows for futures that may not be `Send` once started.
+    /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
+    /// that may not be `Send` once started.
+    #[must_use = " the returned JoinHandle must be awaited"]
     pub fn spawn<'a, G, F, R>(&self, fut_gen: G) -> JoinHandle<'a, F, R>
     where
         G: FnOnce() -> F + Send + 'a,
@@ -147,6 +145,20 @@ impl Reactor {
         R: Send + 'static,
     {
         task::spawn_on_reactor(*self, fut_gen)
+    }
+
+    /// Spawns a new asynchronous task to be executed on this reactor that will run to completion
+    /// independently of the current reactor.
+    ///
+    /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
+    /// that may not be `Send` once started.
+    pub fn spawn_detached<G, F, R>(&self, fut_gen: G)
+    where
+        G: FnOnce() -> F + Send + 'static,
+        F: Future<Output = R> + 'static,
+        R: Send + 'static,
+    {
+        task::spawn_on_reactor_detached(*self, fut_gen)
     }
 }
 
@@ -163,14 +175,25 @@ impl Executor for Reactor {
     }
 }
 
-/// Spawns a new asynchronous task to be executed on the current SPDK reactor and
-/// returns a [`JoinHandle`] to await results.
+/// Spawns a new asynchronous task to be executed on the current SPDK reactor and returns a
+/// [`JoinHandle`] to await results.
+#[must_use = " the returned JoinHandle must be awaited"]
 pub fn spawn_local<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
     R: 'static,
 {
     task::spawn_on_current_reactor(fut)
+}
+
+/// Spawns a new asynchronous task to be executed on the current SPDK reactor that will run to
+/// completion independently of the current task.
+pub fn spawn_local_detached<F, R>(fut: F)
+where
+    F: Future<Output = R> + 'static,
+    R: 'static,
+{
+    task::spawn_on_current_reactor_detached(fut)
 }
 
 /// An iterator over the reactors for this runtime.

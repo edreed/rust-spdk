@@ -153,7 +153,7 @@ where
 
     /// Initializes the module.
     unsafe extern "C" fn init() -> i32 {
-        thread::spawn_local(async {
+        thread::spawn_local_detached(async {
             T::instance().ctx.init().await;
 
             unsafe {
@@ -166,7 +166,7 @@ where
 
     /// Finalizes the module.
     unsafe extern "C" fn fini() {
-        thread::spawn_local(async {
+        thread::spawn_local_detached(async {
             T::instance().ctx.fini().await;
 
             unsafe {
@@ -207,7 +207,7 @@ where
     unsafe extern "C" fn examine_disk(bdev: *mut spdk_bdev) {
         let bdev = bdev.into();
 
-        thread::spawn_local(async move {
+        thread::spawn_local_detached(async move {
             T::instance().ctx.examine_disk(bdev).await;
 
             unsafe { spdk_bdev_module_examine_done(T::instance().as_ptr() as *mut _) }

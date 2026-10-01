@@ -276,6 +276,7 @@ where
 
 /// Schedules a new asynchronous task to be executed on the current [`Thread`] and returns a
 /// [`JoinHandle`] to await results.
+#[must_use = " the returned JoinHandle must be awaited"]
 pub(crate) fn spawn_on_current_thread<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
@@ -288,8 +289,21 @@ where
     JoinHandle::from_local_task(task)
 }
 
+/// Schedules a new asynchronous task to be executed on the current [`Thread`] that will run to
+/// completion independently of the current task.
+pub(crate) fn spawn_on_current_thread_detached<F, R>(fut: F)
+where
+    F: Future<Output = R> + 'static,
+    R: 'static,
+{
+    let task = LocalTask::<'_, Thread, F, R>::with_future(fut);
+
+    RcTask::schedule(task);
+}
+
 /// Schedules a new asynchronous task to be executed on the current [`Reactor`] and returns a
 /// [`JoinHandle`] to await results.
+#[must_use = " the returned JoinHandle must be awaited"]
 pub(crate) fn spawn_on_current_reactor<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
@@ -300,4 +314,16 @@ where
     RcTask::schedule_by_ref(&task);
 
     JoinHandle::from_local_task(task)
+}
+
+/// Schedules a new asynchronous task to be executed on the current [`Reactor`] that will run to
+/// completion independently of the current task.
+pub(crate) fn spawn_on_current_reactor_detached<F, R>(fut: F)
+where
+    F: Future<Output = R> + 'static,
+    R: 'static,
+{
+    let task = LocalTask::<'_, Reactor, F, R>::with_future(fut);
+
+    RcTask::schedule(task);
 }
