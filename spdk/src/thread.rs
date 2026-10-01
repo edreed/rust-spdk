@@ -33,7 +33,7 @@ use crate::{
     Result,
     errors::ENOMEM,
     runtime::CpuSet,
-    task::{self, Executor, JoinHandle},
+    task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
     to_result,
 };
 
@@ -314,7 +314,11 @@ impl Thread {
         F: Future<Output = R> + 'a,
         R: Send + 'static,
     {
-        task::spawn_on_thread(self.borrow(), fut_gen)
+        let task = RemoteTask::<'a, Thread, F, R>::with_future(Some(self.borrow()), fut_gen());
+
+        ArcTask::schedule_by_ref(&task);
+
+        JoinHandle::from_remote_task(task)
     }
 
     /// Spawns a new asynchronous task to be executed on this thread that will run to completion
@@ -328,7 +332,9 @@ impl Thread {
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        task::spawn_on_thread_detached(self.borrow(), fut_gen)
+        let task = RemoteTask::<'_, Thread, F, R>::with_future(Some(self.borrow()), fut_gen());
+
+        ArcTask::schedule(task);
     }
 }
 
@@ -381,7 +387,11 @@ where
     F: Future<Output = R> + 'a,
     R: 'static,
 {
-    task::spawn_on_current_thread(fut)
+    let task = LocalTask::<'a, Thread, F, R>::with_future(fut);
+
+    RcTask::schedule_by_ref(&task);
+
+    JoinHandle::from_local_task(task)
 }
 
 /// Spawns a new asynchronous task to be executed on the current SPDK thread that runs to completion
@@ -391,7 +401,9 @@ where
     F: Future<Output = R> + 'static,
     R: 'static,
 {
-    task::spawn_on_current_thread_detached(fut);
+    let task = LocalTask::<'_, Thread, F, R>::with_future(fut);
+
+    RcTask::schedule(task);
 }
 
 /// Runs the provided future on the current SPDK thread until completion.
@@ -408,7 +420,7 @@ where
     R: 'static,
 {
     let current_thread = Thread::current();
-    let mut join_handle = task::spawn_on_current_thread(fut);
+    let mut join_handle = spawn_local(fut);
 
     loop {
         if let Poll::Ready(res) =
