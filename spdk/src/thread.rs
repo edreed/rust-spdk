@@ -1,16 +1,14 @@
 //! An abstraction of a lightweight, stackless thread of execution.
 //!
-//! An SPDK thread does not correspond 1:1 with a posix thread. Instead, a
-//! lower-level framework like the SPDK Event Framework polls each SPDK thread
-//! for work. This allows the SPDK Event Framework to multiplex many SPDK
-//! threads on a smaller number of posix threads.
+//! An SPDK thread does not correspond 1:1 with a posix thread. Instead, a lower-level framework
+//! like the SPDK Event Framework polls each SPDK thread for work. This allows the SPDK Event
+//! Framework to multiplex many SPDK threads on a smaller number of posix threads.
 //!
-//! There are two mechanisms for scheduling work on an SPDK thread: messages and
-//! pollers. A message consists of a function and single context parameter. A
-//! poller is a function that is called periodically.
+//! There are two mechanisms for scheduling work on an SPDK thread: messages and pollers. A message
+//! consists of a function and single context parameter. A poller is a function that is called
+//! periodically.
 //!
-//! See [Message Passing and Concurrency] for more details on the SPDK
-//! threading model.
+//! See [Message Passing and Concurrency] for more details on the SPDK threading model.
 //!
 //! [Message Passing and Concurrency]: https://spdk.io/doc/concurrency.html
 use std::{
@@ -48,15 +46,14 @@ enum OwnershipState {
 
 /// An abstraction of a lightweight, stackless thread of execution.
 ///
-/// `Thread` wraps an `spdk_thread` pointer and can be in one of two ownership
-/// states: owned or borrowed.
+/// `Thread` wraps an `spdk_thread` pointer and can be in one of two ownership states: owned or
+/// borrowed.
 ///
-/// An owned thread owns the underlying `spdk_thread` pointer and will mark it
-/// for exit when dropped. Any further processing requests on this thread will
-/// fail.
+/// An owned thread owns the underlying `spdk_thread` pointer and will mark it for exit when
+/// dropped. Any further processing requests on this thread will fail.
 ///
-/// A borrowed thread borrows the underlying `spdk_thread` pointer. Dropping a
-/// borrowed thread has no effect on the underlying `spdk_thread` pointer.
+/// A borrowed thread borrows the underlying `spdk_thread` pointer. Dropping a borrowed thread has
+/// no effect on the underlying `spdk_thread` pointer.
 #[derive(PartialEq)]
 pub struct Thread(OwnershipState);
 
@@ -68,9 +65,8 @@ impl Thread {
     ///
     /// # Notes
     ///
-    /// The thread object returned is owned by the caller. When dropped, the
-    /// thread will be marked for exit causing any further processing requests
-    /// on this thread to fail.
+    /// The thread object returned is owned by the caller. When dropped, the thread will be marked
+    /// for exit causing any further processing requests on this thread to fail.
     pub fn new(name: &CStr, cpuset: &CpuSet) -> Result<Self> {
         let t = unsafe { spdk_thread_create(name.as_ptr(), cpuset.as_ptr()) };
 
@@ -100,8 +96,7 @@ impl Thread {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that `thread` is non-null and points to a valid
-    /// `spdk_thread` object.
+    /// The caller must ensure that `thread` is non-null and points to a valid `spdk_thread` object.
     pub unsafe fn from_ptr_unchecked(thread: *mut spdk_thread) -> Self {
         Self(OwnershipState::Borrowed(unsafe {
             NonNull::new_unchecked(thread)
@@ -119,14 +114,12 @@ impl Thread {
 
     /// Tries to return the application thread object.
     ///
-    /// The application thread is the thread that initialized the SPDK Application
-    /// Framework.
+    /// The application thread is the thread that initialized the SPDK Application Framework.
     ///
     /// # Return
     ///
-    /// If the Application Framework has been initialized, this function returns
-    /// `Some(t)` where `t` is the SPDK application thread object. Otherwise, this
-    /// function returns `None`.
+    /// If the Application Framework has been initialized, this function returns `Some(t)` where `t`
+    /// is the SPDK application thread object. Otherwise, this function returns `None`.
     pub fn try_application() -> Option<Self> {
         unsafe {
             let t = spdk_thread_get_app_thread();
@@ -137,13 +130,11 @@ impl Thread {
 
     /// Returns the application thread object.
     ///
-    /// The application thread is the thread that initialized the SPDK Application
-    /// Framework.
+    /// The application thread is the thread that initialized the SPDK Application Framework.
     ///
     /// # Panics
     ///
-    /// This function panics if the SPDK Application Framework has not been
-    /// initialized.
+    /// This function panics if the SPDK Application Framework has not been initialized.
     pub fn application() -> Self {
         Self::try_application().expect("SPDK Application Framework must be initialized")
     }
@@ -152,9 +143,8 @@ impl Thread {
     ///
     /// # Return
     ///
-    /// If the current system thread is an SPDK thread, this function returns
-    /// `Some(t)` where `t` is the current SPDK thread object. Otherwise, this
-    /// function returns `None`.
+    /// If the current system thread is an SPDK thread, this function returns `Some(t)` where `t` is
+    /// the current SPDK thread object. Otherwise, this function returns `None`.
     pub fn try_current() -> Option<Self> {
         unsafe {
             let t = spdk_get_thread();
@@ -266,16 +256,15 @@ impl Thread {
 
     /// Sends a message function to be executed on this thread.
     ///
-    /// The message is sent asynchronously. This function may return before the
-    /// message function is called.
+    /// The message is sent asynchronously. This function may return before the message function is
+    /// called.
     ///
     /// # Return
     ///
-    /// This function returns `Ok(())` if the message function was successfully
-    /// queued.
+    /// This function returns `Ok(())` if the message function was successfully queued.
     ///
-    /// This function return [`ENOMEM`] if the message could not be allocated
-    /// and [`EIO`] if the message could not be sent to the destination thread.
+    /// This function return [`ENOMEM`] if the message could not be allocated and [`EIO`] if the
+    /// message could not be sent to the destination thread.
     ///
     /// # Examples
     ///
@@ -313,11 +302,12 @@ impl Thread {
         unsafe { spdk_thread_poll(self.as_ptr() as *mut _, 0, 0) != 0 }
     }
 
-    /// Spawns a new asynchronous task to be executed on this thread and returns a
-    /// [`JoinHandle`] to await results.
+    /// Spawns a new asynchronous task to be executed on this thread and returns a [`JoinHandle`] to
+    /// await results.
     ///
-    /// The indirection of `fut_gen` instead of receiving a `Future` directly
-    /// allows for futures that may not be `Send` once started.
+    /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
+    /// that may not be `Send` once started.
+    #[must_use = " the returned JoinHandle must be awaited"]
     pub fn spawn<'a, G, F, R>(&self, fut_gen: G) -> JoinHandle<'a, F, R>
     where
         G: FnOnce() -> F + Send + 'a,
@@ -325,6 +315,21 @@ impl Thread {
         R: Send + 'static,
     {
         task::spawn_on_thread(self.borrow(), fut_gen)
+    }
+
+    /// Spawns a new asynchronous task to be executed on this thread that will run to completion
+    /// independently of the current thread.
+    ///
+    /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
+    /// that may not be `Send` once started.
+    #[inline(always)]
+    pub fn spawn_detached<G, F, R>(&self, fut_gen: G)
+    where
+        G: FnOnce() -> F + Send + 'static,
+        F: Future<Output = R> + 'static,
+        R: Send + 'static,
+    {
+        task::spawn_on_thread_detached(self.borrow(), fut_gen)
     }
 }
 
@@ -344,13 +349,13 @@ impl Executor for Thread {
 impl Drop for Thread {
     fn drop(&mut self) {
         if let OwnershipState::Owned(_) = self.0 {
-            // SAFETY: The borrow here extends the lifetime of the underlying
-            // `spdk_thread` object until the sent message calls `spdk_thread_exit`.
+            // SAFETY: The borrow here extends the lifetime of the underlying `spdk_thread` object
+            // until the sent message calls `spdk_thread_exit`.
             let mut t = self.borrow();
 
-            // SAFETY: The `spdk_thread_exit` function must be called from a
-            // poller or thread message. We dispatch the call via thread message
-            // to ensure this invariant is satisfied.
+            // SAFETY: The `spdk_thread_exit` function must be called from a poller or thread
+            // message. We dispatch the call via thread message to ensure this invariant is
+            // satisfied.
             self.send_msg(move || unsafe { _ = spdk_thread_exit(t.as_mut_ptr()) })
                 .expect("thread exit sent");
         }
@@ -369,8 +374,9 @@ impl From<*mut spdk_thread> for Thread {
     }
 }
 
-/// Spawns a new asynchronous task to be executed on the current SPDK thread and
-/// returns a [`JoinHandle`] to await results.
+/// Spawns a new asynchronous task to be executed on the current SPDK thread and returns a
+/// [`JoinHandle`] to await results.
+#[must_use = " the returned JoinHandle must be awaited"]
 pub fn spawn_local<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
@@ -379,19 +385,28 @@ where
     task::spawn_on_current_thread(fut)
 }
 
+/// Spawns a new asynchronous task to be executed on the current SPDK thread that runs to completion
+/// independently of the current task.
+pub fn spawn_local_detached<F, R>(fut: F)
+where
+    F: Future<Output = R> + 'static,
+    R: 'static,
+{
+    task::spawn_on_current_thread_detached(fut);
+}
+
 /// Runs the provided future on the current SPDK thread until completion.
 ///
 /// # Notes
 ///
-/// This function blocks the current reactor until the future completes on the
-/// current SPDK thread. Although the given future may spawn concurrent tasks on
-/// this thread, tasks on other threads associated with the current reactor will
-/// not run. The given future must not depend on the result of concurrent tasks
-/// associated with other threads, otherwise a deadlock will occur.
-pub fn block_on<F, T>(fut: F) -> T
+/// This function blocks the current reactor until the future completes on the current SPDK thread.
+/// Although the given future may spawn concurrent tasks on this thread, tasks on other threads
+/// associated with the current reactor will not run. The given future must not depend on the result
+/// of concurrent tasks associated with other threads, otherwise a deadlock will occur.
+pub fn block_on<'a, F, R>(fut: F) -> R
 where
-    F: Future<Output = T> + 'static,
-    T: 'static,
+    F: Future<Output = R> + 'a,
+    R: 'static,
 {
     let current_thread = Thread::current();
     let mut join_handle = task::spawn_on_current_thread(fut);

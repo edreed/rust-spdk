@@ -546,7 +546,7 @@ where
 
     /// Destroys the BDev instance.
     unsafe extern "C" fn destruct(ctx: *mut c_void) -> i32 {
-        thread::spawn_local(async move {
+        thread::spawn_local_detached(async move {
             let mut this = unsafe { Self::from_ctx_ptr(ctx as *mut T) };
 
             let rc = match this.ctx.destruct().await {
@@ -607,7 +607,7 @@ where
 
         debug_assert!(Thread::try_current().is_some());
 
-        thread::spawn_local(async move {
+        thread::spawn_local_detached(async move {
             let res = io_channel.ctx_mut().submit_request(&mut io).await;
 
             // SAFETY: The I/O is completed on the submission thread.

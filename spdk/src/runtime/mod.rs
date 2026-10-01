@@ -8,15 +8,10 @@ mod reactor;
 #[allow(clippy::module_inception)]
 mod runtime;
 
-pub use cpu_core::CpuCore;
-pub use cpu_core::CpuCores;
-pub use cpu_core::cpu_cores;
+pub use cpu_core::{CpuCore, CpuCores, cpu_cores};
 
 pub use cpu_set::CpuSet;
 
-pub use reactor::Reactor;
-pub use reactor::reactors;
-pub use reactor::spawn_local;
+pub use reactor::{Reactor, reactors, spawn_local, spawn_local_detached};
 
-pub use runtime::Builder;
-pub use runtime::Runtime;
+pub use runtime::{Builder, Runtime};

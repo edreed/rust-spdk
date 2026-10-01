@@ -277,6 +277,7 @@ where
 ///
 /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
 /// may not be `Send` once started.
+#[must_use = " the returned JoinHandle must be awaited"]
 pub(crate) fn spawn_on_thread<'a, G, F, R>(thread: Thread, fut_gen: G) -> JoinHandle<'a, F, R>
 where
     G: FnOnce() -> F + Send + 'a,
@@ -290,11 +291,28 @@ where
     JoinHandle::from_remote_task(task)
 }
 
+/// Schedules a new asynchronous task to be executed on the given [`Thread`] that will run to
+/// completion independently of the current thread.
+///
+/// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
+/// may not be `Send` once started.
+pub(crate) fn spawn_on_thread_detached<G, F, R>(thread: Thread, fut_gen: G)
+where
+    G: FnOnce() -> F + Send + 'static,
+    F: Future<Output = R> + 'static,
+    R: Send + 'static,
+{
+    let task = RemoteTask::<'_, Thread, F, R>::with_future(Some(thread), fut_gen());
+
+    ArcTask::schedule(task);
+}
+
 /// Schedules a new asynchronous task to be executed on the given [`Reactor`] and returns a
 /// [`JoinHandle`] to await results.
 ///
 /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
 /// may not be `Send` once started.
+#[must_use = " the returned JoinHandle must be awaited"]
 pub(crate) fn spawn_on_reactor<'a, G, F, R>(reactor: Reactor, fut_gen: G) -> JoinHandle<'a, F, R>
 where
     G: FnOnce() -> F + Send + 'a,
@@ -306,4 +324,20 @@ where
     ArcTask::schedule_by_ref(&task);
 
     JoinHandle::from_remote_task(task)
+}
+
+/// Schedules a new asynchronous task to be executed on the given [`Reactor`] that will run to
+/// completion independently of the current reactor.
+///
+/// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures that
+/// may not be `Send` once started.
+pub(crate) fn spawn_on_reactor_detached<G, F, R>(reactor: Reactor, fut_gen: G)
+where
+    G: FnOnce() -> F + Send + 'static,
+    F: Future<Output = R> + 'static,
+    R: Send + 'static,
+{
+    let task = RemoteTask::<'_, Reactor, F, R>::with_future(reactor, fut_gen());
+
+    ArcTask::schedule(task);
 }

@@ -15,8 +15,13 @@ use std::{
 };
 
 pub(crate) use join_handle::RawJoinHandleVTable;
-pub(crate) use local_task::{LocalTask, RcTask, spawn_on_current_reactor, spawn_on_current_thread};
-pub(crate) use remote_task::{spawn_on_reactor, spawn_on_thread};
+pub(crate) use local_task::{
+    LocalTask, RcTask, spawn_on_current_reactor, spawn_on_current_reactor_detached,
+    spawn_on_current_thread, spawn_on_current_thread_detached,
+};
+pub(crate) use remote_task::{
+    spawn_on_reactor, spawn_on_reactor_detached, spawn_on_thread, spawn_on_thread_detached,
+};
 
 pub use join_handle::JoinHandle;
 pub use poller::{Polled, PolledFn, Poller, polled_fn, polled_fn_with_period};
