@@ -18,7 +18,6 @@ fn create_bdev(name: &CStr) -> Device<Owned> {
         .build()
         .unwrap()
         .into_owned()
-        .unwrap()
 }
 
 #[spdk::main]

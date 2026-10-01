@@ -16,7 +16,7 @@ use spdk_sys::{
 
 use crate::{
     Result, Uuid,
-    block::{Device, Owned, OwnedOps},
+    block::{AsRawBDev, Device, Owned, OwnedOps},
     task::{Promise, Promissory},
     to_result,
 };
@@ -95,11 +95,13 @@ pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}
 
-impl OwnedOps for Malloc {
-    fn as_ptr(&self) -> *mut spdk_bdev {
+impl AsRawBDev for Malloc {
+    fn as_raw_bdev(&self) -> *mut spdk_bdev {
         self.0.as_ptr()
     }
+}
 
+impl OwnedOps for Malloc {
     async fn destroy(self) -> Result<()> {
         Promise::new()
             .request(move |p| {
@@ -107,7 +109,7 @@ impl OwnedOps for Malloc {
 
                 unsafe {
                     delete_malloc_disk(
-                        spdk_bdev_get_name(self.as_ptr()),
+                        spdk_bdev_get_name(self.as_raw_bdev()),
                         Some(cb_fn),
                         cb_arg.cast_mut() as *mut _,
                     );

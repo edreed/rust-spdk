@@ -12,7 +12,7 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    block::{Device, Owned, OwnedOps},
+    block::{AsRawBDev, Device, Owned, OwnedOps},
     errors::EINVAL,
     task::{Promise, Promissory},
     to_result,
@@ -79,11 +79,13 @@ impl Aio {
     }
 }
 
-impl OwnedOps for Aio {
-    fn as_ptr(&self) -> *mut spdk_bdev {
+impl AsRawBDev for Aio {
+    fn as_raw_bdev(&self) -> *mut spdk_bdev {
         self.0.as_ptr()
     }
+}
 
+impl OwnedOps for Aio {
     async fn destroy(self) -> Result<()> {
         Promise::new()
             .request(move |p| {
@@ -91,7 +93,7 @@ impl OwnedOps for Aio {
 
                 unsafe {
                     bdev_aio_delete(
-                        spdk_bdev_get_name(self.as_ptr()),
+                        spdk_bdev_get_name(self.as_raw_bdev()),
                         Some(cb_fn),
                         cb_arg.cast_mut() as *mut _,
                     );
@@ -107,6 +109,6 @@ impl From<Owned> for Aio {
     fn from(owned: Owned) -> Self {
         // SAFETY: We are creating an `Aio` instance from an `Owned` device, which guarantees that
         // the underlying `spdk_bdev` pointer is valid and uniquely owned.
-        Self(unsafe { NonNull::new_unchecked(owned.as_ptr()) })
+        Self(unsafe { NonNull::new_unchecked(owned.as_raw_bdev()) })
     }
 }
