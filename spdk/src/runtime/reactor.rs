@@ -10,7 +10,7 @@ use spdk_sys::{spdk_event_allocate, spdk_event_call};
 use crate::{
     Result,
     errors::ENOMEM,
-    task::{self, Executor, JoinHandle},
+    task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
     thread::Thread,
 };
 
@@ -144,7 +144,11 @@ impl Reactor {
         F: Future<Output = R> + 'a,
         R: Send + 'static,
     {
-        task::spawn_on_reactor(*self, fut_gen)
+        let task = RemoteTask::<'a, Reactor, F, R>::with_future(*self, fut_gen());
+
+        ArcTask::schedule_by_ref(&task);
+
+        JoinHandle::from_remote_task(task)
     }
 
     /// Spawns a new asynchronous task to be executed on this reactor that will run to completion
@@ -158,7 +162,9 @@ impl Reactor {
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        task::spawn_on_reactor_detached(*self, fut_gen)
+        let task = RemoteTask::<'_, Reactor, F, R>::with_future(*self, fut_gen());
+
+        ArcTask::schedule(task);
     }
 }
 
@@ -183,7 +189,11 @@ where
     F: Future<Output = R> + 'a,
     R: 'static,
 {
-    task::spawn_on_current_reactor(fut)
+    let task = LocalTask::<'a, Reactor, F, R>::with_future(fut);
+
+    RcTask::schedule_by_ref(&task);
+
+    JoinHandle::from_local_task(task)
 }
 
 /// Spawns a new asynchronous task to be executed on the current SPDK reactor that will run to
@@ -193,7 +203,9 @@ where
     F: Future<Output = R> + 'static,
     R: 'static,
 {
-    task::spawn_on_current_reactor_detached(fut)
+    let task = LocalTask::<'_, Reactor, F, R>::with_future(fut);
+
+    RcTask::schedule(task);
 }
 
 /// An iterator over the reactors for this runtime.
