@@ -13,7 +13,18 @@ pub struct CpuSet(spdk_cpuset);
 impl CpuSet {
     /// Create a new empty CPU set.
     pub fn new() -> Self {
-        Default::default()
+        unsafe {
+            let mut cpu_set = MaybeUninit::<spdk_cpuset>::uninit();
+
+            spdk_cpuset_zero(cpu_set.as_mut_ptr());
+
+            Self(cpu_set.assume_init())
+        }
+    }
+
+    /// Create a new CPU set with all CPUs enabled.
+    pub fn any() -> Self {
+        !Self::new()
     }
 
     /// Returns a pointer to the underlying `spdk_cpuset` structure.
@@ -48,13 +59,7 @@ impl CpuSet {
 
 impl Default for CpuSet {
     fn default() -> Self {
-        unsafe {
-            let mut cpu_set = MaybeUninit::<spdk_cpuset>::uninit();
-
-            spdk_cpuset_zero(cpu_set.as_mut_ptr());
-
-            Self(cpu_set.assume_init())
-        }
+        Self::new()
     }
 }
 
@@ -105,15 +110,11 @@ impl BitXorAssign for CpuSet {
 impl Not for CpuSet {
     type Output = Self;
 
-    fn not(self) -> Self::Output {
+    fn not(mut self) -> Self::Output {
         unsafe {
-            let mut cpu_set = MaybeUninit::<spdk_cpuset>::uninit();
-
-            spdk_cpuset_copy(cpu_set.as_mut_ptr(), self.as_ptr());
-            spdk_cpuset_negate(cpu_set.as_mut_ptr());
-
-            Self(cpu_set.assume_init())
+            spdk_cpuset_negate(self.as_mut_ptr());
         }
+        self
     }
 }
 

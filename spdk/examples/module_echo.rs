@@ -15,7 +15,7 @@ use spdk::{
     errors::{ENOTSUP, Errno},
     runtime::reactors,
     task::{self},
-    thread::Thread,
+    thread,
 };
 
 /// Implements the Echo block device module.
@@ -162,8 +162,7 @@ async fn main() {
 
     let echo = Echo::try_new(c"echo").unwrap();
 
-    let write_thread = Thread::new(c"write", &reactors[0].core().into()).unwrap();
-    let write_task = write_thread.spawn(|| async {
+    let write_task = thread::spawn(c"write", &reactors[0].core().into(), || async {
         let writer = echo.open(true).await.unwrap();
         let mut writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
@@ -178,10 +177,10 @@ async fn main() {
         }
 
         println!("Write complete.");
-    });
+    })
+    .unwrap();
 
-    let read_thread = Thread::new(c"read", &reactors[1].core().into()).unwrap();
-    let read_task = read_thread.spawn(|| async {
+    let read_task = thread::spawn(c"read", &reactors[1].core().into(), || async {
         let reader = echo.open(true).await.unwrap();
         let mut reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
@@ -198,7 +197,8 @@ async fn main() {
         }
 
         println!("Read complete.");
-    });
+    })
+    .unwrap();
 
     join(write_task, read_task).await;
 

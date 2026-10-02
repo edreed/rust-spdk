@@ -6,8 +6,9 @@ use spdk::{
     self,
     cli::Parser,
     net::{Accepted, SocketGroup, TcpSocketExt, TcpSocketRemote, TcpStream},
+    runtime::CpuSet,
     task::JoinHandle,
-    thread::{self, Thread},
+    thread,
 };
 
 #[derive(Debug, Parser)]
@@ -29,23 +30,22 @@ async fn handle_client(client: Accepted) -> spdk::Result<()> {
     ))
     .unwrap();
 
-    Thread::new(&name, &Thread::current().cpuset())?
-        .spawn(move || async {
-            let group = SocketGroup::new();
-            let mut client = group.add(client)?;
-            let mut msg = String::new();
+    thread::spawn(&name, &CpuSet::any(), move || async {
+        let group = SocketGroup::new();
+        let mut client = group.add(client)?;
+        let mut msg = String::new();
 
-            client.read_to_string(&mut msg).await?;
+        client.read_to_string(&mut msg).await?;
 
-            println!(
-                "SERVER: Read \"{}\" from client {}",
-                msg,
-                client.peer_addr().expect("connected")
-            );
+        println!(
+            "SERVER: Read \"{}\" from client {}",
+            msg,
+            client.peer_addr().expect("connected")
+        );
 
-            Ok(())
-        })
-        .await
+        Ok(())
+    })?
+    .await
 }
 
 fn run_server<'a>(

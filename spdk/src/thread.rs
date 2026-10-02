@@ -379,6 +379,55 @@ impl From<*mut spdk_thread> for Thread {
     }
 }
 
+/// Creates a new [`Thread`] to execute an asynchronous task and returns a [`JoinHandle`] to
+/// await results.
+///
+/// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
+/// that may not be `Send` once started.
+#[must_use = " the returned JoinHandle must be awaited"]
+pub fn spawn<'a, G, F, R>(name: &CStr, cpuset: &CpuSet, fut_gen: G) -> Result<JoinHandle<'a, F, R>>
+where
+    G: FnOnce() -> F + Send + 'a,
+    F: Future<Output = R> + 'a,
+    R: Send + 'static,
+{
+    let thread = Thread::new(name, cpuset)?;
+    let fut = fut_gen();
+    let task = RemoteTask::<'_, Thread, _, R>::with_future(Some(thread.borrow()), async move {
+        let res = fut.await;
+        drop(thread);
+        res
+    });
+
+    ArcTask::schedule_by_ref(&task);
+
+    Ok(JoinHandle::from_remote_task(task))
+}
+
+/// Creates a new [`Thread`] to execute an asynchronous task independently of the current task.
+///
+/// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
+/// that may not be `Send` once started.
+#[must_use = " the returned JoinHandle must be awaited"]
+pub fn spawn_detached<G, F, R>(name: &CStr, cpuset: &CpuSet, fut_gen: G) -> Result<()>
+where
+    G: FnOnce() -> F + Send + 'static,
+    F: Future<Output = R> + 'static,
+    R: Send + 'static,
+{
+    let thread = Thread::new(name, cpuset)?;
+    let fut = fut_gen();
+    let task = RemoteTask::<'_, Thread, _, R>::with_future(Some(thread.borrow()), async move {
+        let res = fut.await;
+        drop(thread);
+        res
+    });
+
+    ArcTask::schedule(task);
+
+    Ok(())
+}
+
 /// Spawns a new asynchronous task to be executed on the current SPDK thread and returns a
 /// [`JoinHandle`] to await results.
 #[must_use = " the returned JoinHandle must be awaited"]

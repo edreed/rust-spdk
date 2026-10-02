@@ -11,7 +11,7 @@ use crate::{
     Result,
     errors::ENOMEM,
     task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
-    thread::Thread,
+    thread::{self, Thread},
 };
 
 use super::{CpuCore, CpuCores, CpuSet, cpu_cores};
@@ -40,25 +40,19 @@ impl Reactor {
             return None;
         }
 
-        // Create a new SPDK thread for this reactor and bind it to the reactor's core.
+        // Spawn an asynchronous task to a new SPDK thread bound this this reactor's core to wait
+        // for the reactor to exit.
         let name = CString::new(format!("reactor_thread_{}", self.core().id())).unwrap();
-        let cpu_mask: CpuSet = self.core().into();
+        let cpuset: CpuSet = self.core().into();
 
-        let mut owned_thread = Thread::new(&name, &cpu_mask).expect("thread created");
-
-        owned_thread.bind(true);
-
-        // Spawn an asynchronous task to wait for the reactor to exit. We borrow the reactor thread
-        // so that we can transfer ownership to the asynchronous task and exit the thread when it is
-        // dropped.
         let (exit_sx, exit_rx) = oneshot::channel::<()>();
-        let borrowed_thread = owned_thread.borrow();
 
-        borrowed_thread.spawn_detached(move || async move {
-            let _ = exit_rx.await;
+        thread::spawn_detached(&name, &cpuset, async move || {
+            Thread::current().bind(true);
 
-            drop(owned_thread)
-        });
+            exit_rx.await
+        })
+        .expect("reactor thread spawned");
 
         // Return the `Sender` used to signal the reactor to exit.
         Some(exit_sx)
