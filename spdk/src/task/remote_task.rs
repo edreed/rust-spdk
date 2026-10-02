@@ -13,9 +13,10 @@ use parking_lot::Mutex;
 
 use crate::{
     runtime::Reactor,
-    task::{Executor, RawJoinHandleVTable, ResultState, TaskBase},
-    thread::Thread,
+    thread::{AsRawThread, Thread},
 };
+
+use super::{Executor, RawJoinHandleVTable, ResultState, TaskBase};
 
 /// A way of scheduling and executing an asynchronous task on a different executor in the SPDK Event
 /// Framework.
@@ -161,7 +162,7 @@ where
     F: Future<Output = R> + 'a,
     R: Send + 'static,
 {
-    executor: Option<E>,
+    executor: E,
     result: Mutex<ResultState<R>>,
     future: RefCell<F>,
     _marker: PhantomData<&'a F>,
@@ -175,13 +176,14 @@ where
 {
 }
 
-impl<'a, F, R> RemoteTask<'a, Thread, F, R>
+impl<'a, E, F, R> RemoteTask<'a, E, F, R>
 where
+    E: Executor + 'static,
     F: Future<Output = R> + 'a,
     R: Send + 'static,
 {
-    /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Thread`].
-    pub(crate) fn with_future(executor: Option<Thread>, fut: F) -> Arc<Self> {
+    /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Executor`].
+    pub(crate) fn new(executor: E, fut: F) -> Arc<Self> {
         Arc::new(Self {
             executor,
             result: Mutex::new(ResultState::Empty),
@@ -191,42 +193,24 @@ where
     }
 }
 
-impl<'a, F, R> TaskBase for RemoteTask<'a, Thread, F, R>
+impl<'a, F, R> TaskBase for RemoteTask<'a, Reactor, F, R>
 where
     F: Future<Output = R> + 'a,
     R: Send + 'static,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor
-            .as_ref()
-            .map(Thread::borrow)
-            .unwrap_or_else(Thread::application)
     }
 }
 
-impl<'a, F, R> RemoteTask<'a, Reactor, F, R>
+impl<'a, T, F, R> TaskBase for RemoteTask<'a, Thread<T>, F, R>
 where
-    R: Send + 'static,
+    T: AsRawThread,
     F: Future<Output = R> + 'a,
-{
-    /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Reactor`].
-    pub(crate) fn with_future(executor: Reactor, fut: F) -> Arc<Self> {
-        Arc::new(Self {
-            executor: Some(executor),
-            result: Mutex::new(ResultState::Empty),
-            future: RefCell::new(fut),
-            _marker: PhantomData,
-        })
-    }
-}
-
-impl<'a, F, R> TaskBase for RemoteTask<'a, Reactor, F, R>
-where
     R: Send + 'static,
-    F: Future<Output = R> + 'a,
 {
     fn executor(&self) -> impl Executor + 'static {
-        self.executor.unwrap()
+        self.executor.borrow()
     }
 }
 

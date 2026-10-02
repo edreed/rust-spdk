@@ -14,7 +14,7 @@ use libc::c_void;
 
 use crate::{
     errors::{EINVAL, Errno},
-    thread::Thread,
+    thread::{Borrowed, Thread},
     to_result,
 };
 
@@ -127,7 +127,7 @@ where
     E: Error,
 {
     state: RefCell<PromiseState<R, E>>,
-    thread: Thread,
+    thread: Thread<Borrowed>,
     ctx: C,
 }
 

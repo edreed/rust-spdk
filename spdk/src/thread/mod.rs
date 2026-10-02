@@ -11,37 +11,44 @@
 //! See [Message Passing and Concurrency] for more details on the SPDK threading model.
 //!
 //! [Message Passing and Concurrency]: https://spdk.io/doc/concurrency.html
+mod app;
+mod borrowed;
+mod owned;
+#[cfg(feature = "bdev")]
+mod owned_by;
+
 use std::{
     ffi::{CStr, c_void},
     fmt::{self, Debug, Formatter},
     future::Future,
     mem::MaybeUninit,
     pin::Pin,
-    ptr::NonNull,
     task::{Context, Poll},
 };
 
 use futures::task::noop_waker_ref;
 use spdk_sys::{
-    spdk_cpuset_copy, spdk_get_thread, spdk_thread, spdk_thread_bind, spdk_thread_create,
-    spdk_thread_exit, spdk_thread_get_app_thread, spdk_thread_get_by_id, spdk_thread_get_cpumask,
-    spdk_thread_get_id, spdk_thread_get_name, spdk_thread_is_bound, spdk_thread_is_running,
-    spdk_thread_poll, spdk_thread_send_msg,
+    spdk_cpuset_copy, spdk_thread, spdk_thread_bind, spdk_thread_get_cpumask, spdk_thread_get_id,
+    spdk_thread_get_name, spdk_thread_is_bound, spdk_thread_poll, spdk_thread_send_msg,
 };
 
 use crate::{
     Result,
-    errors::ENOMEM,
     runtime::CpuSet,
     task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
     to_result,
 };
 
-/// Represents the ownership state of a [`Thread`].
-#[derive(PartialEq)]
-enum OwnershipState {
-    Owned(NonNull<spdk_thread>),
-    Borrowed(NonNull<spdk_thread>),
+pub use app::App;
+pub use borrowed::Borrowed;
+pub use owned::Owned;
+#[cfg(feature = "bdev")]
+pub use owned_by::OwnedBy;
+
+/// A trait for SPDK thread types that provides access to the underlying raw `spdk_thread` pointer.
+pub trait AsRawThread {
+    /// Returns a raw pointer to the underlying `spdk_thread` structure.
+    fn as_raw_thread(&self) -> *mut spdk_thread;
 }
 
 /// An abstraction of a lightweight, stackless thread of execution.
@@ -49,140 +56,27 @@ enum OwnershipState {
 /// `Thread` wraps an `spdk_thread` pointer and can be in one of two ownership states: owned or
 /// borrowed.
 ///
+/// TODO: Refine documentation for new type-based ownership semantics.
+///
 /// An owned thread owns the underlying `spdk_thread` pointer and will mark it for exit when
 /// dropped. Any further processing requests on this thread will fail.
 ///
 /// A borrowed thread borrows the underlying `spdk_thread` pointer. Dropping a borrowed thread has
 /// no effect on the underlying `spdk_thread` pointer.
-#[derive(PartialEq)]
-pub struct Thread(OwnershipState);
+pub struct Thread<T>(T)
+where
+    T: AsRawThread;
 
-unsafe impl Send for Thread {}
-unsafe impl Sync for Thread {}
+unsafe impl<T> Send for Thread<T> where T: AsRawThread + Send {}
+unsafe impl<T> Sync for Thread<T> where T: AsRawThread + Sync {}
 
-impl Thread {
-    /// Creates a new owned thread.
-    ///
-    /// # Notes
-    ///
-    /// The thread object returned is owned by the caller. When dropped, the thread will be marked
-    /// for exit causing any further processing requests on this thread to fail.
-    pub fn new(name: &CStr, cpuset: &CpuSet) -> Result<Self> {
-        let t = unsafe { spdk_thread_create(name.as_ptr(), cpuset.as_ptr()) };
-
-        match NonNull::new(t) {
-            Some(t) => Ok(Self(OwnershipState::Owned(t))),
-            None => Err(ENOMEM),
-        }
-    }
-
-    /// Returns an owned thread object for the specified pointer.
-    pub fn from_ptr_owned(thread: *mut spdk_thread) -> Self {
-        match NonNull::new(thread) {
-            Some(t) => Self(OwnershipState::Owned(t)),
-            None => panic!("thread pointer must not be null"),
-        }
-    }
-
-    /// Returns a borrowed thread object for the specified pointer.
-    pub fn from_ptr(thread: *mut spdk_thread) -> Self {
-        match NonNull::new(thread) {
-            Some(t) => Self(OwnershipState::Borrowed(t)),
-            None => panic!("thread pointer must not be null"),
-        }
-    }
-
-    /// Returns a borrowed thread object for the specified non-null pointer.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `thread` is non-null and points to a valid `spdk_thread` object.
-    pub unsafe fn from_ptr_unchecked(thread: *mut spdk_thread) -> Self {
-        Self(OwnershipState::Borrowed(unsafe {
-            NonNull::new_unchecked(thread)
-        }))
-    }
-
-    /// Returns the borrowed thread with the specified unique identifier.
-    pub fn from_id(id: u64) -> Option<Self> {
-        unsafe {
-            let t = spdk_thread_get_by_id(id);
-
-            NonNull::new(t).map(|t| Self(OwnershipState::Borrowed(t)))
-        }
-    }
-
-    /// Tries to return the application thread object.
-    ///
-    /// The application thread is the thread that initialized the SPDK Application Framework.
-    ///
-    /// # Return
-    ///
-    /// If the Application Framework has been initialized, this function returns `Some(t)` where `t`
-    /// is the SPDK application thread object. Otherwise, this function returns `None`.
-    pub fn try_application() -> Option<Self> {
-        unsafe {
-            let t = spdk_thread_get_app_thread();
-
-            NonNull::new(t).map(|t| Self(OwnershipState::Borrowed(t)))
-        }
-    }
-
-    /// Returns the application thread object.
-    ///
-    /// The application thread is the thread that initialized the SPDK Application Framework.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the SPDK Application Framework has not been initialized.
-    pub fn application() -> Self {
-        Self::try_application().expect("SPDK Application Framework must be initialized")
-    }
-
-    /// Tries to return the current thread object.
-    ///
-    /// # Return
-    ///
-    /// If the current system thread is an SPDK thread, this function returns `Some(t)` where `t` is
-    /// the current SPDK thread object. Otherwise, this function returns `None`.
-    pub fn try_current() -> Option<Self> {
-        unsafe {
-            let t = spdk_get_thread();
-
-            NonNull::new(t).map(|t| Self(OwnershipState::Borrowed(t)))
-        }
-    }
-
-    /// Returns the current thread object.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the current system thread is not an SPDK thread.
-    pub fn current() -> Self {
-        Self::try_current().expect("must be called on SPDK thread")
-    }
-
-    /// Returns whether this thread is the current thread.
-    pub fn is_current(&self) -> bool {
-        if let Some(t) = Self::try_current() {
-            return *self == t;
-        }
-
-        false
-    }
-
+impl<T> Thread<T>
+where
+    T: AsRawThread,
+{
     /// Returns a pointer to the underlying `spdk_thread` structure.
-    pub(crate) fn as_ptr(&self) -> *const spdk_thread {
-        match self.0 {
-            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t.as_ptr(),
-        }
-    }
-
-    /// Returns a pointer to the mutable underlying `spdk_thread` structure.
-    pub(crate) fn as_mut_ptr(&mut self) -> *mut spdk_thread {
-        match self.0 {
-            OwnershipState::Borrowed(t) | OwnershipState::Owned(t) => t.as_ptr(),
-        }
+    fn as_ptr(&self) -> *mut spdk_thread {
+        self.0.as_raw_thread()
     }
 
     /// Borrows the thread object.
@@ -190,22 +84,12 @@ impl Thread {
     /// # Notes
     ///
     /// Dropping the borrow has no effect on the underlying thread object.
-    pub fn borrow(&self) -> Self {
-        let t = self.as_ptr();
-
-        assert!(
-            unsafe { spdk_thread_is_running(t as *mut _) },
-            "thread {} is no longer running",
-            self.name().to_string_lossy()
-        );
-
-        let t = unsafe { NonNull::new_unchecked(t as *mut _) };
-
-        Self(OwnershipState::Borrowed(t))
+    pub fn borrow(&self) -> Thread<Borrowed> {
+        Thread(unsafe { Borrowed::new_unchecked(self.as_ptr()) })
     }
 
     /// Returns the name of this thread.
-    pub fn name(&self) -> &'static CStr {
+    pub fn name(&self) -> &CStr {
         unsafe {
             let name = spdk_thread_get_name(self.as_ptr());
 
@@ -220,7 +104,16 @@ impl Thread {
 
     /// Bind or unbind the thread to its current CPU core.
     pub fn bind(&mut self, bind: bool) {
-        unsafe { spdk_thread_bind(self.as_mut_ptr(), bind) }
+        unsafe { spdk_thread_bind(self.as_ptr(), bind) }
+    }
+
+    /// Returns whether this thread is the current thread.
+    pub fn is_current(&self) -> bool {
+        if let Some(t) = Thread::<Borrowed>::try_current() {
+            return self.as_ptr() == t.as_ptr();
+        }
+
+        false
     }
 
     /// Returns whether the thread is bound to its current CPU core.
@@ -314,7 +207,7 @@ impl Thread {
         F: Future<Output = R> + 'a,
         R: Send + 'static,
     {
-        let task = RemoteTask::<'a, Thread, F, R>::with_future(Some(self.borrow()), fut_gen());
+        let task = RemoteTask::new(self.borrow(), fut_gen());
 
         ArcTask::schedule_by_ref(&task);
 
@@ -332,13 +225,65 @@ impl Thread {
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        let task = RemoteTask::<'_, Thread, F, R>::with_future(Some(self.borrow()), fut_gen());
+        let task = RemoteTask::new(self.borrow(), fut_gen());
 
         ArcTask::schedule(task);
     }
 }
 
-impl Executor for Thread {
+impl Thread<App> {
+    /// Returns the application thread object.
+    ///
+    /// The application thread is the thread that initialized the SPDK Application Framework.
+    pub fn application() -> Self {
+        Self(App)
+    }
+}
+
+impl Thread<Borrowed> {
+    /// Tries to return the current thread object.
+    ///
+    /// # Return
+    ///
+    /// If the current system thread is an SPDK thread, this function returns `Some(Self)`.
+    /// Otherwise, this function returns `None`.
+    pub fn try_current() -> Option<Self> {
+        Borrowed::try_current().map(Self)
+    }
+
+    /// Returns the current thread object.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the current system thread is not an SPDK thread.
+    pub fn current() -> Self {
+        Self::try_current().expect("must be called on SPDK thread")
+    }
+}
+
+impl Thread<Owned> {
+    /// Creates a new owned thread.
+    ///
+    /// # Notes
+    ///
+    /// The thread object returned is owned by the caller. When dropped, the thread will be marked
+    /// for exit causing any further processing requests on this thread to fail.
+    pub fn new(name: &CStr, cpuset: &CpuSet) -> Result<Self> {
+        Ok(Self(Owned::new(name, cpuset)?))
+    }
+}
+
+#[cfg(feature = "bdev")]
+impl<'a, T> Thread<OwnedBy<'a, T>> {
+    pub(crate) unsafe fn with_owner(owner: &'a T, thread: *mut spdk_thread) -> Self {
+        Self(unsafe { OwnedBy::with_owner(owner, thread) })
+    }
+}
+
+impl<T> Executor for Thread<T>
+where
+    T: AsRawThread,
+{
     fn is_current(&self) -> bool {
         self.is_current()
     }
@@ -351,31 +296,12 @@ impl Executor for Thread {
     }
 }
 
-impl Drop for Thread {
-    fn drop(&mut self) {
-        if let OwnershipState::Owned(_) = self.0 {
-            // SAFETY: The borrow here extends the lifetime of the underlying `spdk_thread` object
-            // until the sent message calls `spdk_thread_exit`.
-            let mut t = self.borrow();
-
-            // SAFETY: The `spdk_thread_exit` function must be called from a poller or thread
-            // message. We dispatch the call via thread message to ensure this invariant is
-            // satisfied.
-            self.send_msg(move || unsafe { _ = spdk_thread_exit(t.as_mut_ptr()) })
-                .expect("thread exit sent");
-        }
-    }
-}
-
-impl Debug for Thread {
+impl<T> Debug for Thread<T>
+where
+    T: AsRawThread,
+{
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Thread(\"{}\")", self.name().to_string_lossy())
-    }
-}
-
-impl From<*mut spdk_thread> for Thread {
-    fn from(value: *mut spdk_thread) -> Self {
-        Thread::from_ptr(value)
     }
 }
 
@@ -393,7 +319,7 @@ where
 {
     let thread = Thread::new(name, cpuset)?;
     let fut = fut_gen();
-    let task = RemoteTask::<'_, Thread, _, R>::with_future(Some(thread.borrow()), async move {
+    let task = RemoteTask::new(thread.borrow(), async move {
         let res = fut.await;
         drop(thread);
         res
@@ -417,7 +343,7 @@ where
 {
     let thread = Thread::new(name, cpuset)?;
     let fut = fut_gen();
-    let task = RemoteTask::<'_, Thread, _, R>::with_future(Some(thread.borrow()), async move {
+    let task = RemoteTask::new(thread.borrow(), async move {
         let res = fut.await;
         drop(thread);
         res
@@ -436,7 +362,7 @@ where
     F: Future<Output = R> + 'a,
     R: 'static,
 {
-    let task = LocalTask::<'a, Thread, F, R>::with_future(fut);
+    let task = LocalTask::new(Thread::current(), fut);
 
     RcTask::schedule_by_ref(&task);
 
@@ -450,7 +376,7 @@ where
     F: Future<Output = R> + 'static,
     R: 'static,
 {
-    let task = LocalTask::<'_, Thread, F, R>::with_future(fut);
+    let task = LocalTask::new(Thread::current(), fut);
 
     RcTask::schedule(task);
 }

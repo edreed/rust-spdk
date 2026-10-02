@@ -138,7 +138,7 @@ impl Reactor {
         F: Future<Output = R> + 'a,
         R: Send + 'static,
     {
-        let task = RemoteTask::<'a, Reactor, F, R>::with_future(*self, fut_gen());
+        let task = RemoteTask::new(*self, fut_gen());
 
         ArcTask::schedule_by_ref(&task);
 
@@ -156,7 +156,7 @@ impl Reactor {
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        let task = RemoteTask::<'_, Reactor, F, R>::with_future(*self, fut_gen());
+        let task = RemoteTask::new(*self, fut_gen());
 
         ArcTask::schedule(task);
     }
@@ -183,7 +183,7 @@ where
     F: Future<Output = R> + 'a,
     R: 'static,
 {
-    let task = LocalTask::<'a, Reactor, F, R>::with_future(fut);
+    let task = LocalTask::new(Reactor::current(), fut);
 
     RcTask::schedule_by_ref(&task);
 
@@ -197,7 +197,7 @@ where
     F: Future<Output = R> + 'static,
     R: 'static,
 {
-    let task = LocalTask::<'_, Reactor, F, R>::with_future(fut);
+    let task = LocalTask::new(Reactor::current(), fut);
 
     RcTask::schedule(task);
 }

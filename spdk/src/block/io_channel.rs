@@ -22,10 +22,10 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    block::{IoResult, OwnedBy},
+    block::{self, IoResult},
     errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
-    thread::Thread,
+    thread::{self, Thread},
     to_poll_pending_on_ok,
 };
 
@@ -90,14 +90,14 @@ impl IoChannel {
     }
 
     /// Returns the thread associated with this [`IoChannel`].
-    pub fn thread(&self) -> Thread {
+    pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
         // SAFETY: The thread associated with the I/O channel is guaranteed to
         // be non-null and valid.
-        unsafe { Thread::from_ptr_unchecked(spdk_io_channel_get_thread(self.channel.as_ptr())) }
+        unsafe { Thread::with_owner(self, spdk_io_channel_get_thread(self.channel.as_ptr())) }
     }
 
     /// Returns the block device associated with this [`IoChannel`].
-    pub fn device(&self) -> Device<OwnedBy<'_, Self>> {
+    pub fn device(&self) -> Device<block::OwnedBy<'_, Self>> {
         // SAFETY: The descriptor associated with the I/O channel is guaranteed
         // to be non-null and valid for the lifetime of the I/O channel.
         unsafe { Device::with_owner(self, spdk_bdev_desc_get_bdev(self.desc.as_ptr())) }

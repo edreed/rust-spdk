@@ -101,7 +101,8 @@ impl<'a, T> OwnedBy<'a, T> {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the provided `bdev` pointer is valid and non-null.
+    /// The caller must ensure that the provided `spdk_bdev` pointer is non-null and valid for the
+    /// lifetime of the owner.
     pub(crate) unsafe fn new_unchecked(bdev: *mut spdk_bdev) -> Self {
         Self(unsafe { NonNull::new_unchecked(bdev) }, PhantomData)
     }
