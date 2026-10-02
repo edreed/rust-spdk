@@ -193,26 +193,34 @@ where
 
     /// Initializes the module.
     unsafe extern "C" fn init() -> i32 {
-        thread::spawn_local_detached(async {
+        let init_fut = async {
             T::instance().ctx.init().await;
 
             unsafe {
                 spdk_bdev_module_init_done(T::instance().as_ptr());
             }
-        });
+        };
+
+        // SAFETY: The SPDK guarantees that the current thread lives until the
+        // `spdk_bdev_module_init_done` function is called and the initialization future completes.
+        unsafe { thread::spawn_local_detached(init_fut) };
 
         0
     }
 
     /// Finalizes the module.
     unsafe extern "C" fn fini() {
-        thread::spawn_local_detached(async {
+        let fini_fut = async {
             T::instance().ctx.fini().await;
 
             unsafe {
                 spdk_bdev_module_fini_done();
             }
-        });
+        };
+
+        // SAFETY: The SPDK guarantees that the current thread lives until the
+        // `spdk_bdev_module_fini_done` function is called and the finalization future completes.
+        unsafe { thread::spawn_local_detached(fini_fut) };
     }
 
     /// Returns the size in bytes of the per-I/O context.
@@ -247,12 +255,15 @@ where
     ///
     /// The default implementation claims no devices.
     unsafe extern "C" fn examine_disk(bdev: *mut spdk_bdev) {
-        thread::spawn_local_detached(async move {
+        let examine_fut = async move {
             let examiner = Examiner::new();
             // SAFETY: The `bdev` pointer is guaranteed to be non-null and valid for the lifetime of the examiner.
             let bdev = unsafe { Device::with_owner(&examiner, bdev) };
 
             T::instance().ctx.examine_disk(bdev).await;
-        });
+        };
+
+        // SAFETY: The SPDK guarantees that the current thread lives until the examine future completes.
+        unsafe { thread::spawn_local_detached(examine_fut) };
     }
 }

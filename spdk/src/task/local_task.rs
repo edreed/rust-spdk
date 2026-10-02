@@ -12,9 +12,10 @@ use futures::task::WakerRef;
 
 use crate::{
     runtime::Reactor,
-    task::{Executor, RawJoinHandleVTable, ResultState, TaskBase},
-    thread::Thread,
+    thread::{AsRawThread, Thread},
 };
+
+use super::{Executor, RawJoinHandleVTable, ResultState, TaskBase};
 
 /// A way of scheduling and executing an asynchronous task on the current executor in the SPDK Event
 /// Framework.
@@ -163,7 +164,7 @@ where
     F: Future<Output = T> + 'a,
     T: 'static,
 {
-    executor: Option<E>,
+    executor: E,
     result: RefCell<ResultState<T>>,
     future: RefCell<F>,
     _marker: PhantomData<&'a F>,
@@ -177,44 +178,16 @@ where
 {
 }
 
-impl<'a, F, R> LocalTask<'a, Thread, F, R>
+impl<'a, E, F, R> LocalTask<'a, E, F, R>
 where
+    E: Executor + 'static,
     F: Future<Output = R> + 'a,
     R: 'static,
 {
-    /// Constructs a new `LocalTask` from a [`Future`] to be scheduled on the current [`Thread`].
-    pub(crate) fn with_future(fut: F) -> Rc<Self> {
+    /// Constructs a new `LocalTask` from a [`Future`] to be scheduled on the specified [`Executor`].
+    pub(crate) fn new(executor: E, fut: F) -> Rc<Self> {
         Rc::new(Self {
-            executor: Thread::try_current(),
-            result: RefCell::new(ResultState::Empty),
-            future: RefCell::new(fut),
-            _marker: PhantomData,
-        })
-    }
-}
-
-impl<'a, F, R> TaskBase for LocalTask<'a, Thread, F, R>
-where
-    F: Future<Output = R> + 'a,
-    R: 'static,
-{
-    fn executor(&self) -> impl Executor + 'static {
-        self.executor
-            .as_ref()
-            .map(Thread::borrow)
-            .unwrap_or_else(Thread::application)
-    }
-}
-
-impl<'a, F, R> LocalTask<'a, Reactor, F, R>
-where
-    R: 'static,
-    F: Future<Output = R> + 'a,
-{
-    /// Constructs a new `LocalTask` from a [`Future`] to be scheduled on the current [`Reactor`].
-    pub(crate) fn with_future(fut: F) -> Rc<Self> {
-        Rc::new(Self {
-            executor: Some(Reactor::current()),
+            executor,
             result: RefCell::new(ResultState::Empty),
             future: RefCell::new(fut),
             _marker: PhantomData,
@@ -224,11 +197,24 @@ where
 
 impl<'a, F, R> TaskBase for LocalTask<'a, Reactor, F, R>
 where
-    R: 'static,
     F: Future<Output = R> + 'a,
+    R: 'static,
 {
     fn executor(&self) -> impl Executor + 'static {
-        self.executor.unwrap()
+        self.executor
+    }
+}
+
+impl<'a, T, F, R> TaskBase for LocalTask<'a, Thread<T>, F, R>
+where
+    T: AsRawThread,
+    F: Future<Output = R> + 'a,
+    R: 'static,
+{
+    fn executor(&self) -> impl Executor + 'static {
+        // SAFETY: The scheduling implementation only uses the returned owned thread instance for
+        // the scope of the scheduling function.
+        unsafe { self.executor.as_unowned() }
     }
 }
 

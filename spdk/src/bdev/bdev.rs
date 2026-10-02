@@ -26,8 +26,8 @@ use ternary_rs::if_else;
 use crate::{
     Result, Uuid,
     block::{
-        AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType, Owned,
-        OwnedBy, OwnedOps,
+        self, AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType,
+        Owned, OwnedOps,
     },
     errors::{EINVAL, ENOMEM, ENOTSUP, Errno},
     task::{Promise, Promissory},
@@ -117,8 +117,10 @@ where
     }
 
     /// Returns the thread associated with the I/O channel.
-    pub fn thread(&self) -> Thread {
-        unsafe { spdk_io_channel_get_thread(self.channel.as_ptr()).into() }
+    pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
+        // SAFETY: The thread associated with the I/O channel is guaranteed to be non-null and
+        // valid for the lifetime of the I/O channel.
+        unsafe { Thread::with_owner(self, spdk_io_channel_get_thread(self.channel.as_ptr())) }
     }
 }
 
@@ -201,14 +203,14 @@ where
 
     /// Returns the thread associated with the I/O request. The I/O request must be completed on
     /// this thread.
-    pub fn thread(&self) -> Thread {
+    pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
         // SAFETY: The thread associated with the I/O request is guaranteed to be non-null and
-        // valid.
-        unsafe { Thread::from_ptr_unchecked(spdk_bdev_io_get_thread(self.as_ptr())) }
+        // valid for the lifetime of the I/O request.
+        unsafe { Thread::with_owner(self, spdk_bdev_io_get_thread(self.as_ptr())) }
     }
 
     /// Returns the block device associated with the I/O request.
-    pub fn device(&self) -> Device<OwnedBy<'_, Self>> {
+    pub fn device(&self) -> Device<block::OwnedBy<'_, Self>> {
         // SAFETY: The block device associated with the I/O request is guaranteed to be non-null and
         // valid for the lifetime of the I/O request.
         unsafe { Device::with_owner(self, self.io.as_ref().bdev) }
@@ -545,7 +547,7 @@ where
 
     /// Destroys the BDev instance.
     unsafe extern "C" fn destruct(ctx: *mut c_void) -> i32 {
-        thread::spawn_local_detached(async move {
+        let destruct_fut = async move {
             let mut this = unsafe { Self::from_ctx_ptr(ctx as *mut T) };
 
             let rc = match this.ctx.destruct().await {
@@ -564,7 +566,14 @@ where
                     Box::leak(this);
                 }
             }
-        });
+        };
+
+        // SAFETY: By returning `1` from this function, we inform the SPDK that the destruction is
+        // asynchronous. The SPDK guarantees that the current thread lives until the
+        // `spdk_bdev_destruct_done` function is called and the future completes.
+        unsafe {
+            thread::spawn_local_detached(destruct_fut);
+        }
 
         1
     }
@@ -604,14 +613,17 @@ where
         let mut io_channel = unsafe { BDevIoChannel::<T::IoChannel>::from_raw(io_channel) };
         let mut io = unsafe { BDevIo::new_in_place(io) };
 
-        debug_assert!(Thread::try_current().is_some());
+        debug_assert!(io.thread().is_current());
 
-        thread::spawn_local_detached(async move {
+        let submit_fut = async move {
             let res = io_channel.ctx_mut().submit_request(&mut io).await;
 
             // SAFETY: The I/O is completed on the submission thread.
             unsafe { io.complete(res.map_err(Into::into)) };
-        });
+        };
+
+        // SAFETY: The SPDK guarantees that the current thread lives until the I/O completes.
+        unsafe { thread::spawn_local_detached(submit_fut) };
     }
 
     /// Gets an I/O channel for the BDev for the calling thread.

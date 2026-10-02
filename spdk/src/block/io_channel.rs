@@ -22,10 +22,10 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    block::{IoResult, OwnedBy},
+    block::{self, IoResult},
     errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
-    thread::Thread,
+    thread::{self, Thread},
     to_poll_pending_on_ok,
 };
 
@@ -79,9 +79,8 @@ pub struct IoChannel {
 impl IoChannel {
     /// Creates a new [`IoChannel`].
     pub(crate) fn new(desc: &Descriptor) -> Result<Self> {
-        // SAFETY: `desc` is guaranteed to contain a non-null pointer. The SPDK
-        // also guarantees the descriptor will live as long as there are
-        // outstanding I/O channels.
+        // SAFETY: `desc` is guaranteed to contain a non-null pointer. The SPDK also guarantees the
+        // descriptor will live as long as there are outstanding I/O channels.
         let desc = unsafe { NonNull::new_unchecked(desc.as_ptr()) };
         let channel = unsafe { spdk_bdev_get_io_channel(desc.as_ptr()) };
 
@@ -92,16 +91,16 @@ impl IoChannel {
     }
 
     /// Returns the thread associated with this [`IoChannel`].
-    pub fn thread(&self) -> Thread {
-        // SAFETY: The thread associated with the I/O channel is guaranteed to
-        // be non-null and valid.
-        unsafe { Thread::from_ptr_unchecked(spdk_io_channel_get_thread(self.channel.as_ptr())) }
+    pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
+        // SAFETY: The thread associated with the I/O channel is guaranteed to be non-null and
+        // valid for the lifetime of the I/O channel.
+        unsafe { Thread::with_owner(self, spdk_io_channel_get_thread(self.channel.as_ptr())) }
     }
 
     /// Returns the block device associated with this [`IoChannel`].
-    pub fn device(&self) -> Device<OwnedBy<'_, Self>> {
-        // SAFETY: The descriptor associated with the I/O channel is guaranteed
-        // to be non-null and valid for the lifetime of the I/O channel.
+    pub fn device(&self) -> Device<block::OwnedBy<'_, Self>> {
+        // SAFETY: The descriptor associated with the I/O channel is guaranteed to be non-null and
+        // valid for the lifetime of the I/O channel.
         unsafe { Device::with_owner(self, spdk_bdev_desc_get_bdev(self.desc.as_ptr())) }
     }
 
@@ -133,15 +132,14 @@ impl IoChannel {
 
     /// Waits for an I/O to become available.
     ///
-    /// When an I/O submission function returns `ENOMEM`, it means the I/O
-    /// buffer pool has no available buffers on this thread. This function waits
-    /// for an I/O buffer to become available.
+    /// When an I/O submission function returns `ENOMEM`, it means the I/O buffer pool has no
+    /// available buffers on this thread. This function waits for an I/O buffer to become available.
     ///
-    /// This function must only be called after one of the I/O submission
-    /// functions returns `ENOMEM`.
+    /// This function must only be called after one of the I/O submission functions returns
+    /// `ENOMEM`.
     ///
-    /// This function returns `Err(EINVAL)` if the I/O channel an I/O buffer is
-    /// available on the current thread..
+    /// This function returns `Err(EINVAL)` if the I/O channel an I/O buffer is available on the
+    /// current thread..
     async fn wait_io_available(&mut self) -> IoResult<()> {
         let ch = self.channel;
 
@@ -235,8 +233,8 @@ impl IoChannel {
         Promissory::set_result(p, res);
     }
 
-    /// Executes an I/O operation, queuing the I/O for later execution if there
-    /// are no `spdk_bdev_io` structures available.
+    /// Executes an I/O operation, queuing the I/O for later execution if there are no
+    /// `spdk_bdev_io` structures available.
     async fn execute_io<F, T>(&mut self, data: PhantomData<T>, mut start_fn: F) -> IoResult<()>
     where
         F: FnMut(&mut Self, &mut Rc<IoPromissory<T>>) -> Poll<IoResult<()>>,
@@ -279,8 +277,7 @@ impl IoChannel {
         .await
     }
 
-    /// Writes the data in the buffer to the block device at the specified
-    /// byte offset.
+    /// Writes the data in the buffer to the block device at the specified byte offset.
     pub async fn write_at<'a, B: AsRef<[u8]>>(
         &'a mut self,
         buf: &'a B,
@@ -311,8 +308,7 @@ impl IoChannel {
         .await
     }
 
-    /// Writes the data in the slice of buffers to the block device at the specified
-    /// byte offset.
+    /// Writes the data in the slice of buffers to the block device at the specified byte offset.
     pub async fn write_vectored_at<'a, B>(
         &'a mut self,
         bufs: &'a B,
@@ -348,8 +344,7 @@ impl IoChannel {
         .await
     }
 
-    /// Writes the data in the buffer to the block device at the specified
-    /// block offset.
+    /// Writes the data in the buffer to the block device at the specified block offset.
     ///
     /// The buffer length must be a multiple of the block size of the device.
     pub async fn write_blocks_at<'a, B: AsRef<[u8]>>(
@@ -388,8 +383,7 @@ impl IoChannel {
         .await
     }
 
-    /// Writes the data in the slice of buffers to the block device at the specified
-    /// block offset.
+    /// Writes the data in the slice of buffers to the block device at the specified block offset.
     pub async fn write_vectored_blocks_at<'a, B>(
         &'a mut self,
         bufs: &'a B,
@@ -479,8 +473,7 @@ impl IoChannel {
         .await
     }
 
-    /// Reads data from the block device at the specified byte offset into the
-    /// buffer.
+    /// Reads data from the block device at the specified byte offset into the buffer.
     pub async fn read_at<'a, B: AsMut<[u8]>>(
         &'a mut self,
         buf: &'a mut B,
@@ -510,8 +503,7 @@ impl IoChannel {
         .await
     }
 
-    /// Reads data from the block device at the specified byte offset into the
-    /// slice of buffers.
+    /// Reads data from the block device at the specified byte offset into the slice of buffers.
     pub async fn read_vectored_at<'a, B>(
         &'a mut self,
         bufs: &'a mut B,
@@ -547,8 +539,7 @@ impl IoChannel {
         .await
     }
 
-    /// Reads data from the block device at the specified block offset into the
-    /// buffer.
+    /// Reads data from the block device at the specified block offset into the buffer.
     ///
     /// The buffer must be a multiple of the block size of the device.
     pub async fn read_blocks_at<'a, B: AsMut<[u8]>>(
@@ -587,8 +578,7 @@ impl IoChannel {
         .await
     }
 
-    /// Reads data from the block device at the specified block offset into the
-    /// slice of buffers.
+    /// Reads data from the block device at the specified block offset into the slice of buffers.
     pub async fn read_vectored_blocks_at<'a, B>(
         &'a mut self,
         bufs: &'a mut B,
@@ -655,8 +645,7 @@ impl IoChannel {
         .await
     }
 
-    /// Notifies the block device that the specified range of bytes is no longer
-    /// valid.
+    /// Notifies the block device that the specified range of bytes is no longer valid.
     pub async fn unmap<'a>(&'a mut self, offset: u64, len: u64) -> IoResult<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));
@@ -681,8 +670,7 @@ impl IoChannel {
         .await
     }
 
-    /// Notifies the block device that the specified range of blocks is no longer
-    /// valid.
+    /// Notifies the block device that the specified range of blocks is no longer valid.
     pub async fn unmap_blocks<'a>(
         &'a mut self,
         offset_blocks: u64,
@@ -711,11 +699,10 @@ impl IoChannel {
         .await
     }
 
-    /// Flushes the specified range of bytes from the volatile cache to the
-    /// block device.
+    /// Flushes the specified range of bytes from the volatile cache to the block device.
     ///
-    /// For devices with volatile cache, data is not guaranteed to be persistent
-    /// until the completion of the flush operation.
+    /// For devices with volatile cache, data is not guaranteed to be persistent until the
+    /// completion of the flush operation.
     pub async fn flush<'a>(&'a mut self, offset: u64, len: u64) -> IoResult<()> {
         self.execute_io(PhantomData::<&'a mut Self>, |this, p| {
             let (cb_fn, cb_arg) = (Self::io_complete, Promissory::into_raw(p.clone()));

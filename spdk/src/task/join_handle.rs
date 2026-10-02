@@ -47,6 +47,7 @@ where
 /// it or obtain its result.
 ///
 /// A [`JoinHandle`] is created when a task is spawned.
+#[must_use = "this JoinHandle must be awaited to ensure proper lifetime management"]
 pub struct JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,

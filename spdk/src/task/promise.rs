@@ -14,8 +14,7 @@ use libc::c_void;
 
 use crate::{
     errors::{EINVAL, Errno},
-    thread::Thread,
-    to_result,
+    thread, to_result,
 };
 
 #[cfg_attr(doc, aquamarine::aquamarine)]
@@ -120,7 +119,6 @@ where
     E: Error,
 {
     state: RefCell<PromiseState<R, E>>,
-    thread: Thread,
     ctx: C,
 }
 
@@ -134,7 +132,6 @@ where
     pub fn with_context(ctx: C) -> Rc<Self> {
         Rc::new(Self {
             state: Default::default(),
-            thread: Thread::current(),
             ctx,
         })
     }
@@ -149,7 +146,6 @@ where
     {
         Rc::new_cyclic(|weak_self| Self {
             state: Default::default(),
-            thread: Thread::current(),
             ctx: data_fn(weak_self),
         })
     }
@@ -176,7 +172,6 @@ where
     {
         let this = Rc::new(Promissory::<R, E, _> {
             state: Default::default(),
-            thread: Thread::current(),
             ctx: UnsafeCell::new(MaybeUninit::zeroed()),
         });
 
@@ -222,11 +217,6 @@ where
 
     /// Sets the result of the operation and awakens the [`Promise`] awaiting the result.
     pub fn set_result(rc_self: Rc<Self>, res: Result<R, E>) {
-        assert!(
-            rc_self.thread.is_current(),
-            "set_result called from wrong thread"
-        );
-
         let prev_state = match rc_self.state.try_borrow_mut() {
             Ok(mut state) => Ok(state.set_kept(res)),
             Err(_) => Err(res),
@@ -239,11 +229,13 @@ where
                 _ => panic!("promise kept in unexpected state: {:?}", prev_state),
             },
             Err(res) => {
-                Thread::current()
-                    .send_msg(move || {
-                        Self::set_result(rc_self, res);
-                    })
-                    .expect("send result");
+                thread::with_current(|current| {
+                    current
+                        .send_msg(move || {
+                            Self::set_result(rc_self, res);
+                        })
+                        .expect("send result");
+                });
             }
         }
     }
@@ -265,14 +257,7 @@ where
     ///
     /// See [`Rc<T>::from_raw`] for safety requirements.
     pub unsafe fn from_raw(raw: *const Self) -> Rc<Self> {
-        let rc_self = unsafe { Rc::from_raw(raw) };
-
-        assert!(
-            rc_self.thread.is_current(),
-            "from_raw called from wrong thread"
-        );
-
-        rc_self
+        unsafe { Rc::from_raw(raw) }
     }
 }
 
@@ -362,7 +347,6 @@ where
     fn default() -> Self {
         Self {
             state: Default::default(),
-            thread: Thread::current(),
             ctx: Default::default(),
         }
     }

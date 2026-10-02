@@ -11,7 +11,7 @@ use crate::{
     Result,
     errors::ENOMEM,
     task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
-    thread::{self, Thread},
+    thread,
 };
 
 use super::{CpuCore, CpuCores, CpuSet, cpu_cores};
@@ -48,7 +48,7 @@ impl Reactor {
         let (exit_sx, exit_rx) = oneshot::channel::<()>();
 
         thread::spawn_detached(&name, &cpuset, async move || {
-            Thread::current().bind(true);
+            thread::with_current(|current| current.bind(true));
 
             exit_rx.await
         })
@@ -131,14 +131,13 @@ impl Reactor {
     ///
     /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
     /// that may not be `Send` once started.
-    #[must_use = " the returned JoinHandle must be awaited"]
     pub fn spawn<'a, G, F, R>(&self, fut_gen: G) -> JoinHandle<'a, F, R>
     where
         G: FnOnce() -> F + Send + 'a,
         F: Future<Output = R> + 'a,
         R: Send + 'static,
     {
-        let task = RemoteTask::<'a, Reactor, F, R>::with_future(*self, fut_gen());
+        let task = RemoteTask::new(*self, fut_gen());
 
         ArcTask::schedule_by_ref(&task);
 
@@ -156,7 +155,7 @@ impl Reactor {
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        let task = RemoteTask::<'_, Reactor, F, R>::with_future(*self, fut_gen());
+        let task = RemoteTask::new(*self, fut_gen());
 
         ArcTask::schedule(task);
     }
@@ -177,13 +176,12 @@ impl Executor for Reactor {
 
 /// Spawns a new asynchronous task to be executed on the current SPDK reactor and returns a
 /// [`JoinHandle`] to await results.
-#[must_use = " the returned JoinHandle must be awaited"]
 pub fn spawn_local<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
     R: 'static,
 {
-    let task = LocalTask::<'a, Reactor, F, R>::with_future(fut);
+    let task = LocalTask::new(Reactor::current(), fut);
 
     RcTask::schedule_by_ref(&task);
 
@@ -197,7 +195,7 @@ where
     F: Future<Output = R> + 'static,
     R: 'static,
 {
-    let task = LocalTask::<'_, Reactor, F, R>::with_future(fut);
+    let task = LocalTask::new(Reactor::current(), fut);
 
     RcTask::schedule(task);
 }
