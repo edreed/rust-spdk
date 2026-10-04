@@ -70,13 +70,6 @@ where
     Fulfilled,
 }
 
-unsafe impl<T, E> Send for PromiseState<T, E>
-where
-    T: Debug + Send + 'static,
-    E: Error + Send + 'static,
-{
-}
-
 impl<T, E> PromiseState<T, E>
 where
     T: Debug,
@@ -410,13 +403,6 @@ pub struct Promise<R, E, C = ()>(Rc<Promissory<R, E, C>>)
 where
     R: Debug,
     E: Error;
-
-unsafe impl<R, E, C> Send for Promise<R, E, C>
-where
-    R: Debug + Send + 'static,
-    E: Error + Send + 'static,
-{
-}
 
 impl<R, E> Promise<R, E>
 where
