@@ -1,5 +1,6 @@
 use std::{
     ffi::{CStr, c_int, c_void},
+    mem::transmute,
     ptr::{NonNull, null_mut},
 };
 
@@ -72,14 +73,18 @@ pub(crate) async fn open_desc(name: &CStr, write: bool) -> Result<NonNull<spdk_b
 /// `spdk_bdev_desc` must be closed on the same `spdk_thread` on which it was opened. It is
 /// therefore not marked as `Send`, though it is `Sync`.
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct Descriptor(NonNull<spdk_bdev_desc>);
 
 unsafe impl Sync for Descriptor {}
 
 impl Descriptor {
     /// Open a block device by its name.
-    pub async fn open(name: &CStr, write: bool) -> Result<Descriptor> {
-        open_desc(name, write).await.map(Descriptor)
+    pub async fn open(name: &CStr, write: bool) -> Result<Self> {
+        let desc = open_desc(name, write).await?;
+
+        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev_desc>`.
+        Ok(unsafe { transmute::<NonNull<spdk_bdev_desc>, Self>(desc) })
     }
 
     /// Returns a pointer to the underlying `spdk_bdev_desc` struct.

@@ -1,4 +1,4 @@
-use std::{ffi::CStr, ptr::NonNull};
+use std::{ffi::CStr, mem::transmute, ptr::NonNull};
 
 use spdk_sys::{
     spdk_bdev, spdk_bdev_close, spdk_bdev_desc, spdk_bdev_desc_get_bdev, spdk_bdev_get_name,
@@ -17,6 +17,7 @@ use super::{AsRawBDev, descriptor::open_desc};
 /// object should be prepared to handle these errors and fail gracefully.
 ///
 /// [`Device`]: super::Device
+#[repr(transparent)]
 pub struct Any(NonNull<spdk_bdev_desc>);
 
 unsafe impl Send for Any {}
@@ -33,7 +34,7 @@ impl Any {
     /// # Safety
     ///
     /// `bdev` must be non-null and a pointer to a valid `spdk_bdev` structure.
-    pub(crate) async unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Any> {
+    pub(crate) async unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Self> {
         Self::with_name(unsafe { CStr::from_ptr(spdk_bdev_get_name(bdev)) }).await
     }
 
@@ -44,8 +45,11 @@ impl Any {
     /// This method returns `Ok(any)` if a block device with the given name exists and a descriptor
     /// can be successfully opened. It returns an error if it fails to open a descriptor on
     /// the block device.
-    pub(crate) async fn with_name(name: &CStr) -> Result<Any> {
-        open_desc(name, false).await.map(Any)
+    pub(crate) async fn with_name(name: &CStr) -> Result<Self> {
+        let desc = open_desc(name, false).await?;
+
+        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev_desc>`.
+        Ok(unsafe { transmute::<NonNull<spdk_bdev_desc>, Self>(desc) })
     }
 }
 

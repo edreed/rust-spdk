@@ -78,6 +78,7 @@ impl BDevIoChannelOps for () {
 /// A BDev I/O channel implementation.
 ///
 /// The type parameter `T` is the I/O channel context type for the BDev implementation.
+#[repr(transparent)]
 pub struct BDevIoChannel<T>
 where
     T: BDevIoChannelOps,
@@ -101,10 +102,8 @@ where
     ///
     /// The caller must guarantee that the raw pointer is non-null and valid.
     unsafe fn from_raw(channel: *mut spdk_io_channel) -> Self {
-        Self {
-            channel: unsafe { NonNull::new_unchecked(channel) },
-            _ctx: PhantomData,
-        }
+        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_io_channel>`.
+        unsafe { transmute(NonNull::new_unchecked(channel)) }
     }
 
     /// Returns a reference to the I/O channel context.
@@ -159,6 +158,7 @@ where
 /// A BDev I/O request.
 ///
 /// The type parameter `T` is the I/O context type for the BDev implementation.
+#[repr(transparent)]
 pub struct BDevIo<T>
 where
     T: Default + 'static,
@@ -183,12 +183,10 @@ where
                 .driver_ctx
                 .as_mut_ptr()
                 .cast::<BDevIoCtx<T>>()
-                .write(Default::default())
-        };
+                .write(Default::default());
 
-        Self {
-            io: NonNull::new(io).unwrap(),
-            _ctx: PhantomData,
+            // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev_io>`.
+            transmute(NonNull::new_unchecked(io))
         }
     }
     /// Returns the raw pointer to the I/O request.
@@ -980,6 +978,7 @@ where
 }
 
 /// A wrapper that enables [`Device`] to own a custom BDev implementation.
+#[repr(transparent)]
 pub(crate) struct OwnedImpl<T: BDevOps>(Box<BDevImpl<T>>);
 
 unsafe impl<T: BDevOps> Send for OwnedImpl<T> {}
@@ -987,7 +986,7 @@ unsafe impl<T: BDevOps> Send for OwnedImpl<T> {}
 impl<T: BDevOps> OwnedImpl<T> {
     /// Creates a new owned BDev instance with the specified BDev implementation.
     pub(crate) fn new(bdev: Box<BDevImpl<T>>) -> Self {
-        Self(bdev)
+        unsafe { transmute(bdev) }
     }
 }
 

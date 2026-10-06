@@ -2,7 +2,7 @@ use std::{
     fmt::{self, Debug, Formatter},
     io::{IoSlice, IoSliceMut},
     marker::PhantomData,
-    mem,
+    mem::{self, transmute},
     os::raw::c_void,
     ptr::{NonNull, addr_of, addr_of_mut},
     rc::{Rc, Weak},
@@ -45,6 +45,7 @@ type IoWaitPromissory<'a> = Promissory<(), IoError, IoWait<'a>>;
 
 /// A wrapper around [`spdk_bdev_io_wait_entry`] that manages ownership of a weak pointer to the
 /// [`Promissory`] instance awaiting availability of an [`spdk_bdev_io`] structure.
+#[repr(transparent)]
 struct IoWait<'a>(spdk_bdev_io_wait_entry, PhantomData<&'a mut IoChannel>);
 
 impl<'a> IoWait<'a> {
@@ -56,7 +57,8 @@ impl<'a> IoWait<'a> {
         wait.cb_fn = Some(IoChannel::wait_io_complete);
         wait.cb_arg = p.clone().into_raw() as *mut _;
 
-        Self(wait, PhantomData)
+        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev_io_wait_entry>`.
+        unsafe { transmute(wait) }
     }
 }
 
