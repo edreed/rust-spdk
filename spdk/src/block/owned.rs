@@ -1,7 +1,7 @@
 use std::{
     future::Future,
     marker::PhantomData,
-    mem::{self},
+    mem::{self, transmute},
     pin::Pin,
     ptr::NonNull,
 };
@@ -91,6 +91,7 @@ impl OwnedOps for Owned {
 ///
 /// This type is used to scope the lifetime of a borrowed block device to the lifetime of its owner,
 /// `T`.
+#[repr(transparent)]
 pub struct OwnedBy<'a, T>(NonNull<spdk_bdev>, PhantomData<&'a T>);
 
 unsafe impl<'a, T> Send for OwnedBy<'a, T> {}
@@ -103,7 +104,8 @@ impl<'a, T> OwnedBy<'a, T> {
     ///
     /// The caller must ensure that the provided `bdev` pointer is valid and non-null.
     pub(crate) unsafe fn new_unchecked(bdev: *mut spdk_bdev) -> Self {
-        Self(unsafe { NonNull::new_unchecked(bdev) }, PhantomData)
+        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev>`.
+        unsafe { transmute(NonNull::new_unchecked(bdev)) }
     }
 }
 

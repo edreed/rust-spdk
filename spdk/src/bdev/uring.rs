@@ -22,6 +22,7 @@ use crate::{
 /// `Uring` instance.
 ///
 /// [`build`]: Builder::build
+#[repr(transparent)]
 pub struct Builder(bdev_uring_opts);
 
 unsafe impl Send for Builder {}
@@ -93,6 +94,7 @@ impl Default for Builder {
 /// ```no_run
 #[doc = include_str!("../../examples/bdev_uring.rs")]
 /// ```
+#[repr(transparent)]
 pub struct Uring(NonNull<spdk_bdev>);
 
 unsafe impl Send for Uring {}

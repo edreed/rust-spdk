@@ -91,6 +91,7 @@ impl Default for Builder {
 }
 
 /// Represents a Malloc Block Device.
+#[repr(transparent)]
 pub struct Malloc(NonNull<spdk_bdev>);
 
 unsafe impl Send for Malloc {}

@@ -1,5 +1,6 @@
 use std::{
     ffi::{CStr, CString},
+    mem::transmute,
     os::unix::ffi::OsStrExt,
     path::Path,
     ptr::{NonNull, null},
@@ -26,6 +27,7 @@ use crate::{
 /// ```no_run
 #[doc = include_str!("../../examples/bdev_aio.rs")]
 /// ```
+#[repr(transparent)]
 pub struct Aio(NonNull<spdk_bdev>);
 
 unsafe impl Send for Aio {}
@@ -72,10 +74,11 @@ impl Aio {
             ))?
         }
 
-        match NonNull::new(unsafe { spdk_bdev_get_by_name(name.as_ptr()) }) {
-            Some(bdev) => Ok(Device::new(Aio(bdev))),
-            None => Err(EINVAL),
-        }
+        let desc = NonNull::new(unsafe { spdk_bdev_get_by_name(name.as_ptr()) }).ok_or(EINVAL)?;
+
+        // SAFETY: `Aio` is a transparent wrapper around `NonNull<spdk_bdev>`, and `desc` is
+        // guaranteed to be non-null.
+        Ok(unsafe { transmute::<NonNull<spdk_bdev>, Device<Aio>>(desc) })
     }
 }
 

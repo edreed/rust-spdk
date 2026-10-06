@@ -44,6 +44,7 @@ pub trait AsRawBDev {
 /// manage the lifetime of the underlying `spdk_bdev` and may be shared by reference or by value
 /// across threads safely. It is both `Send` and `Sync` in this case as long as `T` is also `Send`
 /// and `Sync`.
+#[repr(transparent)]
 pub struct Device<T>(T)
 where
     T: AsRawBDev;
