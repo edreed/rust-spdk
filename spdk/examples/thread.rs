@@ -1,7 +1,11 @@
 use std::{ffi::CString, time::Duration};
 
 use futures::future::join_all;
-use spdk::{runtime::reactors, thread::Thread, time};
+use spdk::{
+    runtime::reactors,
+    thread::{self, Thread},
+    time,
+};
 
 #[spdk::main]
 async fn main() {
@@ -18,10 +22,9 @@ async fn main() {
             t.spawn(|| async {
                 time::sleep(Duration::from_secs(core.id() as u64)).await;
 
-                println!(
-                    "Hello, World from {}!",
-                    Thread::current().name().to_string_lossy()
-                );
+                thread::with_current(|current| {
+                    println!("Hello, World from {}!", current.name().to_string_lossy());
+                })
             })
             .await
         })

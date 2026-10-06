@@ -7,7 +7,7 @@ use std::{
     os::raw::{c_char, c_int},
     ptr::{addr_of_mut, null},
     rc::Rc,
-    sync::atomic::AtomicBool,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use spdk_sys::{
@@ -22,7 +22,7 @@ use crate::{
     errors::{EINVAL, Errno},
     runtime::{Reactor, reactors},
     task::{LocalTask, RcTask},
-    thread::Thread,
+    thread::{App, Thread},
 };
 
 /// Builds a runtime using the Application Framework component of the
@@ -163,7 +163,7 @@ impl Builder {
 
     /// A callback invoked when the process receives a signal to shut down.
     unsafe extern "C" fn shutdown() {
-        SHUTDOWN_STARTED.store(true, std::sync::atomic::Ordering::Relaxed);
+        SHUTDOWN_STARTED.store(true, Ordering::Relaxed);
     }
 }
 
@@ -204,7 +204,7 @@ impl Runtime {
 
     /// Returns whether the Application Framework is shutting down.
     pub fn is_shutting_down() -> bool {
-        SHUTDOWN_STARTED.load(std::sync::atomic::Ordering::Relaxed)
+        SHUTDOWN_STARTED.load(Ordering::Relaxed)
     }
 
     /// A callback invoked to start the application's main future on the
@@ -214,7 +214,7 @@ impl Runtime {
         F: Future<Output = ()> + 'static,
         F::Output: 'static,
     {
-        let task = unsafe { Rc::from_raw(ctx.cast::<LocalTask<Thread, F, ()>>()) };
+        let task = unsafe { Rc::from_raw(ctx.cast::<LocalTask<'_, Thread<App>, F, ()>>()) };
 
         RcTask::schedule(task);
     }
@@ -224,7 +224,7 @@ impl Runtime {
     where
         F: Future<Output = ()> + 'static,
     {
-        let task = LocalTask::<'_, Thread, F, ()>::with_future(fut);
+        let task = LocalTask::new(Thread::application(), fut);
         let ctx = Rc::into_raw(task).cast_mut();
 
         let res =

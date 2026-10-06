@@ -10,8 +10,8 @@ use spdk_sys::{spdk_event_allocate, spdk_event_call};
 use crate::{
     Result,
     errors::ENOMEM,
-    task::{self, Executor, JoinHandle},
-    thread::Thread,
+    task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
+    thread,
 };
 
 use super::{CpuCore, CpuCores, CpuSet, cpu_cores};
@@ -40,25 +40,19 @@ impl Reactor {
             return None;
         }
 
-        // Create a new SPDK thread for this reactor and bind it to the reactor's core.
+        // Spawn an asynchronous task to a new SPDK thread bound this this reactor's core to wait
+        // for the reactor to exit.
         let name = CString::new(format!("reactor_thread_{}", self.core().id())).unwrap();
-        let cpu_mask: CpuSet = self.core().into();
+        let cpuset: CpuSet = self.core().into();
 
-        let mut owned_thread = Thread::new(&name, &cpu_mask).expect("thread created");
-
-        owned_thread.bind(true);
-
-        // Spawn an asynchronous task to wait for the reactor to exit. We borrow the reactor thread
-        // so that we can transfer ownership to the asynchronous task and exit the thread when it is
-        // dropped.
         let (exit_sx, exit_rx) = oneshot::channel::<()>();
-        let borrowed_thread = owned_thread.borrow();
 
-        borrowed_thread.spawn_detached(move || async move {
-            let _ = exit_rx.await;
+        thread::spawn_detached(&name, &cpuset, async move || {
+            thread::with_current(|current| current.bind(true));
 
-            drop(owned_thread)
-        });
+            exit_rx.await
+        })
+        .expect("reactor thread spawned");
 
         // Return the `Sender` used to signal the reactor to exit.
         Some(exit_sx)
@@ -137,14 +131,17 @@ impl Reactor {
     ///
     /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
     /// that may not be `Send` once started.
-    #[must_use = " the returned JoinHandle must be awaited"]
     pub fn spawn<'a, G, F, R>(&self, fut_gen: G) -> JoinHandle<'a, F, R>
     where
         G: FnOnce() -> F + Send + 'a,
         F: Future<Output = R> + 'a,
         R: Send + 'static,
     {
-        task::spawn_on_reactor(*self, fut_gen)
+        let task = RemoteTask::new(*self, fut_gen());
+
+        ArcTask::schedule_by_ref(&task);
+
+        JoinHandle::from_remote_task(task)
     }
 
     /// Spawns a new asynchronous task to be executed on this reactor that will run to completion
@@ -158,7 +155,9 @@ impl Reactor {
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        task::spawn_on_reactor_detached(*self, fut_gen)
+        let task = RemoteTask::new(*self, fut_gen());
+
+        ArcTask::schedule(task);
     }
 }
 
@@ -177,13 +176,16 @@ impl Executor for Reactor {
 
 /// Spawns a new asynchronous task to be executed on the current SPDK reactor and returns a
 /// [`JoinHandle`] to await results.
-#[must_use = " the returned JoinHandle must be awaited"]
 pub fn spawn_local<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
     R: 'static,
 {
-    task::spawn_on_current_reactor(fut)
+    let task = LocalTask::new(Reactor::current(), fut);
+
+    RcTask::schedule_by_ref(&task);
+
+    JoinHandle::from_local_task(task)
 }
 
 /// Spawns a new asynchronous task to be executed on the current SPDK reactor that will run to
@@ -193,7 +195,9 @@ where
     F: Future<Output = R> + 'static,
     R: 'static,
 {
-    task::spawn_on_current_reactor_detached(fut)
+    let task = LocalTask::new(Reactor::current(), fut);
+
+    RcTask::schedule(task);
 }
 
 /// An iterator over the reactors for this runtime.

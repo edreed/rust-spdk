@@ -23,8 +23,7 @@ use crate::{
     errors::EINVAL,
     net::ToSocketAddrs,
     task::{Polled, Poller},
-    thread::Thread,
-    to_result,
+    thread, to_result,
 };
 
 use super::{
@@ -288,8 +287,10 @@ fn stream_poll_write(data: *const (), cx: &mut Context<'_>, buf: &[u8]) -> Poll<
         Poll::Pending => {
             let waker = cx.waker().clone();
 
-            Thread::current().send_msg(move || {
-                waker.wake();
+            thread::with_current(|current| {
+                current.send_msg(move || {
+                    waker.wake();
+                })
             })?;
             Poll::Pending
         }
@@ -485,6 +486,8 @@ impl Polled for SocketGroupInner {
 ///
 /// `SocketGroup` provides a more efficient polling mechanism for multiple TCP sockets than creating
 /// separate pollers for each.
+///
+/// [`Thread`]: crate::thread::Thread
 pub struct SocketGroup(Rc<Poller<SocketGroupInner>>);
 
 impl SocketGroup {
