@@ -9,7 +9,7 @@ use spdk_sys::{
 
 use crate::{
     Result, Uuid,
-    block::{AsRawBDev, Device, Owned, OwnedOps},
+    block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
     errors::EINVAL,
     task::{Promise, Promissory},
 };
@@ -72,12 +72,16 @@ impl Builder {
     /// The returned [`Device<Uring>`] instance owns the underlying `spdk_bdev`
     /// pointer and will destroy it when dropped. See [`Device<T>`] for a detailed
     /// discussion of ownership semantics and requirements.
-    pub fn build(self) -> Result<Device<Uring>> {
+    pub async fn build(self) -> Result<Device<Uring>> {
         let uring = unsafe { create_uring_bdev(&self.0) };
 
-        NonNull::new(uring)
+        let uring = NonNull::new(uring)
             .map(|ptr| Device::new(Uring(ptr)))
-            .ok_or(EINVAL)
+            .ok_or(EINVAL)?;
+
+        wait_for_examination().await?;
+
+        Ok(uring)
     }
 }
 

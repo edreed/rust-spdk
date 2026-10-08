@@ -54,6 +54,7 @@ async fn main() {
         .with_num_blocks(NUM_BLOCKS)
         .with_block_size(BLOCK_SIZE)
         .build()
+        .await
         .unwrap();
 
     let mut subsys = target.add_subsystem(NQN, SubsystemType::NVMe, 1).unwrap();

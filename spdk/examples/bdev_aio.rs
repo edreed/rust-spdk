@@ -34,6 +34,7 @@ async fn main() {
         None,
         false,
     )
+    .await
     .unwrap()
     .into_owned();
 

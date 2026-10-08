@@ -13,7 +13,7 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    block::{AsRawBDev, Device, Owned, OwnedOps},
+    block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
     errors::EINVAL,
     task::{Promise, Promissory},
     to_result,
@@ -50,7 +50,7 @@ impl Aio {
     /// # Returns
     ///
     /// Returns a `Result` containing a [`Device<Aio>`] instance that owns the newly created BDev if successful.
-    pub fn new<P: AsRef<Path>>(
+    pub async fn new<P: AsRef<Path>>(
         name: &CStr,
         filename: P,
         block_size: Option<u32>,
@@ -73,6 +73,8 @@ impl Aio {
                 nowait
             ))?
         }
+
+        wait_for_examination().await?;
 
         let desc = NonNull::new(unsafe { spdk_bdev_get_by_name(name.as_ptr()) }).ok_or(EINVAL)?;
 

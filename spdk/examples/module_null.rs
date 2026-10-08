@@ -44,8 +44,10 @@ unsafe impl Sync for NullRs {}
 
 impl NullRs {
     /// Creates a new NullRs block device.
-    pub fn try_new() -> spdk::Result<Device<Owned>> {
-        NullRsModule::new_bdev_builder(c"null-rs", 4096, 1).build()
+    pub async fn try_new() -> spdk::Result<Device<Owned>> {
+        NullRsModule::new_bdev_builder(c"null-rs", 4096, 1)
+            .build()
+            .await
     }
 }
 
@@ -68,7 +70,7 @@ impl BDevOps for NullRs {
 /// A program that creates and writes to the NullRs block device.
 #[spdk::main]
 async fn main() {
-    let null = NullRs::try_new().unwrap();
+    let null = NullRs::try_new().await.unwrap();
     let desc = null.open(true).await.unwrap();
     let mut ch = desc.io_channel().unwrap();
     let layout = null.layout_for_blocks(1).unwrap();

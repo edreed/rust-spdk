@@ -27,7 +27,7 @@ use crate::{
     Result, Uuid,
     block::{
         self, AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType,
-        Owned, OwnedOps,
+        Owned, OwnedOps, wait_for_examination,
     },
     errors::{EINVAL, ENOMEM, ENOTSUP, Errno},
     task::{Promise, Promissory},
@@ -475,7 +475,7 @@ where
 
     /// Registers the BDev with the SPDK subsystem. This function must be called from the SPDK
     /// application thread.
-    pub fn register(&mut self) -> Result<()> {
+    pub async fn register(&mut self) -> Result<()> {
         unsafe {
             spdk_io_device_register(
                 self.bdev.ctxt,
@@ -490,6 +490,8 @@ where
                 return Err(e);
             }
         }
+
+        wait_for_examination().await?;
 
         Ok(())
     }
@@ -919,7 +921,7 @@ where
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the context initialized to default values.
-    pub fn build(self) -> Result<Device<Owned>> {
+    pub async fn build(self) -> Result<Device<Owned>> {
         let mut bdev = Box::new(BDevImpl {
             bdev: unsafe { mem::zeroed() },
             ctx: C::default(),
@@ -929,7 +931,7 @@ where
         // point.
         unsafe { self.init_bdev(&mut bdev.bdev, addr_of_mut!(bdev.ctx) as *mut _) };
 
-        bdev.register()?;
+        bdev.register().await?;
 
         Ok(bdev.into_device())
     }
@@ -941,7 +943,7 @@ where
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the specified context.
-    pub fn build_with_context(self, ctx: C) -> Result<Device<Owned>> {
+    pub async fn build_with_context(self, ctx: C) -> Result<Device<Owned>> {
         let mut bdev = Box::new(BDevImpl {
             bdev: unsafe { mem::zeroed() },
             ctx,
@@ -951,7 +953,7 @@ where
         // point.
         unsafe { self.init_bdev(&mut bdev.bdev, addr_of_mut!(bdev.ctx) as *mut _) };
 
-        bdev.register()?;
+        bdev.register().await?;
 
         Ok(bdev.into_device())
     }
@@ -964,7 +966,7 @@ where
 {
     /// Builds and registers a new `BDev` instance, initializing the context in-place using the
     /// specified initialization function.
-    pub fn build_with_context_in_place<I>(self, init_fn: I) -> Result<Device<Owned>>
+    pub async fn build_with_context_in_place<I>(self, init_fn: I) -> Result<Device<Owned>>
     where
         I: FnOnce(Pin<&mut MaybeUninit<C>>),
     {
@@ -983,7 +985,7 @@ where
         let mut bdev =
             unsafe { transmute::<Box<BDevImpl<MaybeUninit<C>>>, Box<BDevImpl<C>>>(bdev) };
 
-        bdev.register()?;
+        bdev.register().await?;
 
         Ok(bdev.into_device())
     }
