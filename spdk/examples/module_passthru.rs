@@ -1,15 +1,19 @@
 use std::{
+    cell::RefCell,
     ffi::{CStr, CString},
     io::{Read, Write},
-    slice::{self},
+    slice,
 };
 
 use libc::EINVAL;
 use spdk::{
     bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
-    block::{ClaimType, Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned, OwnedOps},
+    block::{
+        self, ClaimType, Descriptor, Device, EventHandler, EventType, IoChannel, IoError, IoResult,
+        IoType, Owned, OwnedOps,
+    },
     dma::{self},
-    errors::ENOTSUP,
+    errors::{ENOTSUP, ENXIO},
     thread,
 };
 
@@ -18,7 +22,7 @@ use spdk::{
 struct PassthruRsModule;
 
 impl ModuleOps for PassthruRsModule {
-    type BDev = PassthruRs;
+    type BDev = PassthruRs<'static>;
 }
 
 struct PassthruRsChannel {
@@ -72,14 +76,15 @@ impl BDevIoChannelOps for PassthruRsChannel {
     }
 }
 
-struct PassthruRs {
-    desc: Descriptor,
+#[derive(Default)]
+struct PassthruRs<'a> {
+    desc: RefCell<Option<Descriptor<'a, Self>>>,
 }
 
-unsafe impl Send for PassthruRs {}
-unsafe impl Sync for PassthruRs {}
+unsafe impl Send for PassthruRs<'_> {}
+unsafe impl Sync for PassthruRs<'_> {}
 
-impl BDevOps for PassthruRs {
+impl BDevOps for PassthruRs<'_> {
     type IoChannel = PassthruRsChannel;
 
     async fn destruct(&mut self) -> spdk::Result<()> {
@@ -87,29 +92,42 @@ impl BDevOps for PassthruRs {
     }
 
     fn io_type_supported(&self, io_type: IoType) -> bool {
-        self.desc.device().io_type_supported(io_type)
+        self.desc
+            .borrow()
+            .as_ref()
+            .is_some_and(|desc| desc.device().io_type_supported(io_type))
     }
 
-    fn new_io_channel(&mut self) -> spdk::Result<PassthruRsChannel> {
-        let ch = self.desc.io_channel()?;
-
-        Ok(PassthruRsChannel { ch })
+    fn new_io_channel(&mut self) -> spdk::Result<Self::IoChannel> {
+        self.desc.borrow().as_ref().map_or(Err(ENXIO), |desc| {
+            Ok(Self::IoChannel {
+                ch: desc.io_channel()?,
+            })
+        })
     }
 }
 
-impl PassthruRs {
+impl EventHandler for PassthruRs<'_> {
+    fn handle_event(&self, event: EventType, _device: &Device<block::OwnedBy<'_, Self>>) {
+        if matches!(event, EventType::Remove) {
+            drop(self.desc.borrow_mut().take());
+        }
+    }
+}
+
+impl<'a> AsRef<PassthruRs<'a>> for PassthruRs<'a> {
+    fn as_ref(&self) -> &PassthruRs<'a> {
+        self
+    }
+}
+
+impl PassthruRs<'_> {
     pub async fn try_new<T>(base: &Device<T>) -> spdk::Result<Device<Owned>>
     where
         T: OwnedOps,
     {
         let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy()))
             .map_err(|_| EINVAL)?;
-        let desc = base
-            .claim(
-                ClaimType::ReadManyWriteOne(&name),
-                PassthruRsModule::instance(),
-            )
-            .await?;
 
         PassthruRsModule::new_bdev_builder(
             name.as_c_str(),
@@ -126,7 +144,21 @@ impl PassthruRs {
             base.is_dif_head_of_metadata(),
             base.dif_check_flags(),
         )
-        .build_with_context(PassthruRs { desc })
+        .build_with_context_in_place(async |ctx| {
+            let passthru = ctx.get_mut().write(PassthruRs::default());
+
+            let desc = base
+                .claim(
+                    ClaimType::ReadManyWriteOne(&name),
+                    PassthruRsModule::instance(),
+                    &passthru,
+                )
+                .await?;
+
+            passthru.desc.replace(Some(desc));
+
+            Ok(())
+        })
         .await
     }
 }

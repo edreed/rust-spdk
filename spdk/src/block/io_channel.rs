@@ -22,7 +22,7 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    block::{self, IoResult},
+    block::{self, EventHandler, IoResult},
     errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
     thread::{self, Thread},
@@ -78,7 +78,7 @@ pub struct IoChannel {
 
 impl IoChannel {
     /// Creates a new [`IoChannel`].
-    pub(crate) fn new(desc: &Descriptor) -> Result<Self> {
+    pub(crate) fn new<E: EventHandler>(desc: &Descriptor<'_, E>) -> Result<Self> {
         // SAFETY: `desc` is guaranteed to contain a non-null pointer. The SPDK also guarantees the
         // descriptor will live as long as there are outstanding I/O channels.
         let desc = unsafe { NonNull::new_unchecked(desc.as_ptr()) };

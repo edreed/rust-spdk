@@ -17,20 +17,14 @@ use spdk_sys::{
     spdk_bdev_is_dif_head_of_md, spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
 };
 
-#[cfg(feature = "bdev-module")]
-use ::spdk_sys::spdk_bdev_module_claim_bdev_desc;
-
 use crate::{Result, Uuid};
 
 #[cfg(feature = "bdev-module")]
-use crate::{
-    bdev::{Module, ModuleInstance, ModuleOps},
-    to_result,
-};
+use crate::bdev::{Module, ModuleInstance, ModuleOps};
 
 use super::{
-    Any, Descriptor, DifCheckFlag, DifCheckType, DifPiFormat, DifType, IoType, Owned, OwnedBy,
-    OwnedOps,
+    Any, Descriptor, DifCheckFlag, DifCheckType, DifPiFormat, DifType, EventHandler, IoType, Owned,
+    OwnedBy, OwnedOps,
 };
 
 #[cfg(feature = "bdev-module")]
@@ -84,8 +78,21 @@ where
     }
 
     /// Opens the device asynchronously.
-    pub async fn open(&self, write: bool) -> Result<Descriptor> {
+    pub async fn open(&self, write: bool) -> Result<Descriptor<'static, ()>> {
         Descriptor::open(self.name(), write).await
+    }
+
+    /// Opens the device asynchronously with a custom event handler.
+    pub async fn open_with_handler<'a, E, R>(
+        &self,
+        write: bool,
+        handler: R,
+    ) -> Result<Descriptor<'a, E>>
+    where
+        E: EventHandler + 'a,
+        R: AsRef<E>,
+    {
+        Descriptor::open_with_handler(self.name(), write, handler).await
     }
 
     /// Claims the block device with the specified claim type and module, returning an open [`Descriptor`].
@@ -95,22 +102,20 @@ where
     ///
     /// [`ReadManyWriteNone`]: ClaimType::ReadManyWriteNone
     #[cfg(feature = "bdev-module")]
-    pub async fn claim<M>(&self, type_: ClaimType<'_>, module: &Module<M>) -> Result<Descriptor>
+    pub async fn claim<'a, M, E, R>(
+        &self,
+        type_: ClaimType<'_>,
+        module: &Module<M>,
+        handler: R,
+    ) -> Result<Descriptor<'a, E>>
     where
         M: ModuleInstance<M> + ModuleOps + 'static,
+        E: EventHandler + 'a,
+        R: AsRef<E>,
     {
-        let (claim_type, mut opts) = type_.into_params()?;
+        let desc = self.open_with_handler(false, handler).await?;
 
-        let desc = self.open(false).await?;
-
-        unsafe {
-            to_result!(spdk_bdev_module_claim_bdev_desc(
-                desc.as_ptr(),
-                claim_type,
-                &mut opts as *mut _,
-                module.as_ptr()
-            ))
-        }?;
+        desc.claim(type_, module)?;
 
         Ok(desc)
     }

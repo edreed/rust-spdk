@@ -395,7 +395,7 @@ where
 /// A trait for implementing the BDev operations.
 ///
 /// The type parameter `IoChannel` is the I/O channel type for the BDev.
-pub trait BDevOps: Send + Sync + 'static {
+pub trait BDevOps: Send + Sync {
     type IoChannel: BDevIoChannelOps;
 
     /// Destroys the BDev.
@@ -457,8 +457,8 @@ where
 }
 
 unsafe impl<T> Send for BDevImpl<T> where T: BDevOps + Send + ?Sized {}
-
 unsafe impl<T> Sync for BDevImpl<T> where T: BDevOps + Sync + ?Sized {}
+
 impl<T> BDevImpl<T>
 where
     T: BDevOps,
@@ -917,7 +917,7 @@ where
 
 impl<'a, C, M> BDevBuilder<'a, C, M>
 where
-    C: BDevOps + Default + Unpin + 'static,
+    C: BDevOps + Default + Unpin,
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the context initialized to default values.
@@ -939,7 +939,7 @@ where
 
 impl<'a, C, M> BDevBuilder<'a, C, M>
 where
-    C: BDevOps + Unpin + 'static,
+    C: BDevOps + Unpin,
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the specified context.
@@ -961,14 +961,14 @@ where
 
 impl<'a, C, M> BDevBuilder<'a, C, M>
 where
-    C: BDevOps + 'static,
+    C: BDevOps,
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance, initializing the context in-place using the
     /// specified initialization function.
     pub async fn build_with_context_in_place<I>(self, init_fn: I) -> Result<Device<Owned>>
     where
-        I: FnOnce(Pin<&mut MaybeUninit<C>>),
+        I: AsyncFnOnce(Pin<&mut MaybeUninit<C>>) -> Result<()>,
     {
         let mut bdev = Box::new(BDevImpl {
             bdev: unsafe { mem::zeroed() },
@@ -979,7 +979,7 @@ where
         // on the line following this call and before the `BDev` is available globally.
         unsafe { self.init_bdev(&mut bdev.bdev, addr_of_mut!(bdev.ctx) as *mut _) };
 
-        init_fn(unsafe { Pin::new_unchecked(&mut bdev.ctx) });
+        init_fn(unsafe { Pin::new_unchecked(&mut bdev.ctx) }).await?;
 
         // SAFETY: The `BDev` is fully initialized at this point.
         let mut bdev =
