@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     ffi::{CStr, CString},
     io::{Read, Write},
     slice::{self},
@@ -8,7 +9,10 @@ use std::{
 use libc::EINVAL;
 use spdk::{
     bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleInstance, ModuleOps, malloc},
-    block::{ClaimType, Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned, OwnedOps},
+    block::{
+        self, ClaimType, Descriptor, Device, EventHandler, EventType, IoChannel, IoError, IoResult,
+        IoType, Owned, OwnedOps,
+    },
     dma::{self},
     errors::ENOTSUP,
     thread, time,
@@ -20,7 +24,7 @@ use spdk::{
 struct PassthruRsModule;
 
 impl ModuleOps for PassthruRsModule {
-    type BDev = PassthruRs;
+    type BDev = PassthruRs<'static>;
 }
 
 /// Implements the PassthruRs block device per-thread I/O channel context.
@@ -31,14 +35,23 @@ struct PassthruRsChannel {
 /// Implements the PassthruRs block device.
 ///
 /// This device passes through I/O requests to an underlying block device.
-struct PassthruRs {
-    desc: Descriptor,
+#[derive(Default)]
+struct PassthruRs<'a> {
+    desc: OnceCell<Descriptor<'a, Self>>,
 }
 
-unsafe impl Send for PassthruRs {}
-unsafe impl Sync for PassthruRs {}
+unsafe impl Send for PassthruRs<'_> {}
+unsafe impl Sync for PassthruRs<'_> {}
 
-impl BDevOps for PassthruRs {
+impl PassthruRs<'_> {
+    fn desc(&self) -> &Descriptor<'_, Self> {
+        self.desc
+            .get()
+            .expect("PassthruRs descriptor not initialized")
+    }
+}
+
+impl BDevOps for PassthruRs<'_> {
     type ChannelContext = PassthruRsChannel;
     type IoContext = ();
     type IoError = IoError;
@@ -48,13 +61,13 @@ impl BDevOps for PassthruRs {
     }
 
     fn io_type_supported(&self, io_type: IoType) -> bool {
-        self.desc.device().io_type_supported(io_type)
+        self.desc().device().io_type_supported(io_type)
     }
 
-    fn new_io_channel(&mut self) -> spdk::Result<PassthruRsChannel> {
-        let ch = self.desc.io_channel()?;
-
-        Ok(PassthruRsChannel { ch })
+    fn new_io_channel(&mut self) -> spdk::Result<Self::ChannelContext> {
+        Ok(Self::ChannelContext {
+            ch: self.desc().io_channel()?,
+        })
     }
 
     async fn handle_io(
@@ -73,7 +86,7 @@ impl BDevOps for PassthruRs {
                 io.allocate_buffers(num_blocks * block_size).await?;
                 base_ch
                     .read_vectored_blocks_at(
-                        &this.ctx().desc,
+                        this.ctx().desc(),
                         io.buffers_mut(),
                         offset_blocks,
                         num_blocks,
@@ -83,7 +96,7 @@ impl BDevOps for PassthruRs {
             IoType::Write => {
                 base_ch
                     .write_vectored_blocks_at(
-                        &this.ctx().desc,
+                        this.ctx().desc(),
                         io.buffers(),
                         io.offset_blocks(),
                         io.num_blocks(),
@@ -92,24 +105,24 @@ impl BDevOps for PassthruRs {
             }
             IoType::Unmap => {
                 base_ch
-                    .unmap_blocks(&this.ctx().desc, io.offset_blocks(), io.num_blocks())
+                    .unmap_blocks(this.ctx().desc(), io.offset_blocks(), io.num_blocks())
                     .await
             }
             IoType::Flush => {
                 base_ch
-                    .flush(&this.ctx().desc, io.offset_blocks(), io.num_blocks())
+                    .flush(this.ctx().desc(), io.offset_blocks(), io.num_blocks())
                     .await
             }
-            IoType::Reset => base_ch.reset(&this.ctx().desc).await,
+            IoType::Reset => base_ch.reset(this.ctx().desc()).await,
             IoType::WriteZeros => {
                 base_ch
-                    .write_zeroes_blocks_at(&this.ctx().desc, io.offset_blocks(), io.num_blocks())
+                    .write_zeroes_blocks_at(this.ctx().desc(), io.offset_blocks(), io.num_blocks())
                     .await
             }
             IoType::Copy => {
                 base_ch
                     .copy_blocks(
-                        &this.ctx().desc,
+                        this.ctx().desc(),
                         io.copy_source_offset_blocks(),
                         io.offset_blocks(),
                         io.num_blocks(),
@@ -121,17 +134,27 @@ impl BDevOps for PassthruRs {
     }
 }
 
-impl PassthruRs {
+impl EventHandler for PassthruRs<'_> {
+    fn handle_event(&self, event: EventType, _device: &Device<block::OwnedBy<'_, Self>>) {
+        if matches!(event, EventType::Remove) {
+            todo!();
+        }
+    }
+}
+
+impl<'a> AsRef<PassthruRs<'a>> for PassthruRs<'a> {
+    fn as_ref(&self) -> &PassthruRs<'a> {
+        self
+    }
+}
+
+impl PassthruRs<'_> {
     pub async fn new_device<T>(base: &Device<T>) -> spdk::Result<Device<Owned>>
     where
         T: OwnedOps,
     {
         let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy()))
             .map_err(|_| EINVAL)?;
-        let desc = base.claim(
-            ClaimType::ReadManyWriteOne(&name),
-            PassthruRsModule::instance(),
-        )?;
 
         PassthruRsModule::new_bdev_builder(
             name.as_c_str(),
@@ -148,7 +171,18 @@ impl PassthruRs {
             base.is_dif_head_of_metadata(),
             base.dif_check_flags(),
         )
-        .build_with_context(PassthruRs { desc })
+        .build_with_context_in_place(async |mut ctx| {
+            let passthru = ctx.write(PassthruRs::default());
+            let desc = base.claim(
+                ClaimType::ReadManyWriteOne(&name),
+                PassthruRsModule::instance(),
+                &passthru,
+            )?;
+
+            passthru.desc.set(desc).map_err(|_| EINVAL)?;
+
+            Ok(())
+        })
         .await
     }
 }

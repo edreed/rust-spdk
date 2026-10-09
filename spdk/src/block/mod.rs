@@ -11,7 +11,7 @@ mod io_channel;
 mod owned;
 
 pub use any::Any;
-pub use descriptor::Descriptor;
+pub use descriptor::{Descriptor, EventHandler, EventType};
 pub use device::{AsRawBDev, Device, devices};
 pub use dif::{
     CheckFlag as DifCheckFlag, CheckType as DifCheckType, PiFormat as DifPiFormat, Type as DifType,
