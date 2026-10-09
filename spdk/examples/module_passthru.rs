@@ -6,8 +6,8 @@ use std::{
 
 use libc::EINVAL;
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps, malloc},
-    block::{Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned, OwnedOps},
+    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
+    block::{ClaimType, Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned, OwnedOps},
     dma::{self},
     errors::ENOTSUP,
     thread,
@@ -104,7 +104,12 @@ impl PassthruRs {
     {
         let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy()))
             .map_err(|_| EINVAL)?;
-        let desc = base.open(true).await?;
+        let desc = base
+            .claim(
+                ClaimType::ReadManyWriteOne(&name),
+                PassthruRsModule::instance(),
+            )
+            .await?;
 
         PassthruRsModule::new_bdev_builder(
             name.as_c_str(),
@@ -122,6 +127,7 @@ impl PassthruRs {
             base.dif_check_flags(),
         )
         .build_with_context(PassthruRs { desc })
+        .await
     }
 }
 
@@ -139,6 +145,7 @@ async fn main() {
         .with_num_blocks(NUM_BLOCKS)
         .with_block_size(BLOCK_SIZE)
         .build()
+        .await
         .unwrap()
         .into_owned();
 

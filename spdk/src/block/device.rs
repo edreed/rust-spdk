@@ -17,12 +17,24 @@ use spdk_sys::{
     spdk_bdev_is_dif_head_of_md, spdk_bdev_is_md_interleaved, spdk_bdev_is_zoned, spdk_bdev_next,
 };
 
+#[cfg(feature = "bdev-module")]
+use ::spdk_sys::spdk_bdev_module_claim_bdev_desc;
+
 use crate::{Result, Uuid};
+
+#[cfg(feature = "bdev-module")]
+use crate::{
+    bdev::{Module, ModuleInstance, ModuleOps},
+    to_result,
+};
 
 use super::{
     Any, Descriptor, DifCheckFlag, DifCheckType, DifPiFormat, DifType, IoType, Owned, OwnedBy,
     OwnedOps,
 };
+
+#[cfg(feature = "bdev-module")]
+use super::ClaimType;
 
 /// A trait for block devices providing access to the raw `spdk_bdev` pointer.
 pub trait AsRawBDev {
@@ -74,6 +86,33 @@ where
     /// Opens the device asynchronously.
     pub async fn open(&self, write: bool) -> Result<Descriptor> {
         Descriptor::open(self.name(), write).await
+    }
+
+    /// Claims the block device with the specified claim type and module, returning an open [`Descriptor`].
+    ///
+    /// If the claim type is [`ReadManyWriteNone`], the returned descriptor is read-only. Othwerise,
+    /// it is read-write.
+    ///
+    /// [`ReadManyWriteNone`]: ClaimType::ReadManyWriteNone
+    #[cfg(feature = "bdev-module")]
+    pub async fn claim<M>(&self, type_: ClaimType<'_>, module: &Module<M>) -> Result<Descriptor>
+    where
+        M: ModuleInstance<M> + ModuleOps + 'static,
+    {
+        let (claim_type, mut opts) = type_.into_params()?;
+
+        let desc = self.open(false).await?;
+
+        unsafe {
+            to_result!(spdk_bdev_module_claim_bdev_desc(
+                desc.as_ptr(),
+                claim_type,
+                &mut opts as *mut _,
+                module.as_ptr()
+            ))
+        }?;
+
+        Ok(desc)
     }
 
     /// Get the name of this block device.

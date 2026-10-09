@@ -124,8 +124,8 @@ struct Echo {
 }
 
 impl Echo {
-    fn try_new(name: &CStr) -> spdk::Result<Device<Owned>> {
-        EchoModule::new_bdev_builder(name, 4096, 2).build()
+    async fn try_new(name: &CStr) -> spdk::Result<Device<Owned>> {
+        EchoModule::new_bdev_builder(name, 4096, 2).build().await
     }
 }
 
@@ -160,7 +160,7 @@ async fn main() {
         panic!("ERROR: At least two cores must be specified.")
     }
 
-    let echo = Echo::try_new(c"echo").unwrap();
+    let echo = Echo::try_new(c"echo").await.unwrap();
 
     let write_task = thread::spawn(c"write", &reactors[0].core().into(), || async {
         let writer = echo.open(true).await.unwrap();

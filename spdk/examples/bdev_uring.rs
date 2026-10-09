@@ -30,6 +30,7 @@ async fn main() {
         .with_filename(FILENAME)
         .with_block_size(BLOCK_SIZE)
         .build()
+        .await
         .unwrap()
         .into_owned();
 
