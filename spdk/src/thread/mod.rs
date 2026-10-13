@@ -15,6 +15,7 @@ mod app;
 mod owned;
 #[cfg(feature = "bdev")]
 mod owned_by;
+mod thread_cell;
 mod unowned;
 
 use std::{
@@ -23,14 +24,15 @@ use std::{
     future::Future,
     mem::MaybeUninit,
     pin::Pin,
+    ptr::null_mut,
     task::{Context, Poll},
 };
 
 use futures::task::noop_waker_ref;
 use spdk_sys::{
     spdk_cpuset_copy, spdk_get_thread, spdk_thread, spdk_thread_bind, spdk_thread_get_cpumask,
-    spdk_thread_get_id, spdk_thread_get_name, spdk_thread_is_bound, spdk_thread_poll,
-    spdk_thread_send_msg,
+    spdk_thread_get_id, spdk_thread_get_name, spdk_thread_is_app_thread, spdk_thread_is_bound,
+    spdk_thread_poll, spdk_thread_send_msg,
 };
 
 use crate::{
@@ -45,6 +47,7 @@ pub use app::App;
 pub use owned::Owned;
 #[cfg(feature = "bdev")]
 pub use owned_by::OwnedBy;
+pub use thread_cell::ThreadCell;
 pub use unowned::Unowned;
 
 /// A trait for SPDK thread types that provides access to the underlying raw `spdk_thread` pointer.
@@ -245,15 +248,6 @@ where
     }
 }
 
-impl Thread<App> {
-    /// Returns the application thread object.
-    ///
-    /// The application thread is the thread that initialized the SPDK Application Framework.
-    pub fn application() -> Self {
-        Self(App)
-    }
-}
-
 impl Thread<Owned> {
     /// Creates a new owned thread.
     ///
@@ -270,6 +264,15 @@ impl Thread<Owned> {
 impl<'a, T> Thread<OwnedBy<'a, T>> {
     pub(crate) unsafe fn with_owner(owner: &'a T, thread: *mut spdk_thread) -> Self {
         Self(unsafe { OwnedBy::with_owner(owner, thread) })
+    }
+}
+
+impl<T> Default for Thread<T>
+where
+    T: AsRawThread + Default,
+{
+    fn default() -> Self {
+        Self(T::default())
     }
 }
 
@@ -296,6 +299,18 @@ where
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Thread(\"{}\")", self.name().to_string_lossy())
     }
+}
+
+/// Returns the application thread object.
+///
+/// The application thread is the same thread that initialized the SPDK Application Framework.
+pub fn application() -> Thread<App> {
+    Thread(App)
+}
+
+/// Returns whether the current thread is the application thread.
+pub fn is_application() -> bool {
+    unsafe { spdk_thread_is_app_thread(null_mut()) }
 }
 
 /// Attempts to call the specified function object with a reference to the current [`Thread`] object.

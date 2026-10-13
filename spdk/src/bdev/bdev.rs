@@ -27,7 +27,7 @@ use crate::{
     Result, Uuid,
     block::{
         self, AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType,
-        Owned, OwnedOps, wait_for_examination,
+        Owned, OwnedOps,
     },
     errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
@@ -463,7 +463,16 @@ where
 
     /// Registers the BDev with the SPDK subsystem. This function must be called from the SPDK
     /// application thread.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if called from a thread other than the SPDK application thread.
     pub async fn register(&mut self) -> Result<()> {
+        assert!(
+            thread::is_application(),
+            "register must be called from the application thread"
+        );
+
         unsafe {
             spdk_io_device_register(
                 self.bdev.ctxt,
@@ -478,8 +487,6 @@ where
                 return Err(e);
             }
         }
-
-        wait_for_examination().await?;
 
         Ok(())
     }

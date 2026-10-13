@@ -288,6 +288,17 @@ where
     }
 }
 
+impl<T> PartialEq for Device<T>
+where
+    T: AsRawBDev,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ptr() == other.as_ptr()
+    }
+}
+
+impl<T: AsRawBDev> Eq for Device<T> {}
+
 impl<T> Debug for Device<T>
 where
     T: AsRawBDev,

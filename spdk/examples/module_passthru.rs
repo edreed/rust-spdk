@@ -1,30 +1,146 @@
 use std::{
     cell::OnceCell,
+    collections::HashMap,
     ffi::{CStr, CString},
     io::{Read, Write},
-    slice::{self},
+    slice,
     time::Duration,
 };
 
-use libc::EINVAL;
 use spdk::{
-    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleInstance, ModuleOps, malloc},
+    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, Examiner, ModuleInstance, ModuleOps, malloc},
     block::{
-        self, ClaimType, Descriptor, Device, EventHandler, EventType, IoChannel, IoError, IoResult,
-        IoType, Owned, OwnedOps,
+        self, AsRawBDev, ClaimType, Descriptor, Device, EventHandler, EventType, IoChannel,
+        IoError, IoResult, IoType, Owned,
     },
     dma::{self},
-    errors::ENOTSUP,
-    thread, time,
+    errors::{EINVAL, ENODEV, ENOTSUP},
+    thread::{self, App, ThreadCell},
+    time::sleep,
 };
+use ternary_rs::if_else;
 
 /// Implements the PassthruRs block device module.
 #[spdk::module]
 #[derive(Debug, Default)]
-struct PassthruRsModule;
+struct PassthruRsModule {
+    bdevs: ThreadCell<App, HashMap<CString, Option<Device<Owned>>>>,
+}
+
+impl PassthruRsModule {
+    /// Enables the creation of a `PassthruRs` BDev for the specified base BDev by name.
+    ///
+    /// If the base BDev exists when this method is called, a `PassthruRs` device will be created
+    /// and claim the base BDev before returning. If the base BDev does not exist, the `PassthruRs`
+    /// device will be created and claim the base BDev in the examination process.
+    async fn enable_for_name(&self, base_name: &CStr) -> spdk::Result<()> {
+        debug_assert!(
+            thread::is_application(),
+            "register_for_name must be called from the application thread"
+        );
+
+        let base_bdev = Device::from_name(base_name)
+            .map(Option::Some)
+            .or_else(|e| if_else!(e == ENODEV, Ok(None), Err(e)))?;
+
+        unsafe {
+            self.bdevs.with_unchecked(move |bdevs| {
+                bdevs.entry(base_name.to_owned()).or_default();
+            });
+        }
+
+        if let Some(base_bdev) = base_bdev {
+            self.create_for_base(&base_bdev).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Creates an instance of the `PassthruRs` BDev for the specified base BDev.
+    async fn create_for_base<A>(&self, base_bdev: &Device<A>) -> spdk::Result<()>
+    where
+        A: AsRawBDev,
+    {
+        debug_assert!(
+            thread::is_application(),
+            "register_for_bdev must be called from the application thread"
+        );
+
+        let passthru = PassthruRs::new_device(base_bdev).await?;
+
+        let previous = unsafe {
+            self.bdevs.with_unchecked(move |bdevs| {
+                bdevs
+                    .insert(base_bdev.name().to_owned(), Some(passthru))
+                    .unwrap_or(None)
+            })
+        };
+
+        if let Some(previous) = previous {
+            unreachable!(
+                "PassthruRs device for {} already registered: {:?}",
+                base_bdev.name().to_string_lossy(),
+                previous
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Destroys the `PassthruRs` BDev for the base BDev specified by name.
+    async fn destroy_for_name(&self, base_name: &CStr) -> spdk::Result<()> {
+        debug_assert!(
+            thread::is_application(),
+            "unregister_for_name must be called from the application thread"
+        );
+
+        let passthru = unsafe {
+            self.bdevs
+                .with_unchecked(move |bdevs| bdevs.remove(base_name).unwrap_or(None))
+        };
+
+        if let Some(passthru) = passthru {
+            passthru.destroy().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns `true` if the base BDev specified by name should be claimed by a `PassthruRs` BDev.`
+    fn should_claim(&self, base_name: &CStr) -> bool {
+        debug_assert!(
+            thread::is_application(),
+            "should_claim must be called from the application thread"
+        );
+
+        unsafe {
+            self.bdevs
+                .with_unchecked(move |bdevs| bdevs.contains_key(base_name))
+        }
+    }
+
+    /// Returns the name of the `PassthruRs` BDev for the base BDev name.
+    fn passthru_name(base_name: &CStr) -> CString {
+        CString::new(format!("passthru-rs-{}", base_name.to_string_lossy()))
+            .expect("created PassthruRs device name")
+    }
+}
 
 impl ModuleOps for PassthruRsModule {
     type BDev = PassthruRs<'static>;
+
+    async fn examine_disk<'a>(&self, bdev: Device<block::OwnedBy<'a, Examiner<Self>>>) {
+        // The following delay works around a race condition with the lvol VBDev. It opens a
+        // read/write descriptor while inspecting the block device for claim suitability. The open
+        // read/write descriptor prevents the PassthruRs bdev from from claiming the Malloc bdev.
+        // The wait here allows the lvol VBDev to complete its examination and close the read/write
+        // descriptor.
+        sleep(Duration::from_secs(1)).await;
+
+        if self.should_claim(bdev.name()) {
+            self.create_for_base(&bdev).await.expect("bdev registered");
+        }
+    }
 }
 
 /// Implements the PassthruRs block device per-thread I/O channel context.
@@ -44,6 +160,7 @@ unsafe impl Send for PassthruRs<'_> {}
 unsafe impl Sync for PassthruRs<'_> {}
 
 impl PassthruRs<'_> {
+    /// Returns the descriptor for the underlying block device.
     fn desc(&self) -> &Descriptor<'_, Self> {
         self.desc
             .get()
@@ -75,6 +192,7 @@ impl BDevOps for PassthruRs<'_> {
         channel: &BDevIoChannel<PassthruRsChannel>,
         io: &mut BDevIo<()>,
     ) -> IoResult<()> {
+        let base_desc = this.ctx().desc();
         let base_ch = &channel.ctx().ch;
 
         match io.io_type() {
@@ -85,18 +203,13 @@ impl BDevOps for PassthruRs<'_> {
 
                 io.allocate_buffers(num_blocks * block_size).await?;
                 base_ch
-                    .read_vectored_blocks_at(
-                        this.ctx().desc(),
-                        io.buffers_mut(),
-                        offset_blocks,
-                        num_blocks,
-                    )
+                    .read_vectored_blocks_at(base_desc, io.buffers_mut(), offset_blocks, num_blocks)
                     .await
             }
             IoType::Write => {
                 base_ch
                     .write_vectored_blocks_at(
-                        this.ctx().desc(),
+                        base_desc,
                         io.buffers(),
                         io.offset_blocks(),
                         io.num_blocks(),
@@ -105,24 +218,24 @@ impl BDevOps for PassthruRs<'_> {
             }
             IoType::Unmap => {
                 base_ch
-                    .unmap_blocks(this.ctx().desc(), io.offset_blocks(), io.num_blocks())
+                    .unmap_blocks(base_desc, io.offset_blocks(), io.num_blocks())
                     .await
             }
             IoType::Flush => {
                 base_ch
-                    .flush(this.ctx().desc(), io.offset_blocks(), io.num_blocks())
+                    .flush(base_desc, io.offset_blocks(), io.num_blocks())
                     .await
             }
-            IoType::Reset => base_ch.reset(this.ctx().desc()).await,
+            IoType::Reset => base_ch.reset(base_desc).await,
             IoType::WriteZeros => {
                 base_ch
-                    .write_zeroes_blocks_at(this.ctx().desc(), io.offset_blocks(), io.num_blocks())
+                    .write_zeroes_blocks_at(base_desc, io.offset_blocks(), io.num_blocks())
                     .await
             }
             IoType::Copy => {
                 base_ch
                     .copy_blocks(
-                        this.ctx().desc(),
+                        base_desc,
                         io.copy_source_offset_blocks(),
                         io.offset_blocks(),
                         io.num_blocks(),
@@ -137,7 +250,17 @@ impl BDevOps for PassthruRs<'_> {
 impl EventHandler for PassthruRs<'_> {
     fn handle_event(&self, event: EventType, _device: &Device<block::OwnedBy<'_, Self>>) {
         if matches!(event, EventType::Remove) {
-            todo!();
+            let base_name = self.desc().device().name().to_owned();
+
+            unsafe {
+                thread::spawn_local_detached(async move {
+                    PassthruRsModule::instance()
+                        .ctx()
+                        .destroy_for_name(&base_name)
+                        .await
+                        .unwrap();
+                });
+            }
         }
     }
 }
@@ -151,13 +274,12 @@ impl<'a> AsRef<PassthruRs<'a>> for PassthruRs<'a> {
 impl PassthruRs<'_> {
     pub async fn new_device<T>(base: &Device<T>) -> spdk::Result<Device<Owned>>
     where
-        T: OwnedOps,
+        T: AsRawBDev,
     {
-        let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy()))
-            .map_err(|_| EINVAL)?;
+        let name = PassthruRsModule::passthru_name(base.name());
 
         PassthruRsModule::new_bdev_builder(
-            name.as_c_str(),
+            &name,
             base.logical_block_size(),
             base.logical_block_count(),
         )
@@ -195,6 +317,12 @@ const DATA: &str = "Hello, World!";
 
 #[spdk::main]
 async fn main() {
+    PassthruRsModule::instance()
+        .ctx()
+        .enable_for_name(BDEV_NAME)
+        .await
+        .unwrap();
+
     // Create a new Malloc block device.
     let malloc = malloc::Builder::new()
         .with_name(BDEV_NAME)
@@ -205,22 +333,15 @@ async fn main() {
         .unwrap()
         .into_owned();
 
-    // The following sleep is a workaround for the lvol BDev which opens a read/write descriptor
-    // during examination but completes examination before closing the descriptor.
-    time::sleep(Duration::from_secs(1)).await;
-
-    // Create the Passthru block device.
-    let passthru = PassthruRs::new_device(&malloc).await.unwrap();
-
-    let devname = passthru.name().to_string_lossy().to_string();
-
     thread::spawn_local(async {
+        let devname = PassthruRsModule::passthru_name(malloc.name());
+        let passthru = Device::from_name(&devname).unwrap();
         let passthru_desc = passthru.open(true).unwrap();
         let io_chan = passthru_desc.io_channel().unwrap();
         let layout = passthru_desc.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 
-        println!("Writing \"{}\" to {}...", DATA, devname);
+        println!("Writing \"{}\" to {}...", DATA, devname.to_string_lossy());
 
         write!(buf.cursor_mut(), "{}", DATA).unwrap();
 
@@ -256,12 +377,9 @@ async fn main() {
 
         assert_eq!(read_data.as_str(), DATA);
 
-        println!("Read \"{}\" from {}.", read_data, devname);
+        println!("Read \"{}\" from {}.", read_data, devname.to_string_lossy());
     })
     .await;
-
-    // Destroy the Passthru block device.
-    passthru.destroy().await.unwrap();
 
     // Destroy the Malloc block device.
     malloc.destroy().await.unwrap();
