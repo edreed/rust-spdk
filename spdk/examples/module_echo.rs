@@ -162,7 +162,7 @@ async fn main() {
 
             write!(buf.cursor_mut(), "Hello {}", i).unwrap();
 
-            writer_ch.write_blocks_at(&buf, 1).await.unwrap();
+            writer_ch.write_blocks_at(&writer, &buf, 1).await.unwrap();
         }
 
         println!("Write complete.");
@@ -176,7 +176,10 @@ async fn main() {
         let mut buf = dma::Buffer::new_zeroed(layout);
 
         for _ in 0..10 {
-            reader_ch.read_blocks_at(&mut buf, 1).await.unwrap();
+            reader_ch
+                .read_blocks_at(&reader, &mut buf, 1)
+                .await
+                .unwrap();
 
             let mut read_data: Vec<u8> = Vec::new();
 

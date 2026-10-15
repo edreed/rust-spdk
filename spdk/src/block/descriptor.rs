@@ -5,7 +5,8 @@ use std::{
 };
 
 use spdk_sys::{
-    spdk_bdev, spdk_bdev_close, spdk_bdev_desc, spdk_bdev_desc_get_bdev, spdk_bdev_open_async,
+    spdk_bdev, spdk_bdev_close, spdk_bdev_desc, spdk_bdev_desc_get_bdev, spdk_bdev_get_io_channel,
+    spdk_bdev_open_async,
 };
 use ternary_rs::if_else;
 
@@ -102,7 +103,9 @@ impl Descriptor {
     /// I/O channels are bound to the `spdk_thread` on which this function is called. The returned
     /// [`IoChannel`] cannot be used from any other thread.
     pub fn io_channel(&self) -> Result<IoChannel> {
-        IoChannel::new(self)
+        Ok(IoChannel(unsafe {
+            NonNull::new(spdk_bdev_get_io_channel(self.0.as_ptr())).ok_or(ENOMEM)?
+        }))
     }
 }
 
