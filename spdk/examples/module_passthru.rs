@@ -57,7 +57,7 @@ impl BDevOps for PassthruRs {
     }
 
     async fn handle_io(
-        _this: &BDevImpl<Self>,
+        this: &BDevImpl<Self>,
         channel: &BDevIoChannel<PassthruRsChannel>,
         io: &mut BDevIo<()>,
     ) -> IoResult<()> {
@@ -71,29 +71,44 @@ impl BDevOps for PassthruRs {
 
                 io.allocate_buffers(num_blocks * block_size).await?;
                 base_ch
-                    .read_vectored_blocks_at(io.buffers_mut(), offset_blocks, num_blocks)
+                    .read_vectored_blocks_at(
+                        &this.ctx().desc,
+                        io.buffers_mut(),
+                        offset_blocks,
+                        num_blocks,
+                    )
                     .await
             }
             IoType::Write => {
                 base_ch
-                    .write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks())
+                    .write_vectored_blocks_at(
+                        &this.ctx().desc,
+                        io.buffers(),
+                        io.offset_blocks(),
+                        io.num_blocks(),
+                    )
                     .await
             }
             IoType::Unmap => {
                 base_ch
-                    .unmap_blocks(io.offset_blocks(), io.num_blocks())
+                    .unmap_blocks(&this.ctx().desc, io.offset_blocks(), io.num_blocks())
                     .await
             }
-            IoType::Flush => base_ch.flush(io.offset_blocks(), io.num_blocks()).await,
-            IoType::Reset => base_ch.reset().await,
+            IoType::Flush => {
+                base_ch
+                    .flush(&this.ctx().desc, io.offset_blocks(), io.num_blocks())
+                    .await
+            }
+            IoType::Reset => base_ch.reset(&this.ctx().desc).await,
             IoType::WriteZeros => {
                 base_ch
-                    .write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks())
+                    .write_zeroes_blocks_at(&this.ctx().desc, io.offset_blocks(), io.num_blocks())
                     .await
             }
             IoType::Copy => {
                 base_ch
                     .copy_blocks(
+                        &this.ctx().desc,
                         io.copy_source_offset_blocks(),
                         io.offset_blocks(),
                         io.num_blocks(),
@@ -173,7 +188,12 @@ async fn main() {
         write!(buf.cursor_mut(), "{}", DATA).unwrap();
 
         io_chan
-            .write_vectored_at(slice::from_ref(buf.as_ref()), 0, buf.size() as u64)
+            .write_vectored_at(
+                &passthru_desc,
+                slice::from_ref(buf.as_ref()),
+                0,
+                buf.size() as u64,
+            )
             .await
             .unwrap();
 
@@ -181,7 +201,12 @@ async fn main() {
 
         let size = buf.size();
         io_chan
-            .read_vectored_at(slice::from_mut(buf.as_mut()), 0, size as u64)
+            .read_vectored_at(
+                &passthru_desc,
+                slice::from_mut(buf.as_mut()),
+                0,
+                size as u64,
+            )
             .await
             .unwrap();
 

@@ -77,7 +77,7 @@ async fn main() {
 
     write!(buf.cursor_mut(), "Hello, World!").unwrap();
 
-    ch.write_at(&buf, 0).await.unwrap();
+    ch.write_at(&desc, &buf, 0).await.unwrap();
 
     drop(ch);
     drop(desc);

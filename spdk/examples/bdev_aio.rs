@@ -53,11 +53,11 @@ async fn main() {
 
         write!(buf.cursor_mut(), "{}", DATA).unwrap();
 
-        io_chan.write_at(&buf, 0).await.unwrap();
+        io_chan.write_at(&desc, &buf, 0).await.unwrap();
 
         buf.clear();
 
-        io_chan.read_at(&mut buf, 0).await.unwrap();
+        io_chan.read_at(&desc, &mut buf, 0).await.unwrap();
 
         let mut read_data = String::new();
 
