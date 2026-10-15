@@ -26,7 +26,7 @@ pub use aio::Aio;
 pub use uring::{Builder as UringBuilder, Uring};
 
 #[cfg(feature = "bdev-module")]
-pub use bdev::{BDevBuilder, BDevImpl, BDevIo, BDevIoChannel, BDevIoChannelOps, BDevOps};
+pub use bdev::{BDevBuilder, BDevImpl, BDevIo, BDevIoChannel, BDevOps};
 
 #[cfg(feature = "bdev-module")]
 pub use module::{Module, ModuleInstance, ModuleOps};
