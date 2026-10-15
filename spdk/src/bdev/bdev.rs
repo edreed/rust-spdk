@@ -59,7 +59,7 @@ pub trait BDevIoChannelOps: 'static {
 
     /// Submit an I/O request to the BDev.
     fn submit_request(
-        &mut self,
+        &self,
         io: &mut BDevIo<Self::IoContext>,
     ) -> impl Future<Output = std::result::Result<(), Self::Error>>;
 }
@@ -70,7 +70,7 @@ impl BDevIoChannelOps for () {
     type IoContext = ();
     type Error = Errno;
 
-    async fn submit_request(&mut self, _io: &mut BDevIo<Self::IoContext>) -> Result<()> {
+    async fn submit_request(&self, _io: &mut BDevIo<Self::IoContext>) -> Result<()> {
         Err(ENOTSUP)
     }
 }
@@ -612,13 +612,13 @@ where
 
     /// Submits an I/O request to the BDev.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
-        let mut io_channel = unsafe { BDevIoChannel::<T::IoChannel>::from_raw(io_channel) };
+        let io_channel = unsafe { BDevIoChannel::<T::IoChannel>::from_raw(io_channel) };
         let mut io = unsafe { BDevIo::new_in_place(io) };
 
         debug_assert!(io.thread().is_current());
 
         let submit_fut = async move {
-            let res = io_channel.ctx_mut().submit_request(&mut io).await;
+            let res = io_channel.ctx().submit_request(&mut io).await;
 
             // SAFETY: The I/O is completed on the submission thread.
             unsafe { io.complete(res.map_err(Into::into)) };
