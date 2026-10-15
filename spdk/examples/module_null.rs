@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps},
+    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
     errors::Errno,
@@ -16,15 +16,46 @@ impl ModuleOps for NullRsModule {
     type BDev = NullRs;
 }
 
-/// Implements the NullRs block device I/O channel. It ignores write requests
-/// and returns zeroed buffers for read requests.
-struct NullRsChannel;
+/// Implements the NullRs block device.
+///
+/// This device ignores write requests and returns zeroed blocks for read requests.
+#[derive(Default)]
+struct NullRs;
 
-impl BDevIoChannelOps for NullRsChannel {
+unsafe impl Send for NullRs {}
+unsafe impl Sync for NullRs {}
+
+impl NullRs {
+    /// Creates a new NullRs block device.
+    pub async fn new_device() -> spdk::Result<Device<Owned>> {
+        NullRsModule::new_bdev_builder(c"null-rs", 4096, 1)
+            .build()
+            .await
+    }
+}
+
+impl BDevOps for NullRs {
+    type ChannelContext = ();
     type IoContext = ();
-    type Error = Errno;
+    type IoError = Errno;
 
-    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
+    async fn destruct(&mut self) -> spdk::Result<()> {
+        Ok(())
+    }
+
+    fn io_type_supported(&self, io_type: IoType) -> bool {
+        matches!(io_type, IoType::Read | IoType::Write)
+    }
+
+    fn new_io_channel(&mut self) -> spdk::Result<()> {
+        Ok(())
+    }
+
+    async fn handle_io(
+        _this: &BDevImpl<Self>,
+        _channel: &BDevIoChannel<()>,
+        io: &mut BDevIo<()>,
+    ) -> spdk::Result<()> {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();
 
@@ -35,42 +66,10 @@ impl BDevIoChannelOps for NullRsChannel {
     }
 }
 
-/// Implements the NullRs block device.
-#[derive(Default)]
-struct NullRs;
-
-unsafe impl Send for NullRs {}
-unsafe impl Sync for NullRs {}
-
-impl NullRs {
-    /// Creates a new NullRs block device.
-    pub async fn try_new() -> spdk::Result<Device<Owned>> {
-        NullRsModule::new_bdev_builder(c"null-rs", 4096, 1)
-            .build()
-            .await
-    }
-}
-
-impl BDevOps for NullRs {
-    type IoChannel = NullRsChannel;
-
-    async fn destruct(&mut self) -> spdk::Result<()> {
-        Ok(())
-    }
-
-    fn io_type_supported(&self, io_type: IoType) -> bool {
-        matches!(io_type, IoType::Read | IoType::Write)
-    }
-
-    fn new_io_channel(&mut self) -> spdk::Result<NullRsChannel> {
-        Ok(NullRsChannel)
-    }
-}
-
 /// A program that creates and writes to the NullRs block device.
 #[spdk::main]
 async fn main() {
-    let null = NullRs::try_new().await.unwrap();
+    let null = NullRs::new_device().await.unwrap();
     let desc = null.open(true).await.unwrap();
     let ch = desc.io_channel().unwrap();
     let layout = null.layout_for_blocks(1).unwrap();

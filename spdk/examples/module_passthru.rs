@@ -6,13 +6,14 @@ use std::{
 
 use libc::EINVAL;
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleInstance, ModuleOps, malloc},
+    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleInstance, ModuleOps, malloc},
     block::{ClaimType, Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned, OwnedOps},
     dma::{self},
     errors::ENOTSUP,
     thread,
 };
 
+/// Implements the PassthruRs block device module.
 #[spdk::module]
 #[derive(Debug, Default)]
 struct PassthruRsModule;
@@ -21,57 +22,14 @@ impl ModuleOps for PassthruRsModule {
     type BDev = PassthruRs;
 }
 
+/// Implements the PassthruRs block device per-thread I/O channel context.
 struct PassthruRsChannel {
     ch: IoChannel,
 }
 
-impl BDevIoChannelOps for PassthruRsChannel {
-    type IoContext = ();
-    type Error = IoError;
-
-    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> IoResult<()> {
-        match io.io_type() {
-            IoType::Read => {
-                let num_blocks = io.num_blocks();
-                let block_size = io.device().logical_block_size() as u64;
-                let offset_blocks = io.offset_blocks();
-
-                io.allocate_buffers(num_blocks * block_size).await?;
-                self.ch
-                    .read_vectored_blocks_at(io.buffers_mut(), offset_blocks, num_blocks)
-                    .await
-            }
-            IoType::Write => {
-                self.ch
-                    .write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks())
-                    .await
-            }
-            IoType::Unmap => {
-                self.ch
-                    .unmap_blocks(io.offset_blocks(), io.num_blocks())
-                    .await
-            }
-            IoType::Flush => self.ch.flush(io.offset_blocks(), io.num_blocks()).await,
-            IoType::Reset => self.ch.reset().await,
-            IoType::WriteZeros => {
-                self.ch
-                    .write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks())
-                    .await
-            }
-            IoType::Copy => {
-                self.ch
-                    .copy_blocks(
-                        io.copy_source_offset_blocks(),
-                        io.offset_blocks(),
-                        io.num_blocks(),
-                    )
-                    .await
-            }
-            _ => Err(IoError::GeneralError(ENOTSUP)),
-        }
-    }
-}
-
+/// Implements the PassthruRs block device.
+///
+/// This device passes through I/O requests to an underlying block device.
 struct PassthruRs {
     desc: Descriptor,
 }
@@ -80,7 +38,9 @@ unsafe impl Send for PassthruRs {}
 unsafe impl Sync for PassthruRs {}
 
 impl BDevOps for PassthruRs {
-    type IoChannel = PassthruRsChannel;
+    type ChannelContext = PassthruRsChannel;
+    type IoContext = ();
+    type IoError = IoError;
 
     async fn destruct(&mut self) -> spdk::Result<()> {
         Ok(())
@@ -95,10 +55,58 @@ impl BDevOps for PassthruRs {
 
         Ok(PassthruRsChannel { ch })
     }
+
+    async fn handle_io(
+        _this: &BDevImpl<Self>,
+        channel: &BDevIoChannel<PassthruRsChannel>,
+        io: &mut BDevIo<()>,
+    ) -> IoResult<()> {
+        let base_ch = &channel.ctx().ch;
+
+        match io.io_type() {
+            IoType::Read => {
+                let num_blocks = io.num_blocks();
+                let block_size = io.device().logical_block_size() as u64;
+                let offset_blocks = io.offset_blocks();
+
+                io.allocate_buffers(num_blocks * block_size).await?;
+                base_ch
+                    .read_vectored_blocks_at(io.buffers_mut(), offset_blocks, num_blocks)
+                    .await
+            }
+            IoType::Write => {
+                base_ch
+                    .write_vectored_blocks_at(io.buffers(), io.offset_blocks(), io.num_blocks())
+                    .await
+            }
+            IoType::Unmap => {
+                base_ch
+                    .unmap_blocks(io.offset_blocks(), io.num_blocks())
+                    .await
+            }
+            IoType::Flush => base_ch.flush(io.offset_blocks(), io.num_blocks()).await,
+            IoType::Reset => base_ch.reset().await,
+            IoType::WriteZeros => {
+                base_ch
+                    .write_zeroes_blocks_at(io.offset_blocks(), io.num_blocks())
+                    .await
+            }
+            IoType::Copy => {
+                base_ch
+                    .copy_blocks(
+                        io.copy_source_offset_blocks(),
+                        io.offset_blocks(),
+                        io.num_blocks(),
+                    )
+                    .await
+            }
+            _ => Err(IoError::GeneralError(ENOTSUP)),
+        }
+    }
 }
 
 impl PassthruRs {
-    pub async fn try_new<T>(base: &Device<T>) -> spdk::Result<Device<Owned>>
+    pub async fn new_device<T>(base: &Device<T>) -> spdk::Result<Device<Owned>>
     where
         T: OwnedOps,
     {
@@ -150,7 +158,7 @@ async fn main() {
         .into_owned();
 
     // Create the Passthru block device.
-    let passthru = PassthruRs::try_new(&malloc).await.unwrap();
+    let passthru = PassthruRs::new_device(&malloc).await.unwrap();
 
     let devname = passthru.name().to_string_lossy().to_string();
 

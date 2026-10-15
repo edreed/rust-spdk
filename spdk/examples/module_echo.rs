@@ -2,14 +2,13 @@ use std::{
     ffi::CStr,
     io::{BufRead, IoSlice, Write},
     mem::transmute,
-    sync::Arc,
 };
 
 use async_condvar_fair::Condvar;
 use futures::future::join;
 use parking_lot::Mutex;
 use spdk::{
-    bdev::{BDevIo, BDevIoChannelOps, BDevOps, ModuleOps},
+    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
     errors::{ENOTSUP, Errno},
@@ -37,25 +36,27 @@ impl ModuleOps for EchoModule {
     }
 }
 
-/// State shared among all I/O channels of an Echo block device.
+/// Implements the Echo block device.
 #[derive(Default)]
-struct EchoInner {
+struct Echo {
     reader: Condvar,
     writer: Condvar,
     src_buf: Mutex<Option<&'static [IoSlice<'static>]>>,
 }
 
-/// Implements the Echo block device I/O channel. Each read request is paired
-/// with a write request. The read request is completed with the data from the
-/// write request and the write request completed when read.
-struct EchoChannel {
-    device: Arc<EchoInner>,
+impl Echo {
+    async fn new_device(name: &CStr) -> spdk::Result<Device<Owned>> {
+        EchoModule::new_bdev_builder(name, 4096, 2).build().await
+    }
 }
 
-impl EchoChannel {
+unsafe impl Send for Echo {}
+unsafe impl Sync for Echo {}
+
+impl Echo {
     // The `reader `condition variable releases the lock during the await.
     #[allow(clippy::await_holding_lock)]
-    async fn do_read(&self, io: &mut BDevIo<()>) -> spdk::Result<()> {
+    async fn do_read(&self, _channel: &BDevIoChannel<()>, io: &mut BDevIo<()>) -> spdk::Result<()> {
         let offset_blocks = io.offset_blocks();
         let dst_buf = io.buffers_mut();
 
@@ -69,71 +70,49 @@ impl EchoChannel {
             return Ok(());
         }
 
-        let mut src_buf = self.device.src_buf.lock();
+        let mut src_buf = self.src_buf.lock();
 
         while src_buf.is_none() {
-            src_buf = self.device.reader.wait(src_buf).await;
+            src_buf = self.reader.wait(src_buf).await;
         }
 
         dst_buf[0].copy_from_slice(&src_buf.take().unwrap()[0]);
 
-        self.device.writer.notify_one();
+        self.writer.notify_one();
 
         Ok(())
     }
 
     // The `writer `condition variable releases the lock during the await.
     #[allow(clippy::await_holding_lock)]
-    async fn do_write(&self, io: &mut BDevIo<()>) -> spdk::Result<()> {
-        let mut src_buf = self.device.src_buf.lock();
+    async fn do_write(
+        &self,
+        _channel: &BDevIoChannel<()>,
+        io: &mut BDevIo<()>,
+    ) -> spdk::Result<()> {
+        let mut src_buf = self.src_buf.lock();
 
         while src_buf.is_some() {
-            src_buf = self.device.writer.wait(src_buf).await;
+            src_buf = self.writer.wait(src_buf).await;
         }
 
         // SAFETY: We will wait for the reader to consume the buffer before returning.
         unsafe { *src_buf = Some(transmute::<&[IoSlice<'_>], &[IoSlice<'_>]>(io.buffers())) };
 
-        self.device.reader.notify_one();
+        self.reader.notify_one();
 
         while src_buf.is_some() {
-            src_buf = self.device.writer.wait(src_buf).await;
+            src_buf = self.writer.wait(src_buf).await;
         }
 
         Ok(())
     }
 }
 
-impl BDevIoChannelOps for EchoChannel {
-    type IoContext = ();
-    type Error = Errno;
-
-    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
-        match io.io_type() {
-            IoType::Read => self.do_read(io).await,
-            IoType::Write => self.do_write(io).await,
-            _ => Err(ENOTSUP),
-        }
-    }
-}
-
-/// Implements the Echo block device.
-#[derive(Default)]
-struct Echo {
-    inner: Arc<EchoInner>,
-}
-
-impl Echo {
-    async fn try_new(name: &CStr) -> spdk::Result<Device<Owned>> {
-        EchoModule::new_bdev_builder(name, 4096, 2).build().await
-    }
-}
-
-unsafe impl Send for Echo {}
-unsafe impl Sync for Echo {}
-
 impl BDevOps for Echo {
-    type IoChannel = EchoChannel;
+    type ChannelContext = ();
+    type IoContext = ();
+    type IoError = Errno;
 
     async fn destruct(&mut self) -> spdk::Result<()> {
         Ok(())
@@ -143,10 +122,20 @@ impl BDevOps for Echo {
         matches!(io_type, IoType::Read | IoType::Write)
     }
 
-    fn new_io_channel(&mut self) -> spdk::Result<EchoChannel> {
-        let device = self.inner.clone();
+    fn new_io_channel(&mut self) -> spdk::Result<()> {
+        Ok(())
+    }
 
-        Ok(EchoChannel { device })
+    async fn handle_io(
+        this: &BDevImpl<Self>,
+        channel: &BDevIoChannel<Self::ChannelContext>,
+        io: &mut BDevIo<Self::IoContext>,
+    ) -> spdk::Result<()> {
+        match io.io_type() {
+            IoType::Read => this.ctx().do_read(channel, io).await,
+            IoType::Write => this.ctx().do_write(channel, io).await,
+            _ => Err(ENOTSUP),
+        }
     }
 }
 
@@ -160,7 +149,7 @@ async fn main() {
         panic!("ERROR: At least two cores must be specified.")
     }
 
-    let echo = Echo::try_new(c"echo").await.unwrap();
+    let echo = Echo::new_device(c"echo").await.unwrap();
 
     let write_task = thread::spawn(c"write", &reactors[0].core().into(), || async {
         let writer = echo.open(true).await.unwrap();

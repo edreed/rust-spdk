@@ -29,7 +29,7 @@ use crate::{
         self, AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType,
         Owned, OwnedOps, wait_for_examination,
     },
-    errors::{EINVAL, ENOMEM, ENOTSUP, Errno},
+    errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
     thread::{self, Thread},
     to_result,
@@ -43,57 +43,22 @@ use spdk_sys::spdk_bdev_io_set_nvme_status;
 #[cfg(feature = "scsi")]
 use spdk_sys::spdk_bdev_io_set_scsi_status;
 
-/// A trait for implementing the I/O channel operations for a BDev.
-pub trait BDevIoChannelOps: 'static {
-    /// A per-I/O context type accessed through the [`BDevIo::ctx()`] and [`BDevIo::ctx_mut()`]
-    /// methods.
-    ///
-    /// [`BDevIo::ctx()`]: method@super::BDevIo::ctx
-    /// [`BDevIo::ctx_mut()`]: method@super::BDevIo::ctx_mut
-    type IoContext: Default + 'static;
-
-    /// The error type returned by the [`submit_request`] method.
-    ///
-    /// [`submit_request`]: Self::submit_request
-    type Error: Error + Into<IoError>;
-
-    /// Submit an I/O request to the BDev.
-    fn submit_request(
-        &self,
-        io: &mut BDevIo<Self::IoContext>,
-    ) -> impl Future<Output = std::result::Result<(), Self::Error>>;
-}
-
-/// A stub trait implementation for the `BDevIoChannelOps` trait that does not support any I/O
-/// operations.
-impl BDevIoChannelOps for () {
-    type IoContext = ();
-    type Error = Errno;
-
-    async fn submit_request(&self, _io: &mut BDevIo<Self::IoContext>) -> Result<()> {
-        Err(ENOTSUP)
-    }
-}
-
 /// A BDev I/O channel implementation.
 ///
 /// The type parameter `T` is the I/O channel context type for the BDev implementation.
 #[repr(transparent)]
-pub struct BDevIoChannel<T>
-where
-    T: BDevIoChannelOps,
-{
+pub struct BDevIoChannel<T> {
     channel: NonNull<spdk_io_channel>,
     _ctx: PhantomData<T>,
 }
 
-impl<T> BDevIoChannel<T>
-where
-    T: BDevIoChannelOps,
-{
-    /// Converts the I/O channel into a raw pointer.
-    fn into_raw(self) -> *mut spdk_io_channel {
-        self.channel.as_ptr()
+impl<T> BDevIoChannel<T> {
+    /// Constructs a new I/O channel from a raw pointer.
+    fn from_raw(channel: *mut spdk_io_channel) -> Result<Self> {
+        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_io_channel>`.
+        NonNull::new(channel)
+            .map(|p| unsafe { transmute(p) })
+            .ok_or(ENOMEM)
     }
 
     /// Constructs a new I/O channel from a raw pointer.
@@ -101,9 +66,14 @@ where
     /// # Safety
     ///
     /// The caller must guarantee that the raw pointer is non-null and valid.
-    unsafe fn from_raw(channel: *mut spdk_io_channel) -> Self {
+    unsafe fn from_raw_unchecked(channel: *mut spdk_io_channel) -> Self {
         // SAFETY: This type is a transparent wrapper around `NonNull<spdk_io_channel>`.
         unsafe { transmute(NonNull::new_unchecked(channel)) }
+    }
+
+    /// Converts the I/O channel into a raw pointer.
+    fn into_raw(self) -> *mut spdk_io_channel {
+        self.channel.as_ptr()
     }
 
     /// Returns a reference to the I/O channel context.
@@ -121,23 +91,6 @@ where
         // SAFETY: The thread associated with the I/O channel is guaranteed to be non-null and
         // valid for the lifetime of the I/O channel.
         unsafe { Thread::with_owner(self, spdk_io_channel_get_thread(self.channel.as_ptr())) }
-    }
-}
-
-impl<T> TryFrom<*mut spdk_io_channel> for BDevIoChannel<T>
-where
-    T: BDevIoChannelOps,
-{
-    type Error = Errno;
-
-    fn try_from(channel: *mut spdk_io_channel) -> Result<Self> {
-        match NonNull::new(channel) {
-            Some(channel) => Ok(Self {
-                channel,
-                _ctx: PhantomData,
-            }),
-            None => Err(ENOMEM),
-        }
     }
 }
 
@@ -192,8 +145,13 @@ where
         }
     }
     /// Returns the raw pointer to the I/O request.
-    pub fn as_ptr(&self) -> *mut spdk_bdev_io {
+    pub(crate) fn as_ptr(&self) -> *mut spdk_bdev_io {
         self.io.as_ptr()
+    }
+
+    /// Returns the raw pointer to the block device associated with the I/O request.
+    pub(crate) fn bdev(&self) -> *mut spdk_bdev {
+        unsafe { self.io.as_ref().bdev }
     }
 
     /// Returns the type of the I/O request.
@@ -396,7 +354,16 @@ where
 ///
 /// The type parameter `IoChannel` is the I/O channel type for the BDev.
 pub trait BDevOps: Send + Sync + 'static {
-    type IoChannel: BDevIoChannelOps;
+    /// The per-I/O channel context type for the BDev.
+    type ChannelContext;
+
+    /// The per-I/O context type for the BDev.
+    type IoContext: Default + 'static;
+
+    /// The error type returned by the [`handle_io`] method.
+    ///
+    /// [`handle_io`]: Self::handle_io
+    type IoError: Error + Into<IoError>;
 
     /// Destroys the BDev.
     fn destruct(&mut self) -> impl Future<Output = Result<()>>;
@@ -410,17 +377,26 @@ pub trait BDevOps: Send + Sync + 'static {
     ///
     /// The default implementation returns a per-thread I/O channel for the BDev. Implementations
     /// may override this method to provide different behavior.
-    fn get_io_channel(&self) -> Result<BDevIoChannel<Self::IoChannel>> {
-        unsafe { spdk_get_io_channel(self as *const _ as *mut _).try_into() }
+    fn get_io_channel(&self) -> Result<BDevIoChannel<Self::ChannelContext>> {
+        BDevIoChannel::from_raw(unsafe { spdk_get_io_channel(self as *const _ as *mut _) })
     }
 
     /// Creates a new I/O channel for the BDev.
-    fn new_io_channel(&mut self) -> Result<Self::IoChannel>;
+    fn new_io_channel(&mut self) -> Result<Self::ChannelContext>;
 
     /// Returns the size in bytes of the per-I/O context.
     fn get_io_context_size() -> usize {
-        size_of::<BDevIoCtx<<<Self as BDevOps>::IoChannel as BDevIoChannelOps>::IoContext>>()
+        size_of::<BDevIoCtx<Self::IoContext>>()
     }
+
+    /// Handles an I/O request to the BDev.
+    fn handle_io(
+        this: &BDevImpl<Self>,
+        channel: &BDevIoChannel<Self::ChannelContext>,
+        io: &mut BDevIo<Self::IoContext>,
+    ) -> impl Future<Output = std::result::Result<(), Self::IoError>>
+    where
+        Self: Sized;
 }
 
 /// A stub trait implementation for the `BDevOps` trait that enables in-place initialization of a
@@ -429,7 +405,9 @@ impl<T> BDevOps for MaybeUninit<T>
 where
     T: BDevOps,
 {
-    type IoChannel = ();
+    type ChannelContext = ();
+    type IoContext = ();
+    type IoError = Errno;
 
     async fn destruct(&mut self) -> Result<()> {
         unimplemented!("destruct called on uninitialized value");
@@ -439,26 +417,33 @@ where
         unimplemented!("io_type_supported called on uninitialized value");
     }
 
-    fn new_io_channel(&mut self) -> Result<Self::IoChannel> {
+    fn new_io_channel(&mut self) -> Result<Self::ChannelContext> {
         unimplemented!("new_io_channel called on uninitialized value");
+    }
+
+    async fn handle_io(
+        _this: &BDevImpl<Self>,
+        _channel: &BDevIoChannel<Self::ChannelContext>,
+        _io: &mut BDevIo<Self::IoContext>,
+    ) -> Result<()> {
+        unimplemented!("submit_request called on uninitialized value");
     }
 }
 
 /// A BDev implementation.
 ///
 /// The type parameter `T` is the type that provides the BDev I/O processing implementation.
-#[repr(C)]
 pub struct BDevImpl<T>
 where
-    T: BDevOps + ?Sized,
+    T: BDevOps,
 {
     pub bdev: spdk_bdev,
     pub ctx: T,
 }
 
-unsafe impl<T> Send for BDevImpl<T> where T: BDevOps + Send + ?Sized {}
+unsafe impl<T> Send for BDevImpl<T> where T: BDevOps + Send {}
+unsafe impl<T> Sync for BDevImpl<T> where T: BDevOps + Sync {}
 
-unsafe impl<T> Sync for BDevImpl<T> where T: BDevOps + Sync + ?Sized {}
 impl<T> BDevImpl<T>
 where
     T: BDevOps,
@@ -470,7 +455,7 @@ where
     /// The caller must ensure that the `spdk_bdev` pointer is valid and points to a `BDevImpl<T>`
     /// instance. This function does not perform any validation on the pointer.
     pub unsafe fn from_raw(bdev: *mut spdk_bdev) -> &'static BDevImpl<T> {
-        unsafe { &*bdev.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast() }
+        unsafe { &*bdev.byte_sub(offset_of!(BDevImpl<T>, bdev)).cast() }
     }
 
     /// Registers the BDev with the SPDK subsystem. This function must be called from the SPDK
@@ -481,7 +466,7 @@ where
                 self.bdev.ctxt,
                 Some(Self::create_io_channel),
                 Some(Self::destroy_io_channel),
-                size_of::<T::IoChannel>() as u32,
+                size_of::<T::ChannelContext>() as u32,
                 self.bdev.name,
             );
 
@@ -528,6 +513,10 @@ where
     }
 
     /// Constructs a boxed BDev instance from a raw pointer to the BDev.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the pointer is non-null and poitns to a valid [`BDevImpl<T>`] instance.
     unsafe fn from_ctx_ptr(ctx_ptr: *mut T) -> Box<Self> {
         unsafe { Box::from_raw(ctx_ptr.byte_sub(offset_of!(BDevImpl<T>, ctx)).cast()) }
     }
@@ -550,6 +539,8 @@ where
     /// Destroys the BDev instance.
     unsafe extern "C" fn destruct(ctx: *mut c_void) -> i32 {
         let destruct_fut = async move {
+            // SAFETY: The `ctx` pointer is from the `spdk_bdev`'s `ctxt` field which is
+            // initialized to point to this instance's `ctx` field.
             let mut this = unsafe { Self::from_ctx_ptr(ctx as *mut T) };
 
             let rc = match this.ctx.destruct().await {
@@ -583,7 +574,7 @@ where
     /// Creates an I/O channel for the BDev.
     unsafe extern "C" fn create_io_channel(io_device: *mut c_void, ctx_buf: *mut c_void) -> c_int {
         let this = unsafe { &mut *io_device.cast::<T>() };
-        let ctx = ctx_buf as *mut T::IoChannel;
+        let ctx = ctx_buf as *mut T::ChannelContext;
 
         match this.new_io_channel() {
             Ok(channel) => {
@@ -599,7 +590,7 @@ where
     /// Destroys an I/O channel for the BDev.
     unsafe extern "C" fn destroy_io_channel(_io_device: *mut c_void, ctx_buf: *mut c_void) {
         unsafe {
-            drop_in_place(ctx_buf as *mut T::IoChannel);
+            drop_in_place(ctx_buf as *mut T::ChannelContext);
         }
     }
 
@@ -611,14 +602,21 @@ where
     }
 
     /// Submits an I/O request to the BDev.
+    ///
+    /// # Panics
+    ///
+    /// This method panics on debug builds if not called on the thread associated with the I/O.
     unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
-        let io_channel = unsafe { BDevIoChannel::<T::IoChannel>::from_raw(io_channel) };
+        // SAFETY: Both the `io_channel` and `io` pointers are guaranteed to be non-null and valid
+        // for the lifetime of the I/O request.
+        let io_channel = unsafe { BDevIoChannel::from_raw_unchecked(io_channel) };
         let mut io = unsafe { BDevIo::new_in_place(io) };
 
         debug_assert!(io.thread().is_current());
 
         let submit_fut = async move {
-            let res = io_channel.ctx().submit_request(&mut io).await;
+            let this = unsafe { Self::from_raw(io.bdev()) };
+            let res = T::handle_io(this, &io_channel, &mut io).await;
 
             // SAFETY: The I/O is completed on the submission thread.
             unsafe { io.complete(res.map_err(Into::into)) };
@@ -657,7 +655,7 @@ where
 
 impl<T> Drop for BDevImpl<T>
 where
-    T: BDevOps + ?Sized,
+    T: BDevOps,
 {
     fn drop(&mut self) {
         unsafe { drop(CString::from_raw(self.bdev.name)) }
