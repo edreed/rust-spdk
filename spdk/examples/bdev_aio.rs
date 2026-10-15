@@ -45,7 +45,7 @@ async fn main() {
         // the descriptor and I/O channel. These must be dropped before the AIO block device can be
         // destroyed.
         let desc = aio.open(true).await.unwrap();
-        let mut io_chan = desc.io_channel().unwrap();
+        let io_chan = desc.io_channel().unwrap();
         let layout = desc.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 

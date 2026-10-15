@@ -24,7 +24,7 @@ impl BDevIoChannelOps for NullRsChannel {
     type IoContext = ();
     type Error = Errno;
 
-    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
+    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();
 
@@ -72,7 +72,7 @@ impl BDevOps for NullRs {
 async fn main() {
     let null = NullRs::try_new().await.unwrap();
     let desc = null.open(true).await.unwrap();
-    let mut ch = desc.io_channel().unwrap();
+    let ch = desc.io_channel().unwrap();
     let layout = null.layout_for_blocks(1).unwrap();
     let mut buf = dma::Buffer::new_zeroed(layout);
 

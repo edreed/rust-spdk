@@ -108,7 +108,7 @@ impl BDevIoChannelOps for EchoChannel {
     type IoContext = ();
     type Error = Errno;
 
-    async fn submit_request(&mut self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
+    async fn submit_request(&self, io: &mut BDevIo<Self::IoContext>) -> spdk::Result<()> {
         match io.io_type() {
             IoType::Read => self.do_read(io).await,
             IoType::Write => self.do_write(io).await,
@@ -164,7 +164,7 @@ async fn main() {
 
     let write_task = thread::spawn(c"write", &reactors[0].core().into(), || async {
         let writer = echo.open(true).await.unwrap();
-        let mut writer_ch = writer.io_channel().unwrap();
+        let writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 
@@ -182,7 +182,7 @@ async fn main() {
 
     let read_task = thread::spawn(c"read", &reactors[1].core().into(), || async {
         let reader = echo.open(true).await.unwrap();
-        let mut reader_ch = reader.io_channel().unwrap();
+        let reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
 
