@@ -1,20 +1,18 @@
 use std::{
-    ffi::{CStr, c_int, c_void},
+    ffi::{CStr, c_void},
     mem::transmute,
     ptr::{NonNull, null_mut},
 };
 
 use spdk_sys::{
     spdk_bdev, spdk_bdev_close, spdk_bdev_desc, spdk_bdev_desc_get_bdev, spdk_bdev_get_io_channel,
-    spdk_bdev_open_async,
+    spdk_bdev_open_ext,
 };
-use ternary_rs::if_else;
 
 use crate::{
     Result,
-    errors::{EINVAL, ENOMEM, Errno},
-    task::{Promise, Promissory},
-    to_poll_pending_on_ok,
+    errors::{ENOMEM, Errno},
+    to_result,
 };
 
 use super::{Device, IoChannel, OwnedBy};
@@ -22,48 +20,25 @@ use super::{Device, IoChannel, OwnedBy};
 /// Callback for handling descriptor events.
 extern "C" fn handle_desc_event(_type: u32, _bdev: *mut spdk_bdev, _ctx: *mut c_void) {}
 
-/// Callback for when an asynchronous open operation completes.
-///
-/// # Safety
-///
-/// This function is called by the SPDK library and must adhere to the expected calling convention
-/// and argument types. The `ctx` pointer must be a valid pointer to a `Promissory` object created
-/// by `Promissory::into_raw`.
-extern "C" fn open_desc_complete(desc: *mut spdk_bdev_desc, status: c_int, ctx: *mut c_void) {
-    let p = unsafe { Promissory::<NonNull<spdk_bdev_desc>, Errno>::from_raw(ctx.cast()) };
-    let res = if_else!(
-        status == 0,
-        NonNull::new(desc).ok_or(EINVAL),
-        Err(Errno::new(-status))
-    );
-
-    Promissory::set_result(p, res);
-}
-
 /// Open a block device by its name.
-pub(crate) async fn open_desc(name: &CStr, write: bool) -> Result<NonNull<spdk_bdev_desc>> {
-    Promise::new()
-        .request(|p| {
-            let (cb_fn, cb_arg) = (open_desc_complete, Promissory::into_raw(p.clone()));
+pub(crate) fn open_desc(name: &CStr, write: bool) -> Result<NonNull<spdk_bdev_desc>> {
+    let mut raw_desc = null_mut();
 
-            to_poll_pending_on_ok! {
-                unsafe {
-                    spdk_bdev_open_async(
-                        name.as_ptr(),
-                        write,
-                        Some(handle_desc_event),
-                        null_mut(),
-                        null_mut(),
-                        Some(cb_fn),
-                        cb_arg.cast_mut() as *mut _,
-                    )
-                }
-                => on ready {
-                    unsafe {drop(Promissory::from_raw(cb_arg)) };
-                }
-            }
-        })
-        .await
+    to_result! {
+        unsafe {
+            spdk_bdev_open_ext(
+                name.as_ptr(),
+                write,
+                Some(handle_desc_event),
+                null_mut(),
+                &mut raw_desc as *mut *mut _,
+            )
+        }
+    }?;
+
+    // SAFETY: If `spdk_bdev_open_ext` succeeds, `raw_desc` is a non-null and valid `spdk_bdev_desc`
+    // pointer.
+    Ok(unsafe { NonNull::new_unchecked(raw_desc) })
 }
 
 /// A handle to an open block device.
@@ -81,8 +56,8 @@ unsafe impl Sync for Descriptor {}
 
 impl Descriptor {
     /// Open a block device by its name.
-    pub async fn open(name: &CStr, write: bool) -> Result<Self> {
-        let desc = open_desc(name, write).await?;
+    pub fn open(name: &CStr, write: bool) -> Result<Self> {
+        let desc = open_desc(name, write)?;
 
         // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev_desc>`.
         Ok(unsafe { transmute::<NonNull<spdk_bdev_desc>, Self>(desc) })

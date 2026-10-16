@@ -2,11 +2,8 @@ use std::{
     alloc::{Layout, LayoutError},
     ffi::CStr,
     fmt::{self, Debug, Formatter},
-    pin::Pin,
-    task::{Context, Poll},
 };
 
-use futures::Stream;
 use spdk_sys::{
     SPDK_ENV_NUMA_ID_ANY, spdk_bdev, spdk_bdev_first, spdk_bdev_get_block_size,
     spdk_bdev_get_buf_align, spdk_bdev_get_dif_pi_format, spdk_bdev_get_dif_type,
@@ -74,8 +71,8 @@ where
 
     /// Get an `Any` instance representing this block device.
     pub async fn as_any(&self) -> Result<Any> {
-        // SAFETY: The `spdk_bdev` pointer returned by `as_raw_device()`is non-null and valid.
-        unsafe { Any::from_ptr_unchecked(self.0.as_raw_bdev()).await }
+        // SAFETY: The `spdk_bdev` pointer returned by `as_raw_device()` is non-null and valid.
+        unsafe { Any::from_ptr_unchecked(self.0.as_raw_bdev()) }
     }
 
     /// Get a pointer to the underlying `spdk_bdev` struct.
@@ -84,8 +81,8 @@ where
     }
 
     /// Opens the device asynchronously.
-    pub async fn open(&self, write: bool) -> Result<Descriptor> {
-        Descriptor::open(self.name(), write).await
+    pub fn open(&self, write: bool) -> Result<Descriptor> {
+        Descriptor::open(self.name(), write)
     }
 
     /// Claims the block device with the specified claim type and module, returning an open [`Descriptor`].
@@ -95,13 +92,13 @@ where
     ///
     /// [`ReadManyWriteNone`]: ClaimType::ReadManyWriteNone
     #[cfg(feature = "bdev-module")]
-    pub async fn claim<M>(&self, type_: ClaimType<'_>, module: &Module<M>) -> Result<Descriptor>
+    pub fn claim<M>(&self, type_: ClaimType<'_>, module: &Module<M>) -> Result<Descriptor>
     where
         M: ModuleInstance<M> + ModuleOps + 'static,
     {
         let (claim_type, mut opts) = type_.into_params()?;
 
-        let desc = self.open(false).await?;
+        let desc = self.open(false)?;
 
         unsafe {
             to_result!(spdk_bdev_module_claim_bdev_desc(
@@ -335,15 +332,15 @@ impl Device<Any> {
     /// `Device<Any>` instance fails. See [`Any`] for details.
     ///
     /// [`ENODEV`]: crate::errors::ENODEV
-    pub async fn from_name(name: &CStr) -> Result<Device<Any>> {
-        Any::with_name(name).await.map(Device::<Any>)
+    pub fn from_name(name: &CStr) -> Result<Device<Any>> {
+        Any::with_name(name).map(Device::<Any>)
     }
 
     /// Get a [`Device`] for a raw `spdk_bdev` pointer.
     ///
     /// A `Device<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
     /// It ensures that the underlying `spdk_bdev` remains valid for the lifetime of the
-    /// `Device<Any>` instance but cannot destry it. However, a call to [`Device::destroy()`] by
+    /// `Device<Any>` instance but cannot destroy it. However, a call to [`Device::destroy()`] by
     /// another task will be deferred until all `Device<Any>` instances referencing the same
     /// `spdk_bdev` are dropped.
     ///
@@ -355,8 +352,8 @@ impl Device<Any> {
     /// # Safety
     ///
     /// `bdev` must be non-null and a pointer to a valid `spdk_bdev` structure.
-    pub(crate) async unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Device<Any>> {
-        unsafe { Any::from_ptr_unchecked(bdev).await.map(Device::<Any>) }
+    pub(crate) unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Device<Any>> {
+        unsafe { Any::from_ptr_unchecked(bdev).map(Device::<Any>) }
     }
 }
 
@@ -364,47 +361,27 @@ impl Device<Any> {
 /// across threads.
 unsafe impl Send for Device<Any> {}
 
-type DevicesFuture = Pin<Box<dyn Future<Output = Option<(Device<Any>, Option<Device<Any>>)>>>>;
-
-/// An asynchronous iterator over all block devices.
+/// An iterator over all block devices.
 pub struct Devices {
-    next_fut: Option<DevicesFuture>,
+    next: Option<Device<Any>>,
 }
 
 impl Devices {
-    /// Creates a new asynchronous iterator over all block devices.
+    /// Creates a new iterator over all block devices.
     fn new() -> Self {
         Self {
-            next_fut: Some(Box::pin(async {
-                let current = Self::get_device(unsafe { spdk_bdev_first() }).await;
-
-                Self::get_next_state(current).await
-            })),
+            next: Self::get_device(unsafe { spdk_bdev_first() }),
         }
     }
 
     /// Gets the next available block device starting from the given 'spdk_bdev' pointer.
-    async fn get_device(mut bdev: *mut spdk_bdev) -> Option<Device<Any>> {
+    fn get_device(mut bdev: *mut spdk_bdev) -> Option<Device<Any>> {
         while !bdev.is_null() {
-            if let Ok(device) = unsafe { Device::from_ptr_unchecked(bdev) }.await {
+            if let Ok(device) = unsafe { Device::from_ptr_unchecked(bdev) } {
                 return Some(device);
             }
 
             bdev = unsafe { spdk_bdev_next(bdev) };
-        }
-
-        None
-    }
-
-    /// Gets the next state in the iteration.
-    async fn get_next_state(
-        current: Option<Device<Any>>,
-    ) -> Option<(Device<Any>, Option<Device<Any>>)> {
-        if let Some(current) = current {
-            let next_bdev = unsafe { spdk_bdev_next(current.as_ptr()) };
-            let next = Self::get_device(next_bdev).await;
-
-            return Some((current, next));
         }
 
         None
@@ -417,32 +394,21 @@ impl Default for Devices {
     }
 }
 
-impl Stream for Devices {
+impl Iterator for Devices {
     type Item = Device<Any>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let next_state = match &mut self.next_fut {
-            Some(next_fut) => next_fut.as_mut().poll(cx),
-            None => Poll::Ready(None),
-        };
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(next) = self.next.take() {
+            self.next = Self::get_device(unsafe { spdk_bdev_next(next.as_ptr()) });
 
-        match next_state {
-            Poll::Ready(Some((current, next))) => {
-                self.next_fut = Some(Box::pin(async move { Self::get_next_state(next).await }));
-
-                Poll::Ready(Some(current))
-            }
-            Poll::Ready(None) => {
-                self.next_fut = None;
-
-                Poll::Ready(None)
-            }
-            Poll::Pending => Poll::Pending,
+            return Some(next);
         }
+
+        None
     }
 }
 
-/// Get an asynchronous iterator over all block devices.
+/// Get an iterator over all block devices.
 ///
 /// # Example
 ///

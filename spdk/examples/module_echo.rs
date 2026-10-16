@@ -152,7 +152,7 @@ async fn main() {
     let echo = Echo::new_device(c"echo").await.unwrap();
 
     let write_task = thread::spawn(c"write", &reactors[0].core().into(), || async {
-        let writer = echo.open(true).await.unwrap();
+        let writer = echo.open(true).unwrap();
         let writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);
@@ -170,7 +170,7 @@ async fn main() {
     .unwrap();
 
     let read_task = thread::spawn(c"read", &reactors[1].core().into(), || async {
-        let reader = echo.open(true).await.unwrap();
+        let reader = echo.open(true).unwrap();
         let reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);

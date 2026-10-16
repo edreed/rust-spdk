@@ -70,7 +70,7 @@ impl BDevOps for NullRs {
 #[spdk::main]
 async fn main() {
     let null = NullRs::new_device().await.unwrap();
-    let desc = null.open(true).await.unwrap();
+    let desc = null.open(true).unwrap();
     let ch = desc.io_channel().unwrap();
     let layout = null.layout_for_blocks(1).unwrap();
     let mut buf = dma::Buffer::new_zeroed(layout);
