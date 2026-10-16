@@ -2,6 +2,7 @@ use std::{
     ffi::{CStr, CString},
     io::{Read, Write},
     slice::{self},
+    time::Duration,
 };
 
 use libc::EINVAL;
@@ -10,7 +11,7 @@ use spdk::{
     block::{ClaimType, Descriptor, Device, IoChannel, IoError, IoResult, IoType, Owned, OwnedOps},
     dma::{self},
     errors::ENOTSUP,
-    thread,
+    thread, time,
 };
 
 /// Implements the PassthruRs block device module.
@@ -127,12 +128,10 @@ impl PassthruRs {
     {
         let name = CString::new(format!("passthru-rs-{}", base.name().to_string_lossy()))
             .map_err(|_| EINVAL)?;
-        let desc = base
-            .claim(
-                ClaimType::ReadManyWriteOne(&name),
-                PassthruRsModule::instance(),
-            )
-            .await?;
+        let desc = base.claim(
+            ClaimType::ReadManyWriteOne(&name),
+            PassthruRsModule::instance(),
+        )?;
 
         PassthruRsModule::new_bdev_builder(
             name.as_c_str(),
@@ -172,13 +171,17 @@ async fn main() {
         .unwrap()
         .into_owned();
 
+    // The following sleep is a workaround for the lvol BDev which opens a read/write descriptor
+    // during examination but completes examination before closing the descriptor.
+    time::sleep(Duration::from_secs(1)).await;
+
     // Create the Passthru block device.
     let passthru = PassthruRs::new_device(&malloc).await.unwrap();
 
     let devname = passthru.name().to_string_lossy().to_string();
 
     thread::spawn_local(async {
-        let passthru_desc = passthru.open(true).await.unwrap();
+        let passthru_desc = passthru.open(true).unwrap();
         let io_chan = passthru_desc.io_channel().unwrap();
         let layout = passthru_desc.device().layout_for_blocks(1).unwrap();
         let mut buf = dma::Buffer::new_zeroed(layout);

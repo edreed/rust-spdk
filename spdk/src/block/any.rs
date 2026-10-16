@@ -12,9 +12,9 @@ use super::{AsRawBDev, descriptor::open_desc};
 ///
 /// This type is used as a generic placeholder for any block device, without taking ownership of it.
 /// In order to keep the `spdk_bdev` alive for the lifetime of the `Any` instance, the constructor
-/// function opens a read-only descriptor to the block device and stores it in the `Any` instance.
-/// This may fail if opening the read-only descriptor to the block device fails. Users of this
-/// object should be prepared to handle these errors and fail gracefully.
+/// functions open a read-only descriptor to the block device and stores it in the returned
+/// instance. This may fail if opening the read-only descriptor to the block device fails. Users of
+/// this object should be prepared to handle these errors and fail gracefully.
 ///
 /// [`Device`]: super::Device
 #[repr(transparent)]
@@ -34,8 +34,8 @@ impl Any {
     /// # Safety
     ///
     /// `bdev` must be non-null and a pointer to a valid `spdk_bdev` structure.
-    pub(crate) async unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Self> {
-        Self::with_name(unsafe { CStr::from_ptr(spdk_bdev_get_name(bdev)) }).await
+    pub(crate) unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Self> {
+        Self::with_name(unsafe { CStr::from_ptr(spdk_bdev_get_name(bdev)) })
     }
 
     /// Create an `Any` instance from the name of a block device.
@@ -45,8 +45,8 @@ impl Any {
     /// This method returns `Ok(any)` if a block device with the given name exists and a descriptor
     /// can be successfully opened. It returns an error if it fails to open a descriptor on
     /// the block device.
-    pub(crate) async fn with_name(name: &CStr) -> Result<Self> {
-        let desc = open_desc(name, false).await?;
+    pub(crate) fn with_name(name: &CStr) -> Result<Self> {
+        let desc = open_desc(name, false)?;
 
         // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev_desc>`.
         Ok(unsafe { transmute::<NonNull<spdk_bdev_desc>, Self>(desc) })
