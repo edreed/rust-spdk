@@ -27,7 +27,7 @@ use crate::{
     Result, Uuid,
     block::{
         self, AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType,
-        Owned, OwnedOps, wait_for_examination,
+        Owned, OwnedOps,
     },
     errors::{EINVAL, ENOMEM, Errno},
     task::{Promise, Promissory},
@@ -487,8 +487,6 @@ where
                 return Err(e);
             }
         }
-
-        wait_for_examination().await?;
 
         Ok(())
     }

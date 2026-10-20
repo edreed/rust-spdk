@@ -13,8 +13,8 @@ use crate::{
 use super::{BDevBuilder, BDevOps};
 
 /// A type representing the examiner of block devices. It is used to limit the lifetime of borrowed
-/// block devices to the scope of the examination performed by [`Module::examine_config`] and
-/// [`Module::examine_disk`].
+/// block devices to the scope of the examination performed by [`ModuleOps::examine_config`] and
+/// [`ModuleOps::examine_disk`].
 pub struct Examiner<T>(PhantomData<&'static T>)
 where
     T: ModuleOps + 'static;
@@ -107,7 +107,7 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
     fn examine_disk<'a>(
         &self,
         _bdev: Device<OwnedBy<'a, Examiner<Self>>>,
-    ) -> impl Future<Output = ()> + 'a {
+    ) -> impl Future<Output = ()> {
         async {}
     }
 
