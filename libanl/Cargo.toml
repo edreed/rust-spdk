@@ -2,7 +2,7 @@
 name = "libanl"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.93.0"
+rust-version = "1.99.0"
 
 [dependencies]
 libanl-macros = { version = "0.1.0", path = "../libanl-macros" }
