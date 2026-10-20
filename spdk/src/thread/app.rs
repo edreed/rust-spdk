@@ -20,3 +20,9 @@ impl AsRawThread for App {
         ptr
     }
 }
+
+impl Default for App {
+    fn default() -> Self {
+        Self
+    }
+}
