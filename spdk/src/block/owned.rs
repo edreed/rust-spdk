@@ -92,12 +92,15 @@ impl OwnedOps for Owned {
 /// This type is used to scope the lifetime of a borrowed block device to the lifetime of its owner,
 /// `T`.
 #[repr(transparent)]
-pub struct OwnedBy<'a, T>(NonNull<spdk_bdev>, PhantomData<&'a T>);
+pub struct OwnedBy<'a, T: ?Sized>(NonNull<spdk_bdev>, PhantomData<&'a T>);
 
-unsafe impl<'a, T> Send for OwnedBy<'a, T> {}
-unsafe impl<'a, T> Sync for OwnedBy<'a, T> {}
+unsafe impl<'a, T: ?Sized> Send for OwnedBy<'a, T> {}
+unsafe impl<'a, T: ?Sized> Sync for OwnedBy<'a, T> {}
 
-impl<'a, T> OwnedBy<'a, T> {
+impl<'a, T> OwnedBy<'a, T>
+where
+    T: ?Sized,
+{
     /// Creates a new `OwnedBy` instance from a raw `spdk_bdev` pointer.
     ///
     /// # Safety
@@ -110,7 +113,10 @@ impl<'a, T> OwnedBy<'a, T> {
     }
 }
 
-impl<T> AsRawBDev for OwnedBy<'_, T> {
+impl<T> AsRawBDev for OwnedBy<'_, T>
+where
+    T: ?Sized,
+{
     fn as_raw_bdev(&self) -> *mut spdk_bdev {
         self.0.as_ptr()
     }

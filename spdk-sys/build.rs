@@ -285,6 +285,7 @@ const ALL_FEATURES: [Feature; 12] = [
             OpaqueType("spdk_bdev_ext_io_opts"),
             RustifiedEnum("spdk_dif_.*"),
             RustifiedEnum("spdk_bdev_io_(status|type)"),
+            RustifiedNonExhaustiveEnum("spdk_bdev_event_type"),
         ]
         .as_slice(),
     ),
