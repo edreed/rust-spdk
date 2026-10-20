@@ -22,7 +22,7 @@ use crate::{
     errors::{EINVAL, Errno},
     runtime::{Reactor, reactors},
     task::{LocalTask, RcTask},
-    thread::{App, Thread},
+    thread::{self, App, Thread},
 };
 
 /// Builds a runtime using the Application Framework component of the
@@ -224,7 +224,7 @@ impl Runtime {
     where
         F: Future<Output = ()> + 'static,
     {
-        let task = LocalTask::new(Thread::application(), fut);
+        let task = LocalTask::new(thread::application(), fut);
         let ctx = Rc::into_raw(task).cast_mut();
 
         let res =
