@@ -6,6 +6,8 @@ use std::{
     str::FromStr,
 };
 
+use serde::{Deserialize, Serialize, de::Visitor};
+
 use spdk_sys::{
     SPDK_UUID_STRING_LEN, spdk_uuid, spdk_uuid_compare, spdk_uuid_copy, spdk_uuid_fmt_lower,
     spdk_uuid_generate, spdk_uuid_is_null, spdk_uuid_parse, spdk_uuid_set_null,
@@ -165,3 +167,49 @@ impl PartialEq for Uuid {
 }
 
 impl Eq for Uuid {}
+
+impl Serialize for Uuid {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut buf = [0i8; SPDK_UUID_STRING_LEN as usize];
+
+        let cstr = unsafe {
+            to_result!(spdk_uuid_fmt_lower(buf.as_mut_ptr(), buf.len(), &self.0))
+                .expect("UUID rendered");
+
+            // SAFETY: `spdk_uuid_fmt_lower` writes a null-terminated string to `buf`.
+            CStr::from_ptr(buf.as_ptr())
+        };
+
+        serializer.serialize_str(cstr.to_str().expect("valid UTF-8"))
+    }
+}
+
+struct UuidVisitor;
+
+impl<'de> Visitor<'de> for UuidVisitor {
+    type Value = Uuid;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("expecting a valid UUID string")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        v.parse()
+            .map_err(|e| E::custom(format!("unable to parse UUID string: {}", e)))
+    }
+}
+
+impl<'de> Deserialize<'de> for Uuid {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(UuidVisitor)
+    }
+}

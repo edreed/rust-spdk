@@ -3,8 +3,11 @@ use std::collections::BTreeMap;
 
 use laboratory::{LabResult, NullState, describe, expect};
 
-use crate::json::serde::tests::{
-    TestEnum, TestNewTypeStruct, TestStruct, TestTupleStruct, TestUnitStruct,
+use crate::{
+    Uuid,
+    json::serde::tests::{
+        TestEnum, TestNewTypeStruct, TestStruct, TestTupleStruct, TestUnitStruct,
+    },
 };
 
 use super::from_str;
@@ -66,6 +69,14 @@ fn suite() -> LabResult {
             })
             .it("should deserialize string to a string", |_| {
                 expect(from_str(r#""foo""#)).to_equal(Ok("foo".to_string()))
+            })
+            .it("should deserialize a string UUID to a Uuid", |_| {
+                let test_uuid: Uuid = "87654321-dead-beef-feed-0123456789ab"
+                    .parse()
+                    .expect("valid UUID");
+
+                expect(from_str(r#""87654321-dead-beef-feed-0123456789ab""#))
+                    .to_equal(Ok(test_uuid))
             })
             .it("should deserialize an array to a [u8]", |_| {
                 expect(from_str("[2,3,7]")).to_equal(Ok([2u8, 3u8, 7u8]))
