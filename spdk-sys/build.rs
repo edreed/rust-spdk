@@ -336,7 +336,7 @@ const ALL_FEATURES: [Feature; 12] = [
         [].as_slice(),
         [].as_slice(),
         [].as_slice(),
-        [].as_slice(),
+        [RustifiedNonExhaustiveEnum("spdk_json_val_type")].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_NET",

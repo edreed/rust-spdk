@@ -1,4 +1,4 @@
-use core::fmt;
+use std::fmt;
 
 /// Error type for JSON serialization and deserialization.
 #[derive(Debug, Eq, PartialEq)]
@@ -14,7 +14,7 @@ pub enum Error {
 impl std::error::Error for Error {}
 
 impl serde::ser::Error for Error {
-    fn custom<T: std::fmt::Display>(msg: T) -> Self {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
         Error::Message(msg.to_string())
     }
 }

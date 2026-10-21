@@ -12,8 +12,10 @@
                 "args": [
                     "test",
                     "--no-run",
+                    "--all-features",
                     "--lib",
-                    "--package=spdk"
+                    "--package=spdk",
+                    "--tests"
                 ],
                 "filter": {
                     "name": "spdk",
