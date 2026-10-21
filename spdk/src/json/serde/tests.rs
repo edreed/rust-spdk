@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use laboratory::{LabResult, NullState, describe, expect};
 use serde::{Deserialize, Serialize};
 
+use crate::Uuid;
+
 use super::{de::from_str, ser::to_string};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -93,6 +95,11 @@ fn suite() -> LabResult {
                         .to_equal(Ok(str_val.to_string()))
                 },
             )
+            .it("should serialize and deserialize a Uuid to Uuid", |_| {
+                let test_uuid = Uuid::new();
+
+                expect(from_str(to_string(&test_uuid).unwrap().as_ref())).to_equal(Ok(test_uuid))
+            })
             .it("should serialize and deserialize [u8]", |_| {
                 let array_val = [2u8, 3u8, 7u8];
                 expect(from_str(to_string(&array_val).unwrap().as_ref())).to_equal(Ok(array_val))

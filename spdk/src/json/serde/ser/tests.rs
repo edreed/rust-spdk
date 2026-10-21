@@ -3,8 +3,11 @@ use std::collections::BTreeMap;
 
 use laboratory::{LabResult, NullState, describe, expect};
 
-use crate::json::serde::tests::{
-    TestEnum, TestNewTypeStruct, TestStruct, TestTupleStruct, TestUnitStruct,
+use crate::{
+    Uuid,
+    json::serde::tests::{
+        TestEnum, TestNewTypeStruct, TestStruct, TestTupleStruct, TestUnitStruct,
+    },
 };
 
 use super::to_string;
@@ -54,6 +57,14 @@ fn suite() -> LabResult {
             })
             .it("should serialize &str to a string", |_| {
                 expect(to_string("foo")).to_equal(Ok(r#""foo""#.to_string()))
+            })
+            .it("should serialize UUID to a string", |_| {
+                let test_uuid: Uuid = "87654321-dead-beef-feed-0123456789ab"
+                    .parse()
+                    .expect("valid UUID");
+
+                expect(to_string(&test_uuid))
+                    .to_equal(Ok(r#""87654321-dead-beef-feed-0123456789ab""#.to_owned()))
             })
             .it("should serialize &[u8] to an array", |_| {
                 expect(to_string(&[2u8, 3u8, 7u8])).to_equal(Ok("[2,3,7]".to_string()))

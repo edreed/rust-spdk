@@ -11,10 +11,7 @@ use spdk_sys::{
     spdk_json_decode_uint32, spdk_json_decode_uint64, spdk_json_val, spdk_json_val_type,
 };
 
-use crate::{
-    errors::{EINVAL, ERANGE, Errno},
-    to_result, to_unexpected_value_result,
-};
+use crate::{to_result, to_unexpected_value_result};
 
 use super::{Error, Result};
 
@@ -56,15 +53,6 @@ impl From<ValueType> for spdk_json_val_type {
 pub(crate) struct Value<'de>(spdk_json_val, PhantomData<&'de str>);
 
 impl<'de> Value<'de> {
-    /// Converts an `Errno` to an appropriate [`Error`] value.
-    fn errno_to_error(e: Errno) -> Error {
-        match e {
-            EINVAL => Error::UnexpectedValue,
-            ERANGE => Error::ValueOutOfRange,
-            _ => Error::ParseFailed,
-        }
-    }
-
     /// Returns the type of the JSON value.
     #[inline(always)]
     pub(crate) fn r#type(&self) -> ValueType {
@@ -155,7 +143,7 @@ impl<'de> Value<'de> {
         let mut out = 0i32;
 
         to_result!(unsafe { spdk_json_decode_int32(self.as_ptr(), addr_of_mut!(out).cast()) })
-            .map_err(Self::errno_to_error)?;
+            .map_err(Into::<Error>::into)?;
 
         Ok(out)
     }
@@ -168,7 +156,7 @@ impl<'de> Value<'de> {
         let mut out = 0u8;
 
         to_result!(unsafe { spdk_json_decode_uint8(self.as_ptr(), addr_of_mut!(out).cast()) })
-            .map_err(Self::errno_to_error)?;
+            .map_err(Into::<Error>::into)?;
 
         Ok(out)
     }
@@ -181,7 +169,7 @@ impl<'de> Value<'de> {
         let mut out = 0u16;
 
         to_result!(unsafe { spdk_json_decode_uint16(self.as_ptr(), addr_of_mut!(out).cast()) })
-            .map_err(Self::errno_to_error)?;
+            .map_err(Into::<Error>::into)?;
 
         Ok(out)
     }
@@ -194,7 +182,7 @@ impl<'de> Value<'de> {
         let mut out = 0u32;
 
         to_result!(unsafe { spdk_json_decode_uint32(self.as_ptr(), addr_of_mut!(out).cast()) })
-            .map_err(Self::errno_to_error)?;
+            .map_err(Into::<Error>::into)?;
 
         Ok(out)
     }
@@ -207,7 +195,7 @@ impl<'de> Value<'de> {
         let mut out = 0u64;
 
         to_result!(unsafe { spdk_json_decode_uint64(self.as_ptr(), addr_of_mut!(out).cast()) })
-            .map_err(Self::errno_to_error)?;
+            .map_err(Into::<Error>::into)?;
 
         Ok(out)
     }

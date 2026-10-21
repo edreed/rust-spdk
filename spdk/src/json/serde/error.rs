@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::errors::{EINVAL, ERANGE, Errno};
+
 /// Error type for JSON serialization and deserialization.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Error {
@@ -34,6 +36,16 @@ impl fmt::Display for Error {
             Error::ParseFailed => write!(fmt, "parse failed"),
             Error::UnexpectedValue => write!(fmt, "unexpected value"),
             Error::ValueOutOfRange => write!(fmt, "value out of range"),
+        }
+    }
+}
+
+impl From<Errno> for Error {
+    fn from(e: Errno) -> Self {
+        match e {
+            EINVAL => Error::UnexpectedValue,
+            ERANGE => Error::ValueOutOfRange,
+            _ => Error::ParseFailed,
         }
     }
 }
