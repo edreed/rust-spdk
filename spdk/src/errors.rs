@@ -9,6 +9,13 @@ use std::{
 use libc;
 use spdk_macros::define_errno;
 
+/// A trait for providing the SPDK error code (a negative number) for an error.
+pub trait ErrorCode: Error {
+    fn code(&self) -> i32 {
+        -1
+    }
+}
+
 /// Returns the last error set by a system or library call.
 pub fn errno() -> Errno {
     Errno(unsafe { *libc::__errno_location() })
@@ -27,6 +34,12 @@ impl Errno {
     /// Returns the Linux error code wrapped by this instance.
     pub fn errno(&self) -> i32 {
         self.0
+    }
+}
+
+impl ErrorCode for Errno {
+    fn code(&self) -> i32 {
+        -self.errno()
     }
 }
 

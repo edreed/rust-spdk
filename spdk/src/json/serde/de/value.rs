@@ -1,14 +1,15 @@
 use std::{
     marker::PhantomData,
     mem::transmute,
-    ptr::{addr_of, addr_of_mut},
+    ptr::{addr_of, addr_of_mut, null_mut},
     slice,
 };
 
 use bitflags::bitflags;
 use spdk_sys::{
     spdk_json_decode_bool, spdk_json_decode_int32, spdk_json_decode_uint8, spdk_json_decode_uint16,
-    spdk_json_decode_uint32, spdk_json_decode_uint64, spdk_json_val, spdk_json_val_type,
+    spdk_json_decode_uint32, spdk_json_decode_uint64, spdk_json_parse, spdk_json_val,
+    spdk_json_val_type,
 };
 
 use crate::{to_result, to_unexpected_value_result};
@@ -48,11 +49,52 @@ impl From<ValueType> for spdk_json_val_type {
         unsafe { transmute(value.0) }
     }
 }
+
+const DEFAULT_VALUES_CAPACITY: usize = 256;
+
 /// Represents a JSON value.
 #[repr(transparent)]
 pub(crate) struct Value<'de>(spdk_json_val, PhantomData<&'de str>);
 
 impl<'de> Value<'de> {
+    /// Parses the specified JSON string and returns a `Vec<Value<'de>>` containing the parsed values.
+    pub(crate) fn from_str(input: &'de str) -> Result<Vec<Self>> {
+        let mut values: Vec<Value<'de>> = Vec::with_capacity(DEFAULT_VALUES_CAPACITY);
+
+        loop {
+            // SAFETY: `Value` is a transparent wrapper around `spdk_json_val`
+            // and `values` is a `Vec` of `Value`s with a non-zero capacity, so
+            // the pointer is valid.
+            let rc = unsafe {
+                spdk_json_parse(
+                    input.as_ptr().cast_mut().cast(),
+                    input.len(),
+                    transmute::<*mut Value<'_>, *mut spdk_json_val>(values.as_mut_ptr()),
+                    values.capacity(),
+                    null_mut(),
+                    0,
+                )
+            };
+
+            if rc < 0 {
+                return Err(Error::ParseFailed);
+            }
+
+            let len = rc as usize;
+
+            if len <= values.capacity() {
+                // SAFETY: `spdk_json_parse` has written 'len' elements and
+                // `len` is less than or equal to the capacity of `values`.
+                unsafe { values.set_len(len) };
+                break;
+            }
+
+            values.reserve(len - values.capacity());
+        }
+
+        Ok(values)
+    }
+
     /// Returns the type of the JSON value.
     #[inline(always)]
     pub(crate) fn r#type(&self) -> ValueType {

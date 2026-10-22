@@ -30,7 +30,7 @@ use super::{Error, Result, name_serializer::NameSerializer};
 #[derive(Debug)]
 pub struct Serializer<'ser, W>(
     pub(crate) NonNull<spdk_json_write_ctx>,
-    PhantomData<&'ser mut W>,
+    pub(crate) PhantomData<&'ser mut W>,
 );
 
 impl<'ser, W: Write> Serializer<'ser, W> {

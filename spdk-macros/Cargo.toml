@@ -20,3 +20,4 @@ ternary-rs = "1.0.0"
 [features]
 default = []
 bdev-module = []
+json-rpc = []

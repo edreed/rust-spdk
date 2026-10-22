@@ -1,58 +1,20 @@
-use std::{mem::transmute, os::raw::c_void, ptr::null_mut};
-
 use serde::de::IntoDeserializer;
-use spdk_sys::{spdk_json_parse, spdk_json_val};
 
 use super::{Accessor, Error, Result, Value, ValueType};
 
-const DEFAULT_CAPACITY: usize = 256;
-
 /// Deserializes a JSON string into a Rust data structure.
-pub struct Deserializer<'de> {
-    values: Vec<Value<'de>>,
+pub struct Deserializer<'de, 'a> {
+    values: &'a [Value<'de>],
     position: usize,
 }
 
-impl<'de> Deserializer<'de> {
+impl<'de, 'a> Deserializer<'de, 'a> {
     /// Creates a new deserializer from a JSON string.
-    pub fn new(input: &'de str) -> Result<Self> {
-        let mut values: Vec<Value<'de>> = Vec::with_capacity(DEFAULT_CAPACITY);
-
-        loop {
-            // SAFETY: `Value` is a transparent wrapper around `spdk_json_val`
-            // and `values` is a `Vec` of `Value`s with a non-zero capacity, so
-            // the pointer is valid.
-            let rc = unsafe {
-                spdk_json_parse(
-                    input.as_ptr() as *mut u8 as *mut c_void,
-                    input.len(),
-                    transmute::<*mut Value<'_>, *mut spdk_json_val>(values.as_mut_ptr()),
-                    values.capacity(),
-                    null_mut(),
-                    0,
-                )
-            };
-
-            if rc < 0 {
-                return Err(Error::ParseFailed);
-            }
-
-            let len = rc as usize;
-
-            if len <= values.capacity() {
-                // SAFETY: `spdk_json_parse` has written 'len' elements and
-                // `len` is less than or equal to the capacity of `values`.
-                unsafe { values.set_len(len) };
-                break;
-            }
-
-            values.reserve(len - values.capacity());
-        }
-
-        Ok(Self {
-            position: 0,
+    pub(crate) fn new(values: &'a [Value<'de>]) -> Self {
+        Self {
             values,
-        })
+            position: 0,
+        }
     }
 
     /// Returns the next JSON value without consuming it.
@@ -81,7 +43,7 @@ impl<'de> Deserializer<'de> {
     }
 }
 
-impl<'de> serde::de::Deserializer<'de> for &mut Deserializer<'de> {
+impl<'de> serde::de::Deserializer<'de> for &mut Deserializer<'de, '_> {
     type Error = Error;
 
     fn deserialize_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
@@ -396,10 +358,10 @@ impl<'de> serde::de::Deserializer<'de> for &mut Deserializer<'de> {
         self.deserialize_str(visitor)
     }
 
-    fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: serde::de::Visitor<'de>,
     {
-        todo!()
+        self.deserialize_any(visitor)
     }
 }

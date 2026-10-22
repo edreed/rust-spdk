@@ -74,6 +74,29 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'jsonrpc'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=jsonrpc",
+                    "--package=spdk",
+                    "--features=json-rpc"
+                ],
+                "filter": {
+                    "name": "jsonrpc",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'module_echo'",
             "cargo": {
                 "args": [

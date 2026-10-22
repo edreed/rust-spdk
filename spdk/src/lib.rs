@@ -25,6 +25,9 @@ pub use spdk_macros::main;
 #[cfg(feature = "bdev-module")]
 pub use spdk_macros::module;
 
+#[cfg(feature = "json-rpc")]
+pub use spdk_macros::jsonrpc;
+
 pub use uuid::Uuid;
 
 /// A specialized `Result` type for SPDK operations.

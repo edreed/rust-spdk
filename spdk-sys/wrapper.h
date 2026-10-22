@@ -27,6 +27,10 @@
 #include "spdk/json.h"
 #endif
 
+#if defined(CARGO_FEATURE_JSON_RPC)
+#include "spdk/rpc.h"
+#endif
+
 #if defined(CARGO_FEATURE_NET)
 #include "spdk/sock.h"
 #endif

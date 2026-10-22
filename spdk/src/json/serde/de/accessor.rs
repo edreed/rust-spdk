@@ -3,17 +3,17 @@ use super::{Deserializer, Error, Result};
 /// Provides a [`Deserializer`]'s [`Visitor`] access to sequences, map and enum variants.
 ///
 /// [`Visitor`]: serde::de::Visitor
-pub(crate) struct Accessor<'a, 'de: 'a> {
-    de: &'a mut Deserializer<'de>,
+pub(crate) struct Accessor<'a, 'de: 'a, 'b> {
+    de: &'a mut Deserializer<'de, 'b>,
 }
 
-impl<'a, 'de> Accessor<'a, 'de> {
-    pub(crate) fn new(de: &'a mut Deserializer<'de>) -> Self {
+impl<'a, 'de, 'b> Accessor<'a, 'de, 'b> {
+    pub(crate) fn new(de: &'a mut Deserializer<'de, 'b>) -> Self {
         Self { de }
     }
 }
 
-impl<'a, 'de> serde::de::SeqAccess<'de> for Accessor<'a, 'de> {
+impl<'a, 'de> serde::de::SeqAccess<'de> for Accessor<'a, 'de, '_> {
     type Error = Error;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
@@ -33,7 +33,7 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for Accessor<'a, 'de> {
     }
 }
 
-impl<'a, 'de> serde::de::MapAccess<'de> for Accessor<'a, 'de> {
+impl<'a, 'de> serde::de::MapAccess<'de> for Accessor<'a, 'de, '_> {
     type Error = Error;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
@@ -60,7 +60,7 @@ impl<'a, 'de> serde::de::MapAccess<'de> for Accessor<'a, 'de> {
     }
 }
 
-impl<'de, 'a> serde::de::EnumAccess<'de> for Accessor<'a, 'de> {
+impl<'de, 'a> serde::de::EnumAccess<'de> for Accessor<'a, 'de, '_> {
     type Error = Error;
     type Variant = Self;
 
@@ -73,7 +73,7 @@ impl<'de, 'a> serde::de::EnumAccess<'de> for Accessor<'a, 'de> {
     }
 }
 
-impl<'de, 'a> serde::de::VariantAccess<'de> for Accessor<'a, 'de> {
+impl<'de, 'a> serde::de::VariantAccess<'de> for Accessor<'a, 'de, '_> {
     type Error = Error;
 
     #[inline(always)]
