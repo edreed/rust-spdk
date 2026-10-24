@@ -37,6 +37,7 @@ bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
 bdev-uring = ["bdev", "spdk-sys/bdev-uring"]
 json = ["spdk-sys/json"]
+json-rpc = ["json", "spdk-macros/json-rpc", "spdk-sys/json-rpc"]
 net = ["spdk-sys/net"]
 nvme = ["spdk-sys/nvme"]
 nvme-vfio-user = ["nvme", "spdk-sys/nvme-vfio-user"]
@@ -54,6 +55,10 @@ required-features = ["bdev-malloc"]
 [[example]]
 name = "bdev_uring"
 required-features = ["bdev-uring"]
+
+[[example]]
+name = "jsonrpc"
+required-features = ["json-rpc"]
 
 [[example]]
 name = "module_echo"

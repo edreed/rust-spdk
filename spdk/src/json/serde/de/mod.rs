@@ -15,7 +15,8 @@ pub fn from_str<'de, T>(s: &'de str) -> Result<T>
 where
     T: serde::de::Deserialize<'de>,
 {
-    let mut deserializer = Deserializer::new(s)?;
+    let values = Value::from_str(s)?;
+    let mut deserializer = Deserializer::new(&values);
 
     let t = T::deserialize(&mut deserializer)?;
 

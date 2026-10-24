@@ -248,7 +248,7 @@ impl<'a> Feature<'a> {
 }
 
 /// An array of all features supported by the `spdk-sys` crate.
-const ALL_FEATURES: [Feature; 12] = [
+const ALL_FEATURES: [Feature; 13] = [
     Feature::new(
         "CARGO_FEATURE_BASE",
         [
@@ -337,6 +337,15 @@ const ALL_FEATURES: [Feature; 12] = [
         [].as_slice(),
         [].as_slice(),
         [RustifiedNonExhaustiveEnum("spdk_json_val_type")].as_slice(),
+    ),
+    Feature::new(
+        "CARGO_FEATURE_JSON_RPC",
+        [].as_slice(),
+        ["spdk_rpc"].as_slice(),
+        [].as_slice(),
+        [].as_slice(),
+        [].as_slice(),
+        [].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_NET",

@@ -6,6 +6,9 @@ mod main_attr;
 #[cfg(feature = "bdev-module")]
 mod module;
 
+#[cfg(feature = "json-rpc")]
+mod jsonrpc;
+
 use proc_macro::TokenStream;
 
 /// Derives the [`Parser`] trait for a struct defining command-line arguments in addition to the
@@ -193,6 +196,23 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     module::GenerateModule::new().generate(attr, item)
+}
+
+/// Marks a standalone function as callable through the SPDK [JSON-RPC] server.
+///
+/// # Example
+///
+/// The following example demonstrates both synchronous and asynchronous JSON-RPC callable functions.
+///
+/// ```no_run
+#[doc = include_str!("../../spdk/examples/jsonrpc.rs")]
+/// ```
+///
+/// [JSON-RPC]: https://spdk.io/doc/jsonrpc.html
+#[cfg(feature = "json-rpc")]
+#[proc_macro_attribute]
+pub fn jsonrpc(attr: TokenStream, item: TokenStream) -> TokenStream {
+    jsonrpc::generate_rpc_call(attr, item)
 }
 
 /// Generates `Errno` constant definitions for the `errors` module of the `spdk` crate.

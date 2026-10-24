@@ -24,6 +24,7 @@ build_example bdev_uring --features="bdev-uring"
 build_example cli
 build_example devices --features="bdev-malloc"
 build_example interval
+build_example jsonrpc --features="json-rpc"
 build_example module_echo --features="bdev-module"
 build_example module_null --features="bdev-module"
 build_example module_passthru --features="bdev-malloc,bdev-module"
