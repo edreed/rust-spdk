@@ -200,6 +200,11 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Marks a standalone function as callable through the SPDK [JSON-RPC] server.
 ///
+/// The attributed function may be synchronous or asynchronous and take zero or more parameters with
+/// types implementing the [`Deserialize`] trait. It may also return the unit type, any type
+/// implementing the [`Serialize`] trait, or a [`Result<T, E>`] object where the error type, `E`, is
+/// convertible to an [`RpcError`] object through the [`From`] trait.
+///
 /// # Example
 ///
 /// The following example demonstrates both synchronous and asynchronous JSON-RPC callable functions.
@@ -209,6 +214,11 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// [JSON-RPC]: https://spdk.io/doc/jsonrpc.html
+/// [`Deserialize`]: https://docs.rs/serde/latest/serde/trait.Deserialize.html
+/// [`Serialize`]: https://docs.rs/serde/latest/serde/trait.Serialize.html
+/// [`Result<T, E>`]: https://doc.rust-lang.org/stable/std/result/enum.Result.html
+/// [`RpcError`]: ../spdk/json/struct.RpcError.html
+/// [`From`]: https://doc.rust-lang.org/stable/std/convert/trait.From.html
 #[cfg(feature = "json-rpc")]
 #[proc_macro_attribute]
 pub fn jsonrpc(attr: TokenStream, item: TokenStream) -> TokenStream {
