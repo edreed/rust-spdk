@@ -8,4 +8,4 @@ pub use serde::{
 };
 
 #[cfg(feature = "json-rpc")]
-pub use rpc::{Infallible as RpcInfallible, RpcCall, rpc_call};
+pub use rpc::{Infallible as RpcInfallible, RpcCall, RpcError, rpc_call};

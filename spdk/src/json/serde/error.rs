@@ -1,6 +1,11 @@
 use std::fmt;
 
-use crate::errors::{EINVAL, ERANGE, Errno, ErrorCode};
+use spdk_sys::{
+    SPDK_JSONRPC_ERROR_INTERNAL_ERROR, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+    SPDK_JSONRPC_ERROR_PARSE_ERROR,
+};
+
+use crate::errors::{EINVAL, ERANGE, Errno};
 
 /// Error type for JSON serialization and deserialization.
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
@@ -24,15 +29,12 @@ pub enum Error {
     ValueOutOfRange,
 }
 
-impl ErrorCode for Error {
-    fn code(&self) -> i32 {
+impl Error {
+    pub(crate) fn json_rpc_code(&self) -> i32 {
         match self {
-            Self::Message(_) => -1,
-            Self::WriteFailed => -2,
-            Self::Eof => -3,
-            Self::ParseFailed => -4,
-            Self::UnexpectedValue => -5,
-            Self::ValueOutOfRange => -6,
+            Self::Message(_) | Self::WriteFailed => SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+            Self::Eof | Self::ParseFailed => SPDK_JSONRPC_ERROR_PARSE_ERROR,
+            Self::UnexpectedValue | Self::ValueOutOfRange => SPDK_JSONRPC_ERROR_INVALID_PARAMS,
         }
     }
 }

@@ -1,7 +1,10 @@
-use std::time::Duration;
+use std::{io, time::Duration};
+
+use async_fs::File;
+use futures::io::AsyncWriteExt;
 
 use spdk::{
-    Result,
+    self,
     errors::ERANGE,
     jsonrpc,
     runtime::{CpuSet, Runtime},
@@ -29,7 +32,7 @@ async fn add_two(a: i32, b: i32) -> i32 {
 
 /// Plays a guessing game asynchronously with the requestor.
 #[jsonrpc]
-async fn guess_number(guess: u8) -> Result<String> {
+async fn guess_number(guess: u8) -> spdk::Result<String> {
     thread::spawn(c"guess_number", &CpuSet::any(), || async {
         if !(1..=10).contains(&guess) {
             return Err(ERANGE);
@@ -42,6 +45,14 @@ async fn guess_number(guess: u8) -> Result<String> {
         Ok("WRONG!".to_string())
     })?
     .await
+}
+
+/// Writes the specified text into a file.
+#[jsonrpc]
+async fn write_file(filename: &str, text: &str) -> io::Result<()> {
+    let mut file = File::create(filename).await?;
+
+    file.write_all(text.as_bytes()).await
 }
 
 #[spdk::main]

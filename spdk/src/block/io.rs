@@ -158,14 +158,14 @@ pub enum IoError {
     ///
     /// The `ScsiStatus` tuple field contains the SCSI status information.
     #[cfg(feature = "scsi")]
-    #[error("a SCSI error occurred")]
+    #[error("a SCSI error occurred: {0}")]
     ScsiError(ScsiStatus),
 
     /// An NVMe error occurred.
     ///
     /// The `NvmeStatus` tuple field contains the NVMe status information.
     #[cfg(feature = "nvmf")]
-    #[error("an NVME error occurred")]
+    #[error("an NVME error occurred: {0}")]
     NvmeError(NvmeStatus),
 
     /// A general I/O failure occurred.

@@ -1,10 +1,12 @@
 use core::slice;
 use std::{
-    ffi::CString,
+    ffi::{CStr, CString},
+    fmt::Display,
     mem::transmute,
     ptr::{NonNull, null_mut},
 };
 
+use futures::io;
 use serde::{Deserialize, Serialize};
 use spdk_sys::{
     spdk_json_val, spdk_json_val_len,
@@ -14,13 +16,92 @@ use spdk_sys::{
 };
 
 use crate::{
-    errors::ErrorCode,
+    errors::{EIO, Errno},
     json::{
         Deserializer, Serializer,
-        serde::{Result, de::Value},
+        serde::{Error as JsonError, Result, de::Value},
     },
     thread,
 };
+
+#[cfg(feature = "bdev")]
+use crate::{
+    block::IoError,
+    errors::{ECANCELED, EINPROGRESS, ENOMEM},
+};
+
+/// Represents a JSON-RPC error.
+#[derive(Debug, thiserror::Error)]
+pub struct RpcError {
+    code: i32,
+    message: CString,
+}
+
+impl RpcError {
+    /// Creates a new [`RpcError`] instance.
+    pub fn new(code: i32, message: CString) -> Self {
+        Self { code, message }
+    }
+
+    /// Returns the error code.
+    pub fn code(&self) -> i32 {
+        self.code
+    }
+
+    /// Returns the error message.
+    pub fn message(&self) -> &CStr {
+        &self.message
+    }
+}
+
+impl Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message.to_string_lossy())
+    }
+}
+
+impl From<Errno> for RpcError {
+    fn from(value: Errno) -> Self {
+        let code = -value.errno();
+        let message = value.strerror().into();
+
+        Self { code, message }
+    }
+}
+
+impl From<JsonError> for RpcError {
+    fn from(value: JsonError) -> Self {
+        let code = value.json_rpc_code();
+        let message = CString::new(value.to_string()).expect("no embedded null characters");
+
+        Self { code, message }
+    }
+}
+
+#[cfg(feature = "bdev")]
+impl From<IoError> for RpcError {
+    fn from(value: IoError) -> Self {
+        let code = match &value {
+            IoError::GeneralError(errno) => -errno.errno(),
+            IoError::Aborted => -ECANCELED.errno(),
+            IoError::NoMem => -ENOMEM.errno(),
+            IoError::Pending => -EINPROGRESS.errno(),
+            _ => -EIO.errno(),
+        };
+        let message = CString::new(value.to_string()).expect("no embedded null characters");
+
+        Self { code, message }
+    }
+}
+
+impl From<io::Error> for RpcError {
+    fn from(value: io::Error) -> Self {
+        let code = -value.raw_os_error().unwrap_or(EIO.into());
+        let message = CString::new(value.to_string()).expect("no embedded null characters");
+
+        Self { code, message }
+    }
+}
 
 /// A Rust wrapper around an `spdk_jsonrpc_request` pointer.
 #[repr(transparent)]
@@ -42,9 +123,9 @@ impl Request {
     }
 
     /// Sends an error response aand completes the request.
-    fn fail<E: ErrorCode>(self, err: E) {
+    fn fail(self, err: RpcError) {
         let code = err.code();
-        let msg = CString::new(err.to_string()).expect("valid C-string");
+        let msg = err.message();
 
         unsafe {
             spdk_jsonrpc_send_error_response(self.0.as_ptr(), code, msg.as_ptr());
@@ -95,12 +176,12 @@ where
 impl<T, E> Response for std::result::Result<T, E>
 where
     T: Serialize,
-    E: ErrorCode,
+    E: Into<RpcError>,
 {
     fn complete(self, req: Request) {
         match self {
             Ok(ret) => req.succeed(ret),
-            Err(err) => req.fail(err),
+            Err(err) => req.fail(err.into()),
         }
     }
 }
@@ -186,7 +267,7 @@ pub unsafe extern "C" fn rpc_call<'call, T>(
                 res.complete(req);
             }
             Err(err) => {
-                req.fail(err);
+                req.fail(err.into());
             }
         };
     };

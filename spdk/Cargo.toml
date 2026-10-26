@@ -28,6 +28,7 @@ async-condvar-fair = { version = "1.0.1", features = ["parking_lot_0_12"] }
 laboratory = "2.0.0"
 parking_lot = { version = "0.12.5", features = ["send_guard"] }
 itertools = "0.15.0"
+async-fs = "2.2.0"
 
 [features]
 default = []

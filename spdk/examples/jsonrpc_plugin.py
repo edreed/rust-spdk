@@ -34,6 +34,14 @@ def spdk_rpc_plugin_initialize(subparsers):
     def guess_number(args):
         print_json(args.client.guess_number(guess=args.guess))
 
-    p = subparsers.add_parser('guess_number', help='Guess aa number between 1 and 10')
+    p = subparsers.add_parser('guess_number', help='Guess a number between 1 and 10')
     p.add_argument('guess', help='A number between 1 and 10, inclusive', type=int)
     p.set_defaults(func=guess_number)
+
+    def write_file(args):
+        print_json(args.client.write_file(filename=args.filename,text=args.text))
+
+    p = subparsers.add_parser('write_file', help='Write text to a file')
+    p.add_argument('filename', help='The file to write')
+    p.add_argument('text', help='The text to write')
+    p.set_defaults(func=write_file)
