@@ -12,7 +12,6 @@ aquamarine = "0.6.0"
 futures = "0.3.34"
 libc = "0.2.191"
 lazy-regex = "3.6.1"
-parking_lot = "0.12.5"
 serde = { version = "1.0.229", features = ["derive"] }
 spdk-macros = { version = "0.1.0", path = "../spdk-macros" }
 spdk-sys = { version = "0.1.0", path = "../spdk-sys" }
@@ -22,11 +21,11 @@ libanl = { version = "0.1.0", path = "../libanl" }
 thiserror = "2.0.21"
 static_assertions = "1.1.0"
 bitflags = "2.13.2"
+lock_api = "0.5.0"
+event-listener = "5.4.2"
 
 [dev-dependencies]
-async-condvar-fair = { version = "1.0.1", features = ["parking_lot_0_12"] }
 laboratory = "2.0.0"
-parking_lot = { version = "0.12.5", features = ["send_guard"] }
 itertools = "0.15.0"
 async-fs = "2.2.0"
 

@@ -9,10 +9,10 @@ use std::{
 };
 
 use futures::task::WakerRef;
-use parking_lot::Mutex;
 
 use crate::{
     runtime::Reactor,
+    sync::SpinLock,
     thread::{AsRawThread, Thread},
 };
 
@@ -163,7 +163,7 @@ where
     R: Send + 'static,
 {
     executor: E,
-    result: Mutex<ResultState<R>>,
+    result: SpinLock<ResultState<R>>,
     future: RefCell<F>,
     _marker: PhantomData<&'a F>,
 }
@@ -186,7 +186,7 @@ where
     pub(crate) fn new(executor: E, fut: F) -> Arc<Self> {
         Arc::new(Self {
             executor,
-            result: Mutex::new(ResultState::Empty),
+            result: SpinLock::new(ResultState::Empty),
             future: RefCell::new(fut),
             _marker: PhantomData,
         })

@@ -2,17 +2,17 @@ use std::{
     ffi::CStr,
     io::{BufRead, IoSlice, Write},
     mem::transmute,
+    ops::ControlFlow,
 };
 
-use async_condvar_fair::Condvar;
 use futures::future::join;
-use parking_lot::Mutex;
 use spdk::{
     bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
     errors::{ENOTSUP, Errno},
     runtime::reactors,
+    sync::{Condvar, SpinLock},
     task::{self},
     thread,
 };
@@ -41,7 +41,7 @@ impl ModuleOps for EchoModule {
 struct Echo {
     reader: Condvar,
     writer: Condvar,
-    src_buf: Mutex<Option<&'static [IoSlice<'static>]>>,
+    src_buf: SpinLock<Option<&'static [IoSlice<'static>]>>,
 }
 
 impl Echo {
@@ -55,7 +55,6 @@ unsafe impl Sync for Echo {}
 
 impl Echo {
     // The `reader `condition variable releases the lock during the await.
-    #[allow(clippy::await_holding_lock)]
     async fn do_read(&self, _channel: &BDevIoChannel<()>, io: &mut BDevIo<()>) -> spdk::Result<()> {
         let offset_blocks = io.offset_blocks();
         let dst_buf = io.buffers_mut();
@@ -70,13 +69,16 @@ impl Echo {
             return Ok(());
         }
 
-        let mut src_buf = self.src_buf.lock();
+        self.reader
+            .wait(&self.src_buf, |src_buf| {
+                if let Some(src_buf) = src_buf.take() {
+                    dst_buf[0].copy_from_slice(&src_buf[0]);
+                    return ControlFlow::Break(());
+                }
 
-        while src_buf.is_none() {
-            src_buf = self.reader.wait(src_buf).await;
-        }
-
-        dst_buf[0].copy_from_slice(&src_buf.take().unwrap()[0]);
+                ControlFlow::Continue(())
+            })
+            .await;
 
         self.writer.notify_one();
 
@@ -84,26 +86,37 @@ impl Echo {
     }
 
     // The `writer `condition variable releases the lock during the await.
-    #[allow(clippy::await_holding_lock)]
     async fn do_write(
         &self,
         _channel: &BDevIoChannel<()>,
         io: &mut BDevIo<()>,
     ) -> spdk::Result<()> {
-        let mut src_buf = self.src_buf.lock();
+        self.writer
+            .wait(&self.src_buf, |src_buf| {
+                if src_buf.is_some() {
+                    return ControlFlow::Continue(());
+                }
 
-        while src_buf.is_some() {
-            src_buf = self.writer.wait(src_buf).await;
-        }
+                // SAFETY: We will wait for the reader to consume the buffer before returning from `do_write`.
+                unsafe {
+                    *src_buf = Some(transmute::<&[IoSlice<'_>], &[IoSlice<'_>]>(io.buffers()))
+                };
 
-        // SAFETY: We will wait for the reader to consume the buffer before returning.
-        unsafe { *src_buf = Some(transmute::<&[IoSlice<'_>], &[IoSlice<'_>]>(io.buffers())) };
+                ControlFlow::Break(())
+            })
+            .await;
 
         self.reader.notify_one();
 
-        while src_buf.is_some() {
-            src_buf = self.writer.wait(src_buf).await;
-        }
+        self.writer
+            .wait(&self.src_buf, |src_buf| {
+                if src_buf.is_some() {
+                    return ControlFlow::Continue(());
+                }
+
+                ControlFlow::Break(())
+            })
+            .await;
 
         Ok(())
     }
