@@ -1,7 +1,7 @@
 use std::ops::ControlFlow;
 
 use event_listener::{Event, listener};
-use lock_api::{Mutex, RawMutex};
+use lock_api::{Mutex, RawMutex, RawRwLock, RwLock};
 
 /// A condition variable that can be used to asynchronously wait until a certain condition is met.
 #[derive(Debug)]
@@ -17,24 +17,8 @@ impl Condvar {
         }
     }
 
-    /// Acquires the [`Mutex`] and calls the wait function to check if the condition has been met.
-    ///
-    /// # Returns
-    ///
-    /// This function return `ControlFlow::Break(R)` if the condition has been met, and
-    /// `ControlFlow::Break` otherwise.
-    ///
-    /// [`Mutex`]: https://docs.rs/lock_api/latest/lock_api/struct.Mutex.html
-    fn check_condition<F, M, R, T>(&self, mutex: &Mutex<M, T>, wait_fn: &mut F) -> ControlFlow<R>
-    where
-        M: RawMutex,
-        F: FnMut(&mut T) -> ControlFlow<R>,
-    {
-        let mut guard = mutex.lock();
-        (*wait_fn)(&mut *guard)
-    }
-
-    /// Waits asynchronously for the condition defined in the wait function to be met.
+    /// Waits asynchronously for the condition protected by the specified [`Mutex`] and defined in
+    /// the wait function to be met.
     ///
     /// The specified mutex is held while checking the condition and released while waiting. This
     /// can be any mutual exclusion primitive implemented by [`Mutex`] including [`SpinLock`].
@@ -44,17 +28,81 @@ impl Condvar {
     ///
     /// [`Mutex`]: https://docs.rs/lock_api/latest/lock_api/struct.Mutex.html
     /// [`SpinLock`]: super::SpinLock
-    pub async fn wait<F, M, R, T>(&self, mutex: &Mutex<M, T>, mut wait_fn: F) -> R
+    pub async fn wait_on_mutex<F, M, R, T>(&self, mutex: &Mutex<M, T>, mut wait_fn: F) -> R
     where
         M: RawMutex,
         F: FnMut(&mut T) -> ControlFlow<R>,
     {
         loop {
-            if let ControlFlow::Break(ret) = self.check_condition(mutex, &mut wait_fn) {
+            // Begin listening before checking the condition so that we don't miss a notification
+            // that arrives **after** the lock is released but before we await the listener.
+            listener!(self.event => listener);
+
+            let flow = (wait_fn)(&mut *mutex.lock());
+
+            if let ControlFlow::Break(ret) = flow {
                 return ret;
             }
 
+            listener.await;
+        }
+    }
+
+    /// Waits asynchronously for the condition protected by the specified [`RwLock`] and defined in
+    /// the wait function to be met.
+    ///
+    /// The specified lock is held in exclusive mode while checking the condition and released while
+    /// waiting. This can be any synchronization primitive implemented by [`RwLock`].
+    ///
+    /// The wait function returns `ControlFlow::Break(R)` when the condition has been met, and
+    /// `ControlFlow::Continue(())` to continue waiting.
+    ///
+    /// [`RwLock`]: https://docs.rs/lock_api/latest/lock_api/struct.RwLock.html
+    pub async fn wait_on_write<F, L, R, T>(&self, mutex: &RwLock<L, T>, mut wait_fn: F) -> R
+    where
+        L: RawRwLock,
+        F: FnMut(&mut T) -> ControlFlow<R>,
+    {
+        loop {
+            // Begin listening before checking the condition so that we don't miss a notification
+            // that arrives **after** the lock is released but before we await the listener.
             listener!(self.event => listener);
+
+            let flow = (wait_fn)(&mut *mutex.write());
+
+            if let ControlFlow::Break(ret) = flow {
+                return ret;
+            }
+
+            listener.await;
+        }
+    }
+
+    /// Waits asynchronously for the condition protected by the specified [`RwLock`] and defined in
+    /// the wait function to be met.
+    ///
+    /// The specified lock is held in shared mode while checking the condition and released while
+    /// waiting. This can be any synchronization primitive implemented by [`RwLock`].
+    ///
+    /// The wait function returns `ControlFlow::Break(R)` when the condition has been met, and
+    /// `ControlFlow::Continue(())` to continue waiting.
+    ///
+    /// [`RwLock`]: https://docs.rs/lock_api/latest/lock_api/struct.RwLock.html
+    pub async fn wait_on_read<F, L, R, T>(&self, mutex: &RwLock<L, T>, wait_fn: F) -> R
+    where
+        L: RawRwLock,
+        F: Fn(&T) -> ControlFlow<R>,
+    {
+        loop {
+            // Begin listening before checking the condition so that we don't miss a notification
+            // that arrives **after** the lock is released but before we await the listener.
+            listener!(self.event => listener);
+
+            let flow = (wait_fn)(&*mutex.read());
+
+            if let ControlFlow::Break(ret) = flow {
+                return ret;
+            }
 
             listener.await;
         }
