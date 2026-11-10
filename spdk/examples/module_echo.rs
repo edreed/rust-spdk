@@ -70,7 +70,7 @@ impl Echo {
         }
 
         self.reader
-            .wait(&self.src_buf, |src_buf| {
+            .wait_on_mutex(&self.src_buf, |src_buf| {
                 if let Some(src_buf) = src_buf.take() {
                     dst_buf[0].copy_from_slice(&src_buf[0]);
                     return ControlFlow::Break(());
@@ -92,7 +92,7 @@ impl Echo {
         io: &mut BDevIo<()>,
     ) -> spdk::Result<()> {
         self.writer
-            .wait(&self.src_buf, |src_buf| {
+            .wait_on_mutex(&self.src_buf, |src_buf| {
                 if src_buf.is_some() {
                     return ControlFlow::Continue(());
                 }
@@ -109,7 +109,7 @@ impl Echo {
         self.reader.notify_one();
 
         self.writer
-            .wait(&self.src_buf, |src_buf| {
+            .wait_on_mutex(&self.src_buf, |src_buf| {
                 if src_buf.is_some() {
                     return ControlFlow::Continue(());
                 }
