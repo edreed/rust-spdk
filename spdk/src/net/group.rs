@@ -22,8 +22,8 @@ use crate::{
     Result,
     errors::EINVAL,
     net::ToSocketAddrs,
-    task::{Polled, Poller},
-    thread, to_result,
+    thread::{self, Polled, Poller},
+    to_result,
 };
 
 use super::{

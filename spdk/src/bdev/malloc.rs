@@ -17,7 +17,7 @@ use spdk_sys::{
 use crate::{
     Result, Uuid,
     block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
-    task::{Promise, Promissory},
+    thread::{Promise, Promissory},
     to_result,
 };
 

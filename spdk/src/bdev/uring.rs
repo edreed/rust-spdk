@@ -11,7 +11,7 @@ use crate::{
     Result, Uuid,
     block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
     errors::EINVAL,
-    task::{Promise, Promissory},
+    thread::{Promise, Promissory},
 };
 
 /// Builds a [`Uring`] instance using the io_uring Block Device module of the

@@ -22,8 +22,9 @@ use crate::{
     Result,
     errors::{EBADF, EINPROGRESS, EINVAL, ENOMEM, EPERM, UnknownEnumVariantError},
     nvme::{SPDK_NVME_GLOBAL_NS_TAG, TransportId},
-    task::{Promise, Promissory},
-    thread, to_poll_pending_on_err, to_poll_pending_on_ok, to_result,
+    thread,
+    thread::{Promise, Promissory},
+    to_poll_pending_on_err, to_poll_pending_on_ok, to_result,
 };
 
 use super::{

@@ -24,7 +24,7 @@ pub use owned::{Owned, OwnedBy, OwnedOps};
 pub use claim::ClaimType;
 use spdk_sys::spdk_bdev_wait_for_examine;
 
-use crate::task::{Promise, Promissory};
+use crate::thread::{Promise, Promissory};
 
 use super::{Result, to_poll_pending_on_ok};
 

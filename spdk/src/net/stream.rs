@@ -19,7 +19,7 @@ use spdk_sys::{
 use crate::{
     Result,
     errors::{EAGAIN, EBADF, EINPROGRESS, EINVAL, Errno, SUCCESS},
-    task::Polled,
+    thread::Polled,
     to_result, to_result_size,
 };
 

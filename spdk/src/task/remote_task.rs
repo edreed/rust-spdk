@@ -4,7 +4,7 @@ use std::{
     marker::PhantomData,
     mem::ManuallyDrop,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
@@ -12,7 +12,6 @@ use futures::task::WakerRef;
 
 use crate::{
     runtime::Reactor,
-    sync::SpinLock,
     thread::{AsRawThread, Thread},
 };
 
@@ -28,39 +27,19 @@ pub(crate) trait ArcTask: TaskBase {
     fn schedule(arc_self: Arc<Self>) {
         let executor = arc_self.executor();
 
-        // If the current executor is the target of this task, attempt to run it synchronously.
-        if executor.is_current() && Self::run(&arc_self) {
-            return;
-        }
-
-        // The task could not be run synchronously, so enqueue it to run on the target executor at a
-        // later time.
-        executor.schedule(move || assert!(Self::run(&arc_self)));
+        executor.schedule(move || Self::run(arc_self));
     }
 
     /// Schedules a task for execution without consuming the task.
     fn schedule_by_ref(arc_self: &Arc<Self>) {
         let executor = arc_self.executor();
-
-        // If the current executor is the target of this task, attempt to run it synchronously.
-        if executor.is_current() && Self::run(arc_self) {
-            return;
-        }
-
-        // The task could not be run synchronously, so enqueue it to run on the target executor
-        // at a later time.
         let cloned_task = arc_self.clone();
 
-        executor.schedule(move || assert!(Self::run(&cloned_task)));
+        executor.schedule(move || Self::run(cloned_task));
     }
 
     /// Executes a task on the executor.
-    ///
-    /// # Returns
-    ///
-    /// This method returns `true` if the task was run synchronously. If it returns `false`, the
-    /// task could not be executed synchronously and should be scheduled to run later.
-    fn run(arc_self: &Arc<Self>) -> bool;
+    fn run(arc_self: Arc<Self>);
 
     /// Polls the result of a task, returning `Poll::Pending` if the result is not yet ready, or
     /// `Poll::Ready` with the result if it is ready.
@@ -163,7 +142,7 @@ where
     R: Send + 'static,
 {
     executor: E,
-    result: SpinLock<ResultState<R>>,
+    result: Mutex<ResultState<R>>,
     future: RefCell<F>,
     _marker: PhantomData<&'a F>,
 }
@@ -186,7 +165,7 @@ where
     pub(crate) fn new(executor: E, fut: F) -> Arc<Self> {
         Arc::new(Self {
             executor,
-            result: SpinLock::new(ResultState::Empty),
+            result: Mutex::default(),
             future: RefCell::new(fut),
             _marker: PhantomData,
         })
@@ -225,10 +204,10 @@ where
 {
     type Output = R;
 
-    fn run(arc_self: &Arc<Self>) -> bool {
+    fn run(arc_self: Arc<Self>) {
         match arc_self.future.try_borrow_mut() {
             Ok(mut fut) => {
-                let waker = waker_ref(arc_self);
+                let waker = waker_ref(&arc_self);
                 let mut ctx = Context::from_waker(&waker);
 
                 // SAFETY: The future is pinned in place for the duration of this function call, and
@@ -238,7 +217,11 @@ where
 
                 match fut.poll(&mut ctx) {
                     Poll::Ready(result) => {
-                        let res = arc_self.result.lock().set_result(result);
+                        let res = arc_self
+                            .result
+                            .lock()
+                            .expect("unpoisoned")
+                            .set_result(result);
 
                         if let Some(waker) = res {
                             waker.wake();
@@ -246,16 +229,14 @@ where
                     }
                     Poll::Pending => {}
                 }
-
-                true
             }
-            // The task was re-entered while its future was already being polled. Return `false` to
-            // indicate that the task needs to be scheduled to run by its executor later.
-            Err(_) => false,
+
+            // It is not possible to re-enter the task's `run` method.
+            Err(_) => unreachable!("remote task re-entered"),
         }
     }
 
     fn poll_result(arc_self: &Arc<Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        arc_self.result.lock().poll_result(cx)
+        arc_self.result.lock().expect("unpoisoned").poll_result(cx)
     }
 }

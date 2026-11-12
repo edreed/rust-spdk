@@ -83,7 +83,7 @@ unsafe impl RawMutex for RawSpinLock {
 
 /// A spinlock implementation based on the SPDK's [`spdk_spinlock`].
 ///
-/// Like [`Mutex`], a `SpinLock` is a mutual exlusion primitive useful for protecting shared data.
+/// Like [`Mutex`], a `SpinLock` is a mutual exclusion primitive useful for protecting shared data.
 ///
 /// [`Mutex`]: https://docs.rs/lock_api/latest/lock_api/struct.Mutex.html
 /// [`spdk_spinlock`]: spdk_sys::spdk_spinlock

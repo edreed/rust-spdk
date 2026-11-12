@@ -30,8 +30,7 @@ use crate::{
         Owned, OwnedOps,
     },
     errors::{EINVAL, ENOMEM, Errno},
-    task::{Promise, Promissory},
-    thread::{self, Thread},
+    thread::{self, Promise, Promissory, Thread},
     to_result,
 };
 

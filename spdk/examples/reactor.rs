@@ -1,10 +1,5 @@
-use std::time::Duration;
-
 use futures::future::join_all;
-use spdk::{
-    runtime::{Reactor, reactors},
-    time,
-};
+use spdk::runtime::{Reactor, reactors};
 
 #[spdk::main]
 async fn main() {
@@ -12,8 +7,6 @@ async fn main() {
     let tasks = reactors().map(|r| {
         r.spawn(|| async {
             let core_id = Reactor::current().core().id();
-
-            time::sleep(Duration::from_secs(core_id as u64)).await;
 
             println!("Hello, World from the reactor on core {}!", core_id);
         })

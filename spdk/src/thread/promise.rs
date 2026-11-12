@@ -14,8 +14,10 @@ use libc::c_void;
 
 use crate::{
     errors::{EINVAL, Errno},
-    thread, to_result,
+    to_result,
 };
+
+use super as thread;
 
 #[cfg_attr(doc, aquamarine::aquamarine)]
 /// Encapsulates the state of a [`Promise`].
@@ -376,7 +378,8 @@ where
     }
 }
 
-/// Orchestrates the execution of an asynchronous operation and provides access to its result.
+/// Orchestrates the execution of an asynchronous operation on an SPDK thread and provides access to
+/// its result.
 ///
 /// <div class="warning">
 ///

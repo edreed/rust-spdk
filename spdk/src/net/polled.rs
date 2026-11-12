@@ -8,7 +8,7 @@ use std::{
 
 use spdk_sys::{spdk_sock, spdk_sock_opts};
 
-use crate::{Result, task::Poller};
+use crate::{Result, thread::Poller};
 
 use super::{
     Accepted, AsRawSock, Connector, RawTcpListener, RawTcpListenerVtable, RawTcpStream,

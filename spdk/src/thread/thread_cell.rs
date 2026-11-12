@@ -2,7 +2,7 @@ use std::{cell::UnsafeCell, fmt::Debug};
 
 use crate::thread::{AsRawThread, Thread};
 
-/// A container storing a value that is accessible only from the associated thread.
+/// A container storing a value that is accessible only from the associated SPDK thread.
 pub struct ThreadCell<T, U>
 where
     T: AsRawThread,

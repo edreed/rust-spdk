@@ -15,7 +15,7 @@ use crate::{
     Result,
     block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
     errors::EINVAL,
-    task::{Promise, Promissory},
+    thread::{Promise, Promissory},
     to_result,
     uuid::Uuid,
 };
