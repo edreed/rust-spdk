@@ -62,7 +62,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::task::{Polled, Poller};
+use crate::thread::{Polled, Poller};
 
 /// Encapsulates the execution state of an [`Interval`].
 #[derive(Debug)]
@@ -130,12 +130,22 @@ impl Interval {
 /// The ticker is driven by an SPDK polling function registered on the current
 /// thread.
 ///
-/// TODO: Document drift behavior.
+/// # Panics
+///
+/// This function panics if the duration cannot be represented as a unsigned 64-bit integer.
+///
+/// This function panics if the current system thread is not an SPDK thread.
 pub fn interval(period: Duration) -> Interval {
     Interval(Poller::with_period(period, IntervalInner::new()))
 }
 
 /// Waits until `duration` has elapsed.
+///
+/// # Panics
+///
+/// This function panics if the duration cannot be represented as a unsigned 64-bit integer.
+///
+/// This function panics if the current system thread is not an SPDK thread.
 pub async fn sleep(duration: Duration) {
     _ = interval(duration).tick().await;
 }

@@ -20,7 +20,7 @@ use crate::{
     Result,
     errors::{EINVAL, ENOENT, Errno, UnknownEnumVariantError},
     nvme::TransportId,
-    task::{Promise, Promissory},
+    thread::{Promise, Promissory},
     to_poll_pending_on_ok, to_result,
 };
 

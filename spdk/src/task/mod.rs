@@ -4,8 +4,6 @@
 //! [SPEF]: https://spdk.io/doc/event.html
 mod join_handle;
 mod local_task;
-mod poller;
-mod promise;
 mod remote_task;
 mod yield_now;
 
@@ -19,8 +17,6 @@ pub(crate) use local_task::{LocalTask, RcTask};
 pub(crate) use remote_task::{ArcTask, RemoteTask};
 
 pub use join_handle::JoinHandle;
-pub use poller::{Polled, PolledFn, Poller, polled_fn, polled_fn_with_period};
-pub use promise::{Promise, Promissory};
 pub use yield_now::yield_now;
 
 /// Represents the state of a task's result.

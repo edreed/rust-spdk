@@ -15,7 +15,7 @@ use crate::{
     Result,
     errors::{EAGAIN, EBADF, EINVAL, errno},
     net::accept_polled_stream,
-    task::Polled,
+    thread::Polled,
     to_result,
 };
 
@@ -86,7 +86,7 @@ impl Accepted {
     /// Consumes the `Accepted` instance and converts it into a [`TcpStream`] with a
     /// [`Poller`]-based implementation.
     ///
-    /// [`Poller`]: crate::task::Poller
+    /// [`Poller`]: crate::thread::Poller
     pub fn into_stream(self) -> TcpStream {
         accept_polled_stream(self)
     }

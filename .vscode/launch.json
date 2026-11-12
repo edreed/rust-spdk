@@ -234,6 +234,28 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'thread'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=thread",
+                    "--package=spdk"
+                ],
+                "filter": {
+                    "name": "thread",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'interval'",
             "cargo": {
                 "args": [

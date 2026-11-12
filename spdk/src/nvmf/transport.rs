@@ -21,8 +21,9 @@ use spdk_sys::SPDK_NVME_TRANSPORT_NAME_VFIOUSER;
 use crate::{
     Result,
     errors::{EINVAL, ENODEV, ENOMEM, EPERM, Errno, UnknownEnumVariantError},
-    task::{Promise, Promissory},
-    thread, to_poll_pending_on_ok,
+    thread,
+    thread::{Promise, Promissory},
+    to_poll_pending_on_ok,
 };
 
 use super::Target;

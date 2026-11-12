@@ -19,7 +19,7 @@ use libc::{AF_INET, AF_INET6, NI_NUMERICHOST, NI_NUMERICSERV, addrinfo, getnamei
 use crate::{
     Result,
     errors::{EINVAL, Errno},
-    task::{Polled, Poller},
+    thread::{Polled, Poller},
 };
 
 macro_rules! impl_socket_addr {

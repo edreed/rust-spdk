@@ -1,20 +1,25 @@
-//! An abstraction of a lightweight, stackless thread of execution.
+//! Infrastructure and abstractions supporting asynchronous execution on SPDK threads.
 //!
-//! An SPDK thread does not correspond 1:1 with a posix thread. Instead, a lower-level framework
-//! like the SPDK Event Framework polls each SPDK thread for work. This allows the SPDK Event
-//! Framework to multiplex many SPDK threads on a smaller number of posix threads.
+//! An SPDK thread is a lightweight, stackless thread of execution and does not necessarily
+//! correspond 1:1 with a posix thread. Instead, a lower-level framework like the [SPDK Event
+//! Framework] polls each SPDK thread for work. This allows the SPDK Event Framework to multiplex
+//! many SPDK threads on a smaller number of posix threads. In this crate, the SPDK thread is
+//! implemented by the [`Thread`] type.
 //!
 //! There are two mechanisms for scheduling work on an SPDK thread: messages and pollers. A message
-//! consists of a function and single context parameter. A poller is a function that is called
-//! periodically.
+//! consists of a function object sent via the [`Thread::send_msg`] function. A poller is a type
+//! implementing the [`Polled`] trait that has its [`Polled::poll`] method called periodically.
 //!
 //! See [Message Passing and Concurrency] for more details on the SPDK threading model.
 //!
+//! [SPDK Event Framework]: https://spdk.io/doc/event.html
 //! [Message Passing and Concurrency]: https://spdk.io/doc/concurrency.html
 mod app;
 mod owned;
 #[cfg(feature = "bdev")]
 mod owned_by;
+mod poller;
+mod promise;
 mod thread_cell;
 mod unowned;
 
@@ -47,6 +52,8 @@ pub use app::App;
 pub use owned::Owned;
 #[cfg(feature = "bdev")]
 pub use owned_by::OwnedBy;
+pub use poller::{Polled, PolledFn, Poller, polled_fn, polled_fn_with_period};
+pub use promise::{Promise, Promissory};
 pub use thread_cell::ThreadCell;
 pub use unowned::Unowned;
 

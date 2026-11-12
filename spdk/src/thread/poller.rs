@@ -14,7 +14,9 @@ use spdk_sys::{
     spdk_poller_resume, spdk_poller_unregister,
 };
 
-/// A trait for types that can be polled.
+use super as thread;
+
+/// A trait for types that can be polled on an SPDK thread.
 pub trait Polled {
     /// Polls the type.
     ///
@@ -22,8 +24,8 @@ pub trait Polled {
     fn poll(self: Pin<&mut Self>) -> bool;
 }
 
-/// The internal state of a poller registered with the SPDK Event Framework to poll a type
-/// implementing the [`Polled`] trait.
+/// The internal state of a poller registered with a thead of the SPDK Event Framework to poll a
+/// type implementing the [`Polled`] trait.
 #[derive(Debug)]
 struct PollerInner<T>
 where
@@ -42,8 +44,21 @@ where
     }
 }
 
-/// A poller that can be registered with the SPDK Event Framework to poll a type implementing the
-/// [`Polled`] trait.
+/// A poller that can be registered with an SPDK thread to poll a type implementing the [`Polled`]
+/// trait.
+///
+/// # Panics
+///
+/// Since a poller is tied to an SPDK thread, one cannot be used in a task associated only with a
+/// [`Reactor`] (i.e. a task created by [`Reactor::spawn`], [`Reactor::spawn_detached`],
+/// [`runtime::spawn_local`] or [[`runtime::spawn_local_detached`]]). Attempting
+/// to do so will result in a panic.
+///
+/// [`Reactor`]: crate::runtime::Reactor
+/// [`Reactor::spawn`]: crate::runtime::Reactor::spawn
+/// [`Reactor::spawn_detached`]: crate::runtime::Reactor::spawn_detached
+/// [`runtime::spawn_local`]: crate::runtime::spawn_local
+/// [`runtime::spawn_local_detached`]: crate::runtime::spawn_local_detached
 #[derive(Debug)]
 pub struct Poller<T>(Box<PollerInner<T>>)
 where
@@ -55,6 +70,10 @@ where
 {
     /// Creates a new poller that will repeatedly poll `polled` as fast as possible on the current
     /// SPDK thread.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the current system thread is not an SPDK thread.
     #[inline]
     pub fn new(polled: T) -> Self {
         Self::with_period(Duration::ZERO, polled)
@@ -71,26 +90,30 @@ where
     /// # Panics
     ///
     /// This function panics if the duration cannot be represented as a unsigned 64-bit integer.
+    ///
+    /// This function panics if the current system thread is not an SPDK thread.
     pub fn with_period(period: Duration, polled: T) -> Self {
-        let mut inner = Box::new(PollerInner {
-            poller: null_mut(),
-            polled,
-        });
+        thread::with_current(move |_| {
+            let mut inner = Box::new(PollerInner {
+                poller: null_mut(),
+                polled,
+            });
 
-        inner.poller = unsafe {
-            spdk_poller_register(
-                Some(Self::poll),
-                Box::as_mut(&mut inner) as *mut _ as *mut c_void,
-                period
-                    .as_micros()
-                    .try_into()
-                    .expect("period in range 0..2^64 - 1"),
-            )
-        };
+            inner.poller = unsafe {
+                spdk_poller_register(
+                    Some(Self::poll),
+                    Box::as_mut(&mut inner) as *mut _ as *mut c_void,
+                    period
+                        .as_micros()
+                        .try_into()
+                        .expect("period in range 0..2^64 - 1"),
+                )
+            };
 
-        assert!(!inner.poller.is_null());
+            assert!(!inner.poller.is_null());
 
-        Self(inner)
+            Self(inner)
+        })
     }
 }
 
@@ -103,6 +126,10 @@ where
     ///
     /// `T` is pinned in memory making it safe to pass a reference or pointer to itself to other
     /// functions.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the current system thread is not an SPDK thread.
     pub fn new_in_place<F>(init_fn: F) -> Self
     where
         F: FnOnce(Pin<&mut MaybeUninit<T>>),
@@ -124,34 +151,38 @@ where
     /// # Panics
     ///
     /// This function panics if the duration cannot be represented as a unsigned 64-bit integer.
+    ///
+    /// This function panics if the current system thread is not an SPDK thread.
     pub fn with_period_in_place<F>(period: Duration, init_fn: F) -> Self
     where
         F: FnOnce(Pin<&mut MaybeUninit<T>>),
     {
-        let mut inner = Box::new(PollerInner {
-            poller: null_mut(),
-            polled: MaybeUninit::<T>::zeroed(),
-        });
+        thread::with_current(|_| {
+            let mut inner = Box::new(PollerInner {
+                poller: null_mut(),
+                polled: MaybeUninit::<T>::zeroed(),
+            });
 
-        init_fn(unsafe { Pin::new_unchecked(&mut inner.polled) });
+            init_fn(unsafe { Pin::new_unchecked(&mut inner.polled) });
 
-        // SAFETY: The polled object was just initialized by the initialization function.
-        let mut inner: Box<PollerInner<T>> = unsafe { transmute(inner) };
+            // SAFETY: The polled object was just initialized by the initialization function.
+            let mut inner: Box<PollerInner<T>> = unsafe { transmute(inner) };
 
-        inner.poller = unsafe {
-            spdk_poller_register(
-                Some(Self::poll),
-                Box::as_mut(&mut inner) as *mut _ as *mut c_void,
-                period
-                    .as_micros()
-                    .try_into()
-                    .expect("period in range 0..2^64 - 1"),
-            )
-        };
+            inner.poller = unsafe {
+                spdk_poller_register(
+                    Some(Self::poll),
+                    Box::as_mut(&mut inner) as *mut _ as *mut c_void,
+                    period
+                        .as_micros()
+                        .try_into()
+                        .expect("period in range 0..2^64 - 1"),
+                )
+            };
 
-        assert!(!inner.poller.is_null());
+            assert!(!inner.poller.is_null());
 
-        Self(inner)
+            Self(inner)
+        })
     }
 
     /// Consumes an `Poller<T>` instance and returns the wrapped pointer.
