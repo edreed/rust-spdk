@@ -24,7 +24,7 @@ pub trait Polled {
     fn poll(self: Pin<&mut Self>) -> bool;
 }
 
-/// The internal state of a poller registered with a thead of the SPDK Event Framework to poll a
+/// The internal state of a poller registered with a thread of the SPDK Event Framework to poll a
 /// type implementing the [`Polled`] trait.
 #[derive(Debug)]
 struct PollerInner<T>

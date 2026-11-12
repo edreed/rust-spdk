@@ -1,7 +1,4 @@
-use std::{
-    ffi::{CStr, CString},
-    time::Duration,
-};
+use std::ffi::{CStr, CString};
 
 use spdk::{
     bdev::malloc,
@@ -9,8 +6,7 @@ use spdk::{
     net::SocketAddr,
     nvme::TransportAddr,
     nvmf::{self, SubsystemType},
-    runtime::Runtime,
-    time::interval,
+    runtime,
 };
 
 const BDEV_NAME: &CStr = c"Malloc0";
@@ -64,11 +60,7 @@ async fn main() {
     subsys.add_listener(&transport_id).await.unwrap();
     subsys.start().await.unwrap();
 
-    let mut timer = interval(Duration::from_millis(50));
-
-    while !Runtime::is_shutting_down() {
-        timer.tick().await;
-    }
+    runtime::wait_for_shutdown().await;
 
     target.stop_listening(&transport_id).await.unwrap();
     target.stop_subsystems().await.unwrap();
