@@ -1,4 +1,4 @@
-use std::{io, time::Duration};
+use std::io;
 
 use async_fs::File;
 use futures::io::AsyncWriteExt;
@@ -7,9 +7,8 @@ use spdk::{
     self,
     errors::ERANGE,
     jsonrpc,
-    runtime::{CpuSet, Runtime},
+    runtime::{self, CpuSet},
     thread,
-    time::interval,
 };
 
 /// Synchronously prints a greeting.
@@ -57,9 +56,5 @@ async fn write_file(filename: &str, text: &str) -> io::Result<()> {
 
 #[spdk::main]
 async fn main() {
-    let mut timer = interval(Duration::from_millis(50));
-
-    while !Runtime::is_shutting_down() {
-        timer.tick().await;
-    }
+    runtime::wait_for_shutdown().await;
 }

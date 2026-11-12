@@ -10,6 +10,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use event_listener::{Event, listener};
 use spdk_sys::{
     SPDK_APP_PARSE_ARGS_SUCCESS, spdk_app_opts, spdk_app_opts_init, spdk_app_parse_args,
     spdk_app_shutdown_cb, spdk_app_start, spdk_app_stop,
@@ -70,7 +71,7 @@ impl Builder {
         let shutdown_cb = builder.0.shutdown_cb;
 
         if shutdown_cb.is_none() {
-            builder.with_shutdown_callback(Some(Self::shutdown));
+            builder.with_shutdown_callback(Some(signal_shutdown));
         }
 
         builder
@@ -97,7 +98,7 @@ impl Builder {
             }
         }
 
-        builder.with_shutdown_callback(Some(Self::shutdown));
+        builder.with_shutdown_callback(Some(signal_shutdown));
 
         Ok(builder)
     }
@@ -160,11 +161,6 @@ impl Builder {
     pub fn build(&self) -> Runtime {
         Runtime(Cell::new(self.0))
     }
-
-    /// A callback invoked when the process receives a signal to shut down.
-    unsafe extern "C" fn shutdown() {
-        SHUTDOWN_STARTED.store(true, Ordering::Relaxed);
-    }
 }
 
 impl Default for Builder {
@@ -182,6 +178,7 @@ impl Default for Builder {
 }
 
 static SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
+static SHUTDOWN_EVENT: Event = Event::new();
 
 /// A runtime implemented using the Application Framework component of the
 /// [SPDK Event Framework][SPEF].
@@ -200,11 +197,6 @@ impl Runtime {
         Ok(Builder::from_cmdline()?
             .with_name(APP_NAME.as_c_str())
             .build())
-    }
-
-    /// Returns whether the Application Framework is shutting down.
-    pub fn is_shutting_down() -> bool {
-        SHUTDOWN_STARTED.load(Ordering::Relaxed)
     }
 
     /// A callback invoked to start the application's main future on the
@@ -296,5 +288,41 @@ impl Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A callback invoked when the process receives a signal to shut down.
+unsafe extern "C" fn signal_shutdown() {
+    shutdown();
+}
+
+/// Starts shutting down the Application Framework.
+pub fn shutdown() {
+    SHUTDOWN_STARTED.store(true, Ordering::SeqCst);
+    SHUTDOWN_EVENT.notify(usize::MAX);
+}
+
+/// Returns whether the Application Framework is shutting down.
+pub fn is_shutting_down() -> bool {
+    SHUTDOWN_STARTED.load(Ordering::Relaxed)
+}
+
+/// Asynchronously waits for the Application Framework to receive the signal to shut down.
+pub async fn wait_for_shutdown() {
+    loop {
+        // Check the shutdown flag to avoid unecessarily creating the listener if set.
+        if SHUTDOWN_STARTED.load(Ordering::SeqCst) {
+            break;
+        }
+
+        listener!(SHUTDOWN_EVENT => listener);
+
+        // Check the flag again to avoid missing a notification sent after the initial check but
+        // before creating the listener.
+        if SHUTDOWN_STARTED.load(Ordering::SeqCst) {
+            break;
+        }
+
+        listener.await
     }
 }

@@ -14,4 +14,4 @@ pub use cpu_set::CpuSet;
 
 pub use reactor::{Reactor, reactors, spawn_local, spawn_local_detached};
 
-pub use runtime::{Builder, Runtime};
+pub use runtime::{Builder, Runtime, is_shutting_down, shutdown, wait_for_shutdown};
