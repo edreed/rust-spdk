@@ -10,7 +10,7 @@ links = "spdk"
 [build-dependencies]
 autotools = "0.2.7"
 bindgen = { version = "0.73.2", features = ["experimental"] }
-cc = "1.10.0"
+cc = "1.11.2"
 doxygen-rs = "0.4.2"
 fs_extra = "1.3.0"
 itertools = "0.15.0"
@@ -35,4 +35,4 @@ nvmf = ["base", "bdev"]
 scsi = ["base", "bdev"]
 
 [dependencies]
-bitfields = "3.2.1"
+bitfields = "3.2.4"
