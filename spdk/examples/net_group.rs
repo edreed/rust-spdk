@@ -5,8 +5,8 @@ use futures::{AsyncReadExt, AsyncWriteExt};
 use spdk::{
     self,
     cli::Parser,
+    env::CpuSet,
     net::{Accepted, SocketGroup, TcpSocketExt, TcpSocketRemote, TcpStream},
-    runtime::CpuSet,
     task::JoinHandle,
     thread,
 };

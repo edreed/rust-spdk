@@ -3,13 +3,7 @@ use std::io;
 use async_fs::File;
 use futures::io::AsyncWriteExt;
 
-use spdk::{
-    self,
-    errors::ERANGE,
-    jsonrpc,
-    runtime::{self, CpuSet},
-    thread,
-};
+use spdk::{self, env::CpuSet, errors::ERANGE, jsonrpc, runtime, thread};
 
 /// Synchronously prints a greeting.
 #[jsonrpc]

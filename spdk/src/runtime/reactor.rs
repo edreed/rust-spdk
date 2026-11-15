@@ -9,12 +9,11 @@ use spdk_sys::{spdk_event_allocate, spdk_event_call};
 
 use crate::{
     Result,
+    env::{CpuCore, CpuCores, CpuSet, cpu_cores},
     errors::ENOMEM,
     task::{ArcTask, Executor, JoinHandle, LocalTask, RcTask, RemoteTask},
     thread,
 };
-
-use super::{CpuCore, CpuCores, CpuSet, cpu_cores};
 
 /// Represents an event loop running in a OS thread bound to a dedicated CPU core that drives
 /// execution of asynchronous tasks.
@@ -96,22 +95,36 @@ impl Reactor {
         self.0
     }
 
+    /// Invokes a function sent via [`Reactor::send_event`] on this [`Reactor`].
+    unsafe extern "C" fn handle_event<F>(arg1: *mut c_void, _arg2: *mut c_void)
+    where
+        F: FnOnce(),
+    {
+        let event_fn = unsafe { Box::from_raw(arg1.cast::<F>()) };
+
+        event_fn();
+    }
+
+    /// Sends an event function to be executed on the this [`Reactor`].
+    ///
+    /// The event function is sent asynchronously. This function may return before the event
+    /// function is called.
+    ///
+    /// # Return
+    ///
+    /// This function returns `Ok(())` if the event function was successfully queued.
+    ///
+    /// This function returns `Err(`[`ENOMEM`]`)` if the event could not be allocated.
     pub fn send_event<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce(),
     {
-        unsafe extern "C" fn handle_event<F: FnOnce()>(arg1: *mut c_void, _arg2: *mut c_void) {
-            let f = unsafe { Box::from_raw(arg1.cast::<F>()) };
-
-            f();
-        }
-
         let f = Box::new(f);
 
         unsafe {
             let event = spdk_event_allocate(
-                self.0.into(),
-                Some(handle_event::<F>),
+                self.0.id(),
+                Some(Self::handle_event::<F>),
                 Box::into_raw(f).cast(),
                 null_mut(),
             );

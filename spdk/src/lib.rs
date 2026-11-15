@@ -6,6 +6,7 @@ pub mod bdev;
 pub mod block;
 pub mod cli;
 pub mod dma;
+pub mod env;
 pub mod errors;
 pub mod json;
 pub mod macros;
