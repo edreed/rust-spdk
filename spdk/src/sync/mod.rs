@@ -1,5 +1,7 @@
 //! Useful synchronization primitives based on the Storage Performance Development Kit
 //! synchronization primitives.
+#[cfg(false)]
+mod arcpooled;
 mod condvar;
 mod spinlock;
 

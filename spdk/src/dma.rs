@@ -8,61 +8,26 @@
 //! Space](https://spdk.io/doc/memory.html) for more information on the SPDK
 //! memory management.
 use std::{
-    alloc::{Layout, handle_alloc_error},
+    alloc::{Allocator, Layout},
     cmp,
     io::{Cursor, IoSlice, IoSliceMut},
-    ptr::{copy_nonoverlapping, null_mut, write_bytes},
+    ptr::{NonNull, copy_nonoverlapping, write_bytes},
     slice,
 };
 
-use spdk_sys::{
-    iovec as IoVec, spdk_dma_free, spdk_dma_malloc, spdk_dma_realloc, spdk_dma_zmalloc,
+use spdk_sys::iovec as IoVec;
+
+use crate::{
+    Result,
+    env::{CpuCore, NumaNode},
+    errors::{EINVAL, ENOMEM},
 };
 
-use crate::{Result, errors::EINVAL};
-
-/// Allocates memory using the SPDK memory allocator.
-pub fn alloc(layout: Layout) -> *mut u8 {
-    let mem = unsafe { spdk_dma_malloc(layout.size(), layout.align(), null_mut()) as *mut u8 };
-
-    if mem.is_null() {
-        handle_alloc_error(layout);
-    }
-
-    mem
-}
-
-/// Allocates zeroed memory using the SPDK memory allocator.
-pub fn alloc_zeroed(layout: Layout) -> *mut u8 {
-    let mem = unsafe { spdk_dma_zmalloc(layout.size(), layout.align(), null_mut()) as *mut u8 };
-
-    if mem.is_null() {
-        handle_alloc_error(layout);
-    }
-
-    mem
-}
-
-/// Reallocates memory previously allocated using the SPDK memory allocator.
-pub fn realloc(ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-    let mem =
-        unsafe { spdk_dma_realloc(ptr as *mut _, new_size, layout.align(), null_mut()) as *mut u8 };
-
-    if mem.is_null() {
-        handle_alloc_error(layout);
-    }
-
-    mem
-}
-
-/// Frees memory previously allocated using the SPDK memory allocator.
-pub fn free(ptr: *mut u8) {
-    unsafe {
-        spdk_dma_free(ptr as *mut _);
-    }
-}
-
-/// A buffer allocated using the SPDK memory allocator.
+/// A pointer type that uniquely owns a buffer allocated using the [`DmaAllocator`] memory allocator.
+///
+/// Its binary layout is equivalent to an `iovec` structure and can be used anywhere one is required.
+///
+/// [`DmaAllocator`]: crate::alloc::DmaAllocator
 #[repr(transparent)]
 pub struct Buffer(IoVec);
 
@@ -70,20 +35,40 @@ unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
 impl Buffer {
-    /// Allocates a new buffer using the SPDK memory allocator.
-    pub fn new(layout: Layout) -> Self {
-        Self(IoVec {
-            iov_base: alloc(layout).cast(),
-            iov_len: layout.size(),
-        })
+    /// Allocates a new [`Buffer] suitable for use with DMA I/O operations on the current NUMA node.
+    pub fn new(layout: Layout) -> Result<Self> {
+        Self::new_in(layout, CpuCore::current().numa_node())
     }
 
-    /// Allocates a new zeroed buffer using the SPDK memory allocator.
-    pub fn new_zeroed(layout: Layout) -> Self {
-        Self(IoVec {
-            iov_base: alloc_zeroed(layout).cast(),
-            iov_len: layout.size(),
-        })
+    /// Allocates a new [`Buffer] suitable for use with DMA I/O operations on the specified NUMA
+    /// node.
+    pub fn new_in(layout: Layout, numa_node: NumaNode) -> Result<Self> {
+        let alloc = numa_node.dma_allocator().allocate(layout).or(Err(ENOMEM))?;
+
+        Ok(Self(IoVec {
+            iov_base: alloc.as_ptr().cast(),
+            iov_len: alloc.len(),
+        }))
+    }
+
+    /// Allocates a new [`Buffer] that has its memory zeroed and suitable for use with DMA I/O
+    /// operations on the current NUMA node.
+    pub fn new_zeroed(layout: Layout) -> Result<Self> {
+        Self::new_zeroed_in(layout, CpuCore::current().numa_node())
+    }
+
+    /// Allocates a new [`Buffer] that has its memory zeroed and suitable for use with DMA I/O
+    /// operations on the specified NUMA node.
+    pub fn new_zeroed_in(layout: Layout, numa_node: NumaNode) -> Result<Self> {
+        let alloc = numa_node
+            .dma_allocator()
+            .allocate_zeroed(layout)
+            .or(Err(ENOMEM))?;
+
+        Ok(Self(IoVec {
+            iov_base: alloc.as_ptr().cast(),
+            iov_len: alloc.len(),
+        }))
     }
 
     /// Get a pointer to the buffer.
@@ -112,11 +97,18 @@ impl Buffer {
     }
 
     /// Resize the buffer.
-    pub fn resize(&mut self, layout: Layout, mut new_size: usize) {
-        new_size = Layout::from_size_align(new_size, layout.align())
-            .expect("align must be power of 2")
-            .size();
-        self.0.iov_base = realloc(self.0.iov_base.cast(), layout, new_size).cast();
+    pub fn resize(&mut self, new_layout: Layout) -> Result<()> {
+        let new_alloc = unsafe {
+            NumaNode::any()
+                .dma_allocator()
+                .reallocate(NonNull::new_unchecked(self.0.iov_base.cast()), new_layout)
+                .or(Err(ENOMEM))?
+        };
+
+        self.0.iov_base = new_alloc.as_ptr().cast();
+        self.0.iov_len = new_alloc.len();
+
+        Ok(())
     }
 
     /// Sets the bytes of the buffer to zeroes.
@@ -206,7 +198,10 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        free(self.0.iov_base.cast());
+        let ptr = unsafe { NonNull::new_unchecked(self.as_mut_ptr()) };
+        let layout = unsafe { Layout::for_value_raw(ptr.as_ptr()) };
+
+        unsafe { NumaNode::any().dma_allocator().deallocate(ptr, layout) };
     }
 }
 
