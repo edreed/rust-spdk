@@ -1,5 +1,5 @@
 use comfy_table::{Cell, Table, presets::UTF8_FULL};
-use spdk::env::{cpu_cores, numa_nodes};
+use spdk::env::{NumaNode, cpu_cores, numa_nodes};
 
 #[spdk::main]
 async fn main() {
@@ -9,6 +9,10 @@ async fn main() {
         .load_style(UTF8_FULL)
         .set_header(vec!["NUMA Node", "CPU Mask"]);
 
+    numa_table.add_row(vec![
+        Cell::new(NumaNode::any()),
+        Cell::new(NumaNode::any().cpuset()),
+    ]);
     numa_nodes().for_each(|node| {
         numa_table.add_row(vec![Cell::new(node), Cell::new(node.cpuset())]);
     });

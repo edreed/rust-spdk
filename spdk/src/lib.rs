@@ -2,6 +2,7 @@
 //! Development Kit ([SPDK]).
 //!
 //! [SPDK]: https://www.spdk.io
+pub mod alloc;
 pub mod bdev;
 pub mod block;
 pub mod cli;

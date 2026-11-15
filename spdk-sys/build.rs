@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bindgen::callbacks::ParseCallbacks;
+use bindgen::callbacks::{
+    IntKind::{self, Custom},
+    ParseCallbacks,
+};
 use fs_extra::dir;
 use itertools::Itertools;
 use lazy_regex::regex_replace_all;
@@ -53,6 +56,27 @@ impl ParseCallbacks for DoxygenCallbacks {
         let transformed = regex_replace_all!(r"\[(\w+)\]", &transformed, r"\[$1\]");
 
         Some(transformed.into())
+    }
+}
+
+#[derive(Debug)]
+struct OverrideCallbacks;
+
+impl OverrideCallbacks {
+    fn new() -> Box<Self> {
+        Box::new(Self)
+    }
+}
+
+impl ParseCallbacks for OverrideCallbacks {
+    fn int_macro(&self, name: &str, _value: i64) -> Option<IntKind> {
+        match name {
+            "SPDK_CACHE_LINE_SIZE" => Some(Custom {
+                name: "usize",
+                is_signed: false,
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -673,6 +697,7 @@ impl Builder<'_> {
             .header("wrapper.h")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .parse_callbacks(DoxygenCallbacks::new())
+            .parse_callbacks(OverrideCallbacks::new())
             .clang_args(
                 include_paths
                     .iter()

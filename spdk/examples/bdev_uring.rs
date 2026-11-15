@@ -43,7 +43,7 @@ async fn main() {
         let desc = uring.open(true).unwrap();
         let io_chan = desc.io_channel().unwrap();
         let layout = desc.device().layout_for_blocks(1).unwrap();
-        let mut buf = dma::Buffer::new_zeroed(layout);
+        let mut buf = dma::Buffer::new_zeroed(layout).unwrap();
 
         println!("Writing \"{}\" to {}...", DATA, devname);
 

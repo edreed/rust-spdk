@@ -168,7 +168,7 @@ async fn main() {
         let writer = echo.open(true).unwrap();
         let writer_ch = writer.io_channel().unwrap();
         let layout = writer.device().layout_for_blocks(1).unwrap();
-        let mut buf = dma::Buffer::new_zeroed(layout);
+        let mut buf = dma::Buffer::new_zeroed(layout).unwrap();
 
         for i in 0..10 {
             println!("Writing \"Hello {}\"...", i);
@@ -186,7 +186,7 @@ async fn main() {
         let reader = echo.open(true).unwrap();
         let reader_ch = reader.io_channel().unwrap();
         let layout = reader.device().layout_for_blocks(1).unwrap();
-        let mut buf = dma::Buffer::new_zeroed(layout);
+        let mut buf = dma::Buffer::new_zeroed(layout).unwrap();
 
         for _ in 0..10 {
             reader_ch
