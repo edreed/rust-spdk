@@ -339,7 +339,7 @@ async fn main() {
         let passthru_desc = passthru.open(true).unwrap();
         let io_chan = passthru_desc.io_channel().unwrap();
         let layout = passthru_desc.device().layout_for_blocks(1).unwrap();
-        let mut buf = dma::Buffer::new_zeroed(layout);
+        let mut buf = dma::Buffer::new_zeroed(layout).unwrap();
 
         println!("Writing \"{}\" to {}...", DATA, devname.to_string_lossy());
 

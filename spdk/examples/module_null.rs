@@ -73,7 +73,7 @@ async fn main() {
     let desc = null.open(true).unwrap();
     let ch = desc.io_channel().unwrap();
     let layout = null.layout_for_blocks(1).unwrap();
-    let mut buf = dma::Buffer::new_zeroed(layout);
+    let mut buf = dma::Buffer::new_zeroed(layout).unwrap();
 
     write!(buf.cursor_mut(), "Hello, World!").unwrap();
 
