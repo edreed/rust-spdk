@@ -21,10 +21,10 @@ run_example() {
 COMMON_ARGS=("--iova-mode=va" "--huge-dir=/mnt/hugepages")
 
 run_example bdev_aio --features="bdev-aio" -- "${COMMON_ARGS[@]}"
+run_example bdev_all --features="bdev-malloc" -- "${COMMON_ARGS[@]}"
 run_example bdev_hello_world --features="bdev-malloc" -- "${COMMON_ARGS[@]}"
 run_example bdev_uring --features="bdev-uring" -- "${COMMON_ARGS[@]}"
 run_example cli -- "${COMMON_ARGS[@]}" --block-size=4096 --create-new
-run_example devices --features="bdev-malloc" -- "${COMMON_ARGS[@]}"
 run_example env -- "${COMMON_ARGS[@]}" --lcores="(0-3)"
 run_example interval -- "${COMMON_ARGS[@]}"
 run_example module_echo --features="bdev-module" -- "${COMMON_ARGS[@]}" --lcores="(0,1)"

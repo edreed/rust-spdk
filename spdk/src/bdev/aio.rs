@@ -13,7 +13,7 @@ use spdk_sys::{
 
 use crate::{
     Result,
-    block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
+    block::{AsRawBDev, BDev, Owned, OwnedOps, wait_for_examination},
     errors::EINVAL,
     thread::{Promise, Promissory},
     to_result,
@@ -49,7 +49,7 @@ impl Aio {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing a [`Device<Aio>`] instance that owns the newly created BDev if successful.
+    /// Returns a `Result` containing a [`BDev<Aio>`] instance that owns the newly created BDev if successful.
     pub async fn new<P: AsRef<Path>>(
         name: &CStr,
         filename: P,
@@ -58,7 +58,7 @@ impl Aio {
         falloc: bool,
         uuid: Option<Uuid>,
         nowait: bool,
-    ) -> Result<Device<Aio>> {
+    ) -> Result<BDev<Aio>> {
         let filename =
             CString::new(filename.as_ref().as_os_str().as_bytes()).map_err(|_| EINVAL)?;
 
@@ -80,7 +80,7 @@ impl Aio {
 
         // SAFETY: `Aio` is a transparent wrapper around `NonNull<spdk_bdev>`, and `desc` is
         // guaranteed to be non-null.
-        Ok(unsafe { transmute::<NonNull<spdk_bdev>, Device<Aio>>(desc) })
+        Ok(unsafe { transmute::<NonNull<spdk_bdev>, BDev<Aio>>(desc) })
     }
 }
 

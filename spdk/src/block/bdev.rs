@@ -35,30 +35,30 @@ pub trait AsRawBDev {
 
 /// Represents a block device.
 ///
-/// The type `T` determines how the `Device` manages the underlying `spdk_bdev` lifetime. If `T`
-/// implements [`OwnedOps`] it means that the `Device` is responsible for managing the lifetime of
-/// the underlying `spdk_bdev`. The [`Device::destroy()`] method must be used to explicitly destroy
-/// the device when it is no longer needed. `Device` instances that own the lifetime of the
+/// The type `T` determines how the `BDev` manages the underlying `spdk_bdev` lifetime. If `T`
+/// implements [`OwnedOps`] it means that the `BDev` is responsible for managing the lifetime of
+/// the underlying `spdk_bdev`. The [`BDev::destroy()`] method must be used to explicitly destroy
+/// the device when it is no longer needed. `BDev` instances that own the lifetime of the
 /// underlying `spdk_bdev` can be shared with other SPDK threads by reference safely and are
-/// therefore `Sync` as long as `T` is also `Sync`. Since the `Device::destroy()` method must be
+/// therefore `Sync` as long as `T` is also `Sync`. Since the `BDev::destroy()` method must be
 /// called on the thread on which the block device was created, it is not `Send`.
 ///
-/// If `T` does not implement [`OwnedOps`] (e.g. [`OwnedBy`] and [`Any`]), the `Device` does not
+/// If `T` does not implement [`OwnedOps`] (e.g. [`OwnedBy`] and [`Any`]), the `BDev` does not
 /// manage the lifetime of the underlying `spdk_bdev` and may be shared by reference or by value
 /// across threads safely. It is both `Send` and `Sync` in this case as long as `T` is also `Send`
 /// and `Sync`.
 #[repr(transparent)]
-pub struct Device<T>(T)
+pub struct BDev<T>(T)
 where
     T: AsRawBDev;
 
-unsafe impl<T> Sync for Device<T> where T: AsRawBDev + Sync {}
+unsafe impl<T> Sync for BDev<T> where T: AsRawBDev + Sync {}
 
-impl<T> Device<T>
+impl<T> BDev<T>
 where
     T: AsRawBDev,
 {
-    /// Get an owned [`Device`] for a block device.
+    /// Get an owned [`BDev`] for a block device.
     pub(crate) fn new(dev: T) -> Self {
         Self(dev)
     }
@@ -276,14 +276,14 @@ where
     }
 }
 
-impl<T> Device<T>
+impl<T> BDev<T>
 where
     T: OwnedOps + From<Owned>,
 {
-    /// Returns a type-erased [`Device<Owned>`] instance assuming ownership of the underlying
-    /// `spdk_bdev` pointer. This `Device` is consumed in the process.
-    pub fn into_owned(self) -> Device<Owned> {
-        // SAFETY: The `spdk_bdev` pointer is guaranteed to be valid and non-null, and this `Device`
+    /// Returns a type-erased [`BDev<Owned>`] instance assuming ownership of the underlying
+    /// `spdk_bdev` pointer. This `BDev` is consumed in the process.
+    pub fn into_owned(self) -> BDev<Owned> {
+        // SAFETY: The `spdk_bdev` pointer is guaranteed to be valid and non-null, and this `BDev`
         // instance, the sole onwer of it, is consumed in the conversion.
         unsafe { Owned::new(self.0) }
     }
@@ -294,7 +294,7 @@ where
     }
 }
 
-impl<T> Debug for Device<T>
+impl<T> Debug for BDev<T>
 where
     T: AsRawBDev,
 {
@@ -303,7 +303,7 @@ where
     }
 }
 
-impl<'a, O> Device<OwnedBy<'a, O>> {
+impl<'a, O> BDev<OwnedBy<'a, O>> {
     /// Gets a borrowed block device from an object that logically owns the device while it is in
     /// use, e.g. [`IoRequest`] & [`IoChannel`].
     ///
@@ -314,66 +314,66 @@ impl<'a, O> Device<OwnedBy<'a, O>> {
     ///
     /// [`IoRequest`]: crate::bdev::IoRequest
     /// [`IoChannel`]: crate::block::IoChannel
-    pub(crate) unsafe fn with_owner(_owner: &'a O, bdev: *mut spdk_bdev) -> Device<OwnedBy<'a, O>> {
-        Device::<OwnedBy<'a, O>>(unsafe { OwnedBy::new_unchecked(bdev) })
+    pub(crate) unsafe fn with_owner(_owner: &'a O, bdev: *mut spdk_bdev) -> BDev<OwnedBy<'a, O>> {
+        BDev::<OwnedBy<'a, O>>(unsafe { OwnedBy::new_unchecked(bdev) })
     }
 }
 
-/// Since `Device<OwnedBy<'_, O>>` does not manage the underlying `spdk_bdev`'s lifetime, it is safe
+/// Since `BDev<OwnedBy<'_, O>>` does not manage the underlying `spdk_bdev`'s lifetime, it is safe
 /// to send it across threads.
-unsafe impl<O> Send for Device<OwnedBy<'_, O>> {}
+unsafe impl<O> Send for BDev<OwnedBy<'_, O>> {}
 
-impl Device<Any> {
-    /// Get a [`Device`] by its name.
+impl BDev<Any> {
+    /// Get a [`BDev`] by its name.
     ///
-    /// A `Device<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
+    /// A `BDev<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
     /// It ensures that the underlying `spdk_bdev` remains valid for the lifetime of the
-    /// `Device<Any>` instance but cannot destroy it. However, a call to [`Device::destroy()`] by
-    /// another task will be deferred until all `Device<Any>` instances referencing the same
+    /// `BDev<Any>` instance but cannot destroy it. However, a call to [`BDev::destroy()`] by
+    /// another task will be deferred until all `BDev<Any>` instances referencing the same
     /// `spdk_bdev` are dropped.
     ///
     /// # Returns
     ///
     /// This method returns `Ok(dev)` if the device exists and `Err(`[`ENODEV`]`)` if no block device
     /// with the given name exists. It may return other errors if initialization of the
-    /// `Device<Any>` instance fails. See [`Any`] for details.
+    /// `BDev<Any>` instance fails. See [`Any`] for details.
     ///
     /// [`ENODEV`]: crate::errors::ENODEV
-    pub fn from_name(name: &CStr) -> Result<Device<Any>> {
-        Any::with_name(name).map(Device::<Any>)
+    pub fn from_name(name: &CStr) -> Result<BDev<Any>> {
+        Any::with_name(name).map(BDev::<Any>)
     }
 
-    /// Get a [`Device`] for a raw `spdk_bdev` pointer.
+    /// Get a [`BDev`] for a raw `spdk_bdev` pointer.
     ///
-    /// A `Device<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
+    /// A `BDev<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
     /// It ensures that the underlying `spdk_bdev` remains valid for the lifetime of the
-    /// `Device<Any>` instance but cannot destroy it. However, a call to [`Device::destroy()`] by
-    /// another task will be deferred until all `Device<Any>` instances referencing the same
+    /// `BDev<Any>` instance but cannot destroy it. However, a call to [`BDev::destroy()`] by
+    /// another task will be deferred until all `BDev<Any>` instances referencing the same
     /// `spdk_bdev` are dropped.
     ///
     /// # Returns
     ///
-    /// This method may return an error if initialization of the `Device<Any>` instance fails. See
+    /// This method may return an error if initialization of the `BDev<Any>` instance fails. See
     /// [`Any`] for details.
     ///
     /// # Safety
     ///
     /// `bdev` must be non-null and a pointer to a valid `spdk_bdev` structure.
-    pub(crate) unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<Device<Any>> {
-        unsafe { Any::from_ptr_unchecked(bdev).map(Device::<Any>) }
+    pub(crate) unsafe fn from_ptr_unchecked(bdev: *mut spdk_bdev) -> Result<BDev<Any>> {
+        unsafe { Any::from_ptr_unchecked(bdev).map(BDev::<Any>) }
     }
 }
 
-/// Since `Device<Any>` does not manage the underlying `spdk_bdev`'s lifetime, it is safe to send it
+/// Since `BDev<Any>` does not manage the underlying `spdk_bdev`'s lifetime, it is safe to send it
 /// across threads.
-unsafe impl Send for Device<Any> {}
+unsafe impl Send for BDev<Any> {}
 
 /// An iterator over all block devices.
-pub struct Devices {
-    next: Option<Device<Any>>,
+pub struct BDevs {
+    next: Option<BDev<Any>>,
 }
 
-impl Devices {
+impl BDevs {
     /// Creates a new iterator over all block devices.
     fn new() -> Self {
         Self {
@@ -382,9 +382,9 @@ impl Devices {
     }
 
     /// Gets the next available block device starting from the given 'spdk_bdev' pointer.
-    fn get_device(mut bdev: *mut spdk_bdev) -> Option<Device<Any>> {
+    fn get_device(mut bdev: *mut spdk_bdev) -> Option<BDev<Any>> {
         while !bdev.is_null() {
-            if let Ok(device) = unsafe { Device::from_ptr_unchecked(bdev) } {
+            if let Ok(device) = unsafe { BDev::from_ptr_unchecked(bdev) } {
                 return Some(device);
             }
 
@@ -395,14 +395,14 @@ impl Devices {
     }
 }
 
-impl Default for Devices {
+impl Default for BDevs {
     fn default() -> Self {
-        Devices::new()
+        BDevs::new()
     }
 }
 
-impl Iterator for Devices {
-    type Item = Device<Any>;
+impl Iterator for BDevs {
+    type Item = BDev<Any>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.next.take() {
@@ -420,8 +420,8 @@ impl Iterator for Devices {
 /// # Example
 ///
 /// ```no_run
-#[doc = include_str!("../../examples/devices.rs")]
+#[doc = include_str!("../../examples/bdev_all.rs")]
 /// ```
-pub fn devices() -> Devices {
-    Devices::new()
+pub fn all() -> BDevs {
+    BDevs::new()
 }

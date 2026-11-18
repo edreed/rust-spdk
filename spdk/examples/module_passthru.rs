@@ -13,8 +13,8 @@ use spdk::{
         ModuleOps,
     },
     block::{
-        self, AsRawBDev, ClaimType, Descriptor, Device, EventHandler, EventType, IoChannel,
-        IoError, IoResult, IoType, Owned,
+        self, AsRawBDev, BDev, ClaimType, Descriptor, EventHandler, EventType, IoChannel, IoError,
+        IoResult, IoType, Owned,
     },
     dma::{self},
     errors::{EINVAL, ENODEV, ENOTSUP},
@@ -27,7 +27,7 @@ use ternary_rs::if_else;
 #[spdk::module]
 #[derive(Debug, Default)]
 struct PassthruRsModule {
-    bdevs: ThreadCell<App, HashMap<CString, Option<Device<Owned>>>>,
+    bdevs: ThreadCell<App, HashMap<CString, Option<BDev<Owned>>>>,
 }
 
 impl PassthruRsModule {
@@ -42,7 +42,7 @@ impl PassthruRsModule {
             "register_for_name must be called from the application thread"
         );
 
-        let base_bdev = Device::from_name(base_name)
+        let base_bdev = BDev::from_name(base_name)
             .map(Option::Some)
             .or_else(|e| if_else!(e == ENODEV, Ok(None), Err(e)))?;
 
@@ -60,7 +60,7 @@ impl PassthruRsModule {
     }
 
     /// Creates an instance of the `PassthruRs` BDev for the specified base BDev.
-    async fn create_for_base<A>(&self, base_bdev: &Device<A>) -> spdk::Result<()>
+    async fn create_for_base<A>(&self, base_bdev: &BDev<A>) -> spdk::Result<()>
     where
         A: AsRawBDev,
     {
@@ -132,7 +132,7 @@ impl PassthruRsModule {
 impl ModuleOps for PassthruRsModule {
     type BDev = PassthruRs<'static>;
 
-    async fn examine_disk<'a>(&self, bdev: Device<block::OwnedBy<'a, Examiner<Self>>>) {
+    async fn examine_disk<'a>(&self, bdev: BDev<block::OwnedBy<'a, Examiner<Self>>>) {
         // The following delay works around a race condition with the lvol VBDev. It opens a
         // read/write descriptor while inspecting the block device for claim suitability. The open
         // read/write descriptor prevents the PassthruRs bdev from from claiming the Malloc bdev.
@@ -251,7 +251,7 @@ impl BDevOps for PassthruRs<'_> {
 }
 
 impl EventHandler for PassthruRs<'_> {
-    fn handle_event(&self, event: EventType, _device: &Device<block::OwnedBy<'_, Self>>) {
+    fn handle_event(&self, event: EventType, _device: &BDev<block::OwnedBy<'_, Self>>) {
         if matches!(event, EventType::Remove) {
             let base_name = self.desc().device().name().to_owned();
 
@@ -275,7 +275,7 @@ impl<'a> AsRef<PassthruRs<'a>> for PassthruRs<'a> {
 }
 
 impl PassthruRs<'_> {
-    pub async fn new_device<T>(base: &Device<T>) -> spdk::Result<Device<Owned>>
+    pub async fn new_device<T>(base: &BDev<T>) -> spdk::Result<BDev<Owned>>
     where
         T: AsRawBDev,
     {
@@ -338,7 +338,7 @@ async fn main() {
 
     thread::spawn_local(async {
         let devname = PassthruRsModule::passthru_name(malloc.name());
-        let passthru = Device::from_name(&devname).unwrap();
+        let passthru = BDev::from_name(&devname).unwrap();
         let passthru_desc = passthru.open(true).unwrap();
         let io_chan = passthru_desc.io_channel().unwrap();
         let layout = passthru_desc.device().layout_for_blocks(1).unwrap();

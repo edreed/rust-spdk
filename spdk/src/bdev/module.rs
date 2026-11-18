@@ -6,7 +6,7 @@ use spdk_sys::{
 };
 
 use crate::{
-    block::{Device, OwnedBy},
+    block::{BDev, OwnedBy},
     thread::{self},
 };
 
@@ -94,7 +94,7 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
     /// synchronously.
     ///
     /// The default implementation claims no devices.
-    fn examine_config<'a>(&self, _bdev: Device<OwnedBy<'a, Examiner<Self>>>) {}
+    fn examine_config<'a>(&self, _bdev: BDev<OwnedBy<'a, Examiner<Self>>>) {}
 
     /// Examines the specified block device to determine whether it should be claimed by a Virtual
     /// BDev implemented by this module.
@@ -106,7 +106,7 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
     /// The default implementation claims no devices.
     fn examine_disk<'a>(
         &self,
-        _bdev: Device<OwnedBy<'a, Examiner<Self>>>,
+        _bdev: BDev<OwnedBy<'a, Examiner<Self>>>,
     ) -> impl Future<Output = ()> {
         async {}
     }
@@ -240,7 +240,7 @@ where
     unsafe extern "C" fn examine_config(bdev: *mut spdk_bdev) {
         let examiner = Examiner::new();
         // SAFETY: The `bdev` pointer is guaranteed to be non-null and valid for the lifetime of the examiner.
-        let bdev = unsafe { Device::with_owner(&examiner, bdev) };
+        let bdev = unsafe { BDev::with_owner(&examiner, bdev) };
 
         T::instance().ctx.examine_config(bdev);
     }
@@ -258,7 +258,7 @@ where
         let examine_fut = async move {
             let examiner = Examiner::new();
             // SAFETY: The `bdev` pointer is guaranteed to be non-null and valid for the lifetime of the examiner.
-            let bdev = unsafe { Device::with_owner(&examiner, bdev) };
+            let bdev = unsafe { BDev::with_owner(&examiner, bdev) };
 
             T::instance().ctx.examine_disk(bdev).await;
         };

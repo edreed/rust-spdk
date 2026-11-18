@@ -18,7 +18,7 @@ use crate::{Result, errors::ENOMEM, to_result};
 
 #[cfg(feature = "bdev-module")]
 use super::ClaimType;
-use super::{Device, IoChannel, OwnedBy};
+use super::{BDev, IoChannel, OwnedBy};
 
 /// Represents the types of events that can occur on a block device descriptor.
 #[repr(i32)]
@@ -48,12 +48,12 @@ impl From<EventType> for spdk_bdev_event_type {
 
 /// A trait for handling events on a block device descriptor.
 pub trait EventHandler {
-    fn handle_event(&self, event: EventType, device: &Device<OwnedBy<'_, Self>>);
+    fn handle_event(&self, event: EventType, device: &BDev<OwnedBy<'_, Self>>);
 }
 
 /// A default no-op event handler.
 impl EventHandler for () {
-    fn handle_event(&self, _event: EventType, _device: &Device<OwnedBy<'_, Self>>) {
+    fn handle_event(&self, _event: EventType, _device: &BDev<OwnedBy<'_, Self>>) {
         // No-op
     }
 }
@@ -67,7 +67,7 @@ extern "C" fn handle_desc_event<T: EventHandler>(
     ctx: *mut c_void,
 ) {
     let handler = unsafe { &*(ctx as *mut T) };
-    let device = unsafe { Device::with_owner(handler, bdev) };
+    let device = unsafe { BDev::with_owner(handler, bdev) };
 
     handler.handle_event(event.into(), &device);
 }
@@ -165,9 +165,9 @@ where
         self.0.as_ptr()
     }
 
-    /// Returns the [`Device`] associated with this [`Descriptor`].
-    pub fn device(&self) -> Device<OwnedBy<'_, Self>> {
-        unsafe { Device::with_owner(self, spdk_bdev_desc_get_bdev(self.0.as_ptr())) }
+    /// Returns the [`BDev`] associated with this [`Descriptor`].
+    pub fn device(&self) -> BDev<OwnedBy<'_, Self>> {
+        unsafe { BDev::with_owner(self, spdk_bdev_desc_get_bdev(self.0.as_ptr())) }
     }
 
     /// Returns an [`IoChannel`] for this [`Descriptor`].

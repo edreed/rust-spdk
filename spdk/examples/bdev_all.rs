@@ -2,13 +2,13 @@ use std::ffi::CStr;
 
 use spdk::{
     bdev::MallocBuilder,
-    block::{self, Device, Owned},
+    block::{self, BDev, Owned},
 };
 
 const NUM_BLOCKS: u64 = 16536;
 const BLOCK_SIZE: u32 = 512;
 
-async fn create_bdev(name: &CStr) -> Device<Owned> {
+async fn create_bdev(name: &CStr) -> BDev<Owned> {
     MallocBuilder::new()
         .with_name(name)
         .with_num_blocks(NUM_BLOCKS)
@@ -24,7 +24,7 @@ async fn main() {
     let malloc0 = create_bdev(c"malloc0").await;
     let malloc1 = create_bdev(c"malloc1").await;
 
-    let devices = block::devices();
+    let devices = block::all();
 
     devices.for_each(|dev| {
         println!(

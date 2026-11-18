@@ -15,7 +15,7 @@ use spdk_sys::{
 
 use crate::{
     Result, Uuid,
-    block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
+    block::{AsRawBDev, BDev, Owned, OwnedOps, wait_for_examination},
     thread::{Promise, Promissory},
     to_result,
 };
@@ -66,23 +66,21 @@ impl Builder {
         self
     }
 
-    /// Creates a new [`Device<Malloc>`] instance that owns the underlying `spdk_bdev` pointer.
+    /// Creates a new [`BDev<Malloc>`] instance that owns the underlying `spdk_bdev` pointer.
     ///
     /// # Notes
     ///
-    /// The returned [`Device<Malloc>`] instance owns the underlying `spdk_bdev` pointer and will
-    /// destroy it when dropped. See [`Device<T>`] for a detailed discussion of ownership semantics
+    /// The returned [`BDev<Malloc>`] instance owns the underlying `spdk_bdev` pointer and will
+    /// destroy it when dropped. See [`BDev<T>`] for a detailed discussion of ownership semantics
     /// and requirements.
-    pub async fn build(self) -> Result<Device<Malloc>> {
+    pub async fn build(self) -> Result<BDev<Malloc>> {
         let mut malloc = null_mut();
 
         unsafe { to_result!(create_malloc_disk(&mut malloc, &self.0))? };
 
         wait_for_examination().await?;
 
-        Ok(Device::new(Malloc(unsafe {
-            NonNull::new_unchecked(malloc)
-        })))
+        Ok(BDev::new(Malloc(unsafe { NonNull::new_unchecked(malloc) })))
     }
 }
 

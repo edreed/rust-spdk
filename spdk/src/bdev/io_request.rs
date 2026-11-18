@@ -27,7 +27,7 @@ use spdk_sys::spdk_bdev_io_set_scsi_status;
 use ternary_rs::if_else;
 
 use crate::{
-    block::{self, Device, IoError, IoResult, IoType},
+    block::{self, BDev, IoError, IoResult, IoType},
     errors::EINVAL,
     thread::{self, Promise, Promissory, Thread},
 };
@@ -106,10 +106,10 @@ where
     }
 
     /// Returns the block device associated with the I/O request.
-    pub fn device(&self) -> Device<block::OwnedBy<'_, Self>> {
+    pub fn device(&self) -> BDev<block::OwnedBy<'_, Self>> {
         // SAFETY: The block device associated with the I/O request is guaranteed to be non-null and
         // valid for the lifetime of the I/O request.
-        unsafe { Device::with_owner(self, self.io.as_ref().bdev) }
+        unsafe { BDev::with_owner(self, self.io.as_ref().bdev) }
     }
 
     /// Returns the buffers associated with the I/O request.

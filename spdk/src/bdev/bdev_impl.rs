@@ -19,7 +19,7 @@ use spdk_sys::{
 use crate::{
     Result, Uuid,
     block::{
-        AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoType, Owned, OwnedOps,
+        AsRawBDev, BDev, DifCheckFlag, DifPiFormat, DifType, IoError, IoType, Owned, OwnedOps,
     },
     errors::Errno,
     thread::{self, Promise, Promissory},
@@ -187,9 +187,9 @@ where
             .await
     }
 
-    /// Consumes the boxed instance and returns a [`Device<Owned>`] instance that owns the BDev.
-    pub fn into_device(self: Box<Self>) -> Device<Owned> {
-        Device::new(OwnedImpl::new(self)).into_owned()
+    /// Consumes the boxed instance and returns a [`BDev<Owned>`] instance that owns the BDev.
+    pub fn into_device(self: Box<Self>) -> BDev<Owned> {
+        BDev::new(OwnedImpl::new(self)).into_owned()
     }
 
     /// Consumes the boxed BDev instance and returns a raw pointer to the BDev.
@@ -619,7 +619,7 @@ where
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the context initialized to default values.
-    pub async fn build(self) -> Result<Device<Owned>>
+    pub async fn build(self) -> Result<BDev<Owned>>
     where
         <C as BDevOps>::IoContext: 'static,
         <C as BDevOps>::ChannelContext: 'static,
@@ -645,7 +645,7 @@ where
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the specified context.
-    pub async fn build_with_context(self, ctx: C) -> Result<Device<Owned>>
+    pub async fn build_with_context(self, ctx: C) -> Result<BDev<Owned>>
     where
         <C as BDevOps>::IoContext: 'static,
         <C as BDevOps>::ChannelContext: 'static,
@@ -672,7 +672,7 @@ where
 {
     /// Builds and registers a new `BDev` instance, initializing the context in-place using the
     /// specified initialization function.
-    pub async fn build_with_context_in_place<I>(self, init_fn: I) -> Result<Device<Owned>>
+    pub async fn build_with_context_in_place<I>(self, init_fn: I) -> Result<BDev<Owned>>
     where
         I: AsyncFnOnce(Pin<&mut MaybeUninit<C>>) -> Result<()>,
         <C as BDevOps>::IoContext: 'static,
@@ -699,7 +699,7 @@ where
     }
 }
 
-/// A wrapper that enables [`Device`] to own a plug-in BDev implementation.
+/// A wrapper that enables [`BDev`] to own a plug-in BDev implementation.
 #[repr(transparent)]
 struct OwnedImpl<T: BDevOps>(Box<BDevImpl<T>>);
 

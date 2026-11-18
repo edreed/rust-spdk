@@ -1,18 +1,18 @@
 //! Support for Storage Performance Development Kit block devices.
 #![cfg(feature = "bdev")]
 mod any;
+mod bdev;
 #[cfg(feature = "bdev-module")]
 mod claim;
 mod descriptor;
-mod device;
 mod dif;
 mod io;
 mod io_channel;
 mod owned;
 
 pub use any::Any;
+pub use bdev::{AsRawBDev, BDev, all};
 pub use descriptor::{Descriptor, EventHandler, EventType};
-pub use device::{AsRawBDev, Device, devices};
 pub use dif::{
     CheckFlag as DifCheckFlag, CheckType as DifCheckType, PiFormat as DifPiFormat, Type as DifType,
 };

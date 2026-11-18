@@ -19,10 +19,10 @@ build_example() {
 }
 
 build_example bdev_aio --features="bdev-aio"
+build_example bdev_all --features="bdev-malloc"
 build_example bdev_hello_world --features="bdev-malloc"
 build_example bdev_uring --features="bdev-uring"
 build_example cli
-build_example devices --features="bdev-malloc"
 build_example interval
 build_example jsonrpc --features="json-rpc"
 build_example module_echo --features="bdev-module"

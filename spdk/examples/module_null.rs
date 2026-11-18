@@ -2,7 +2,7 @@ use std::io::Write;
 
 use spdk::{
     bdev::{BDevImpl, BDevOps, IoChannelImpl, IoRequest, ModuleOps},
-    block::{Device, IoType, Owned},
+    block::{BDev, IoType, Owned},
     dma,
     errors::Errno,
 };
@@ -27,7 +27,7 @@ unsafe impl Sync for NullRs {}
 
 impl NullRs {
     /// Creates a new NullRs block device.
-    pub async fn new_device() -> spdk::Result<Device<Owned>> {
+    pub async fn new_device() -> spdk::Result<BDev<Owned>> {
         NullRsModule::new_bdev_builder(c"null-rs", 4096, 1)
             .build()
             .await

@@ -8,7 +8,7 @@ use std::{
 use futures::future::join;
 use spdk::{
     bdev::{BDevImpl, BDevOps, IoChannelImpl, IoRequest, ModuleOps},
-    block::{Device, IoType, Owned},
+    block::{BDev, IoType, Owned},
     dma,
     errors::{ENOTSUP, Errno},
     runtime::reactors,
@@ -45,7 +45,7 @@ struct Echo {
 }
 
 impl Echo {
-    async fn new_device(name: &CStr) -> spdk::Result<Device<Owned>> {
+    async fn new_device(name: &CStr) -> spdk::Result<BDev<Owned>> {
         EchoModule::new_bdev_builder(name, 4096, 2).build().await
     }
 }

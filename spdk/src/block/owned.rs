@@ -10,7 +10,7 @@ use spdk_sys::spdk_bdev;
 
 use crate::{
     Result,
-    block::{AsRawBDev, Device},
+    block::{AsRawBDev, BDev},
 };
 
 /// A trait for owned block devices.
@@ -42,22 +42,22 @@ pub struct Owned {
 unsafe impl Sync for Owned {}
 
 impl Owned {
-    /// Consumes the specified device and returns a new [`Device<Owned>`] instance.
+    /// Consumes the specified device and returns a new [`BDev<Owned>`] instance.
     ///
     /// # Safety
     ///
     /// The caller must ensure that the provided device is valid and that the resulting
-    /// `Device<Owned>` will be the only instance owning the underlying `spdk_bdev` pointer.
-    pub(crate) unsafe fn new<T>(device: T) -> Device<Self>
+    /// `BDev<Owned>` will be the only instance owning the underlying `spdk_bdev` pointer.
+    pub(crate) unsafe fn new<T>(device: T) -> BDev<Self>
     where
         T: OwnedOps,
     {
-        // Since `Device` is taking ownership of the BDev via its `spdk_bdev`
+        // Since `BDev` is taking ownership of the BDev via its `spdk_bdev`
         // pointer, we need to ensure that the BDev is not dropped here if the
         // value is a smart pointer type.
         let device = mem::ManuallyDrop::new(device);
 
-        Device::new(Self {
+        BDev::new(Self {
             // SAFETY: The pointer is guaranteed to be non-null by the wrapper
             // passed to this function.
             bdev: unsafe { NonNull::new_unchecked(device.as_raw_bdev()) },
