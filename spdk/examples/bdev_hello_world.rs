@@ -3,7 +3,7 @@ use std::{
     io::{Read, Write},
 };
 
-use spdk::{bdev::malloc, dma, thread};
+use spdk::{bdev::MallocBuilder, dma, thread};
 
 const BDEV_NAME: &CStr = c"Malloc0";
 const NUM_BLOCKS: u64 = 32768;
@@ -14,7 +14,7 @@ const DATA: &str = "Hello, World!";
 #[spdk::main]
 async fn main() {
     // Create a new Malloc block device.
-    let malloc = malloc::Builder::new()
+    let malloc = MallocBuilder::new()
         .with_name(BDEV_NAME)
         .with_num_blocks(NUM_BLOCKS)
         .with_block_size(BLOCK_SIZE)

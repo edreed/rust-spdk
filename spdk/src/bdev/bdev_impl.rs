@@ -2,353 +2,31 @@ use std::{
     error::Error,
     ffi::{CStr, CString},
     future::Future,
-    io::{IoSlice, IoSliceMut},
     marker::PhantomData,
     mem::{self, ManuallyDrop, MaybeUninit, offset_of, size_of, transmute},
     os::raw::{c_int, c_void},
     pin::Pin,
-    ptr::{self, NonNull, addr_of, addr_of_mut, drop_in_place},
-    rc::{Rc, Weak},
-    slice,
+    ptr::{self, addr_of, addr_of_mut, drop_in_place},
     task::Poll,
 };
 
 use spdk_sys::{
-    spdk_bdev, spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_complete,
-    spdk_bdev_io_get_buf, spdk_bdev_io_get_iovec, spdk_bdev_io_get_thread,
-    spdk_bdev_io_set_aio_status, spdk_bdev_io_status::*, spdk_bdev_io_type, spdk_bdev_register,
-    spdk_bdev_unregister, spdk_dif_pi_format_get_size, spdk_get_io_channel, spdk_io_channel,
-    spdk_io_channel_get_ctx, spdk_io_channel_get_thread, spdk_io_device_register,
-    spdk_io_device_unregister, spdk_uuid_copy,
+    spdk_bdev, spdk_bdev_destruct_done, spdk_bdev_fn_table, spdk_bdev_io, spdk_bdev_io_type,
+    spdk_bdev_register, spdk_bdev_unregister, spdk_dif_pi_format_get_size, spdk_get_io_channel,
+    spdk_io_channel, spdk_io_device_register, spdk_io_device_unregister, spdk_uuid_copy,
 };
-use ternary_rs::if_else;
 
 use crate::{
     Result, Uuid,
     block::{
-        self, AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoResult, IoType,
-        Owned, OwnedOps,
+        AsRawBDev, Device, DifCheckFlag, DifPiFormat, DifType, IoError, IoType, Owned, OwnedOps,
     },
-    errors::{EINVAL, ENOMEM, Errno},
-    thread::{self, Promise, Promissory, Thread},
+    errors::Errno,
+    thread::{self, Promise, Promissory},
     to_result,
 };
 
-use super::{Module, ModuleOps};
-
-#[cfg(feature = "nvmf")]
-use spdk_sys::spdk_bdev_io_set_nvme_status;
-
-#[cfg(feature = "scsi")]
-use spdk_sys::spdk_bdev_io_set_scsi_status;
-
-/// A BDev I/O channel implementation.
-///
-/// The type parameter `T` is the I/O channel context type for the BDev implementation.
-#[repr(transparent)]
-pub struct BDevIoChannel<T> {
-    channel: NonNull<spdk_io_channel>,
-    _ctx: PhantomData<T>,
-}
-
-impl<T> BDevIoChannel<T> {
-    /// Constructs a new I/O channel from a raw pointer.
-    fn from_raw(channel: *mut spdk_io_channel) -> Result<Self> {
-        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_io_channel>`.
-        NonNull::new(channel)
-            .map(|p| unsafe { transmute(p) })
-            .ok_or(ENOMEM)
-    }
-
-    /// Constructs a new I/O channel from a raw pointer.
-    ///
-    /// # Safety
-    ///
-    /// The caller must guarantee that the raw pointer is non-null and valid.
-    unsafe fn from_raw_unchecked(channel: *mut spdk_io_channel) -> Self {
-        // SAFETY: This type is a transparent wrapper around `NonNull<spdk_io_channel>`.
-        unsafe { transmute(NonNull::new_unchecked(channel)) }
-    }
-
-    /// Converts the I/O channel into a raw pointer.
-    fn into_raw(self) -> *mut spdk_io_channel {
-        self.channel.as_ptr()
-    }
-
-    /// Returns a reference to the I/O channel context.
-    pub fn ctx(&self) -> &T {
-        unsafe { &*spdk_io_channel_get_ctx(self.channel.as_ptr()).cast() }
-    }
-
-    /// Returns a mutable reference to the I/O channel context.
-    pub fn ctx_mut(&mut self) -> &mut T {
-        unsafe { &mut *spdk_io_channel_get_ctx(self.channel.as_ptr()).cast() }
-    }
-
-    /// Returns the thread associated with the I/O channel.
-    pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
-        // SAFETY: The thread associated with the I/O channel is guaranteed to be non-null and
-        // valid for the lifetime of the I/O channel.
-        unsafe { Thread::with_owner(self, spdk_io_channel_get_thread(self.channel.as_ptr())) }
-    }
-}
-
-/// A type alias for the promissory that receives the buffer allocation from a call to the
-/// [`BDevIo<T>::allocate_buffers`] method.
-type AllocateBuffersPromissory<'a, T> = Promissory<(), IoError, PhantomData<&'a mut BDevIo<T>>>;
-
-/// Represents driver-specific context for an I/O request.
-///
-/// The type parameter `T` is the I/O context type for the BDev implementation.
-#[derive(Default)]
-struct BDevIoCtx<'a, T>
-where
-    T: Default + 'static,
-{
-    buf_promissory: Option<Weak<AllocateBuffersPromissory<'a, T>>>,
-    inner: T,
-}
-
-/// A BDev I/O request.
-///
-/// The type parameter `T` is the I/O context type for the BDev implementation.
-#[repr(transparent)]
-pub struct BDevIo<T>
-where
-    T: Default + 'static,
-{
-    io: NonNull<spdk_bdev_io>,
-    _ctx: PhantomData<T>,
-}
-
-impl<T> BDevIo<T>
-where
-    T: Default + 'static,
-{
-    /// Initializes a newly submitted I/O request.
-    ///
-    /// # Safety
-    ///
-    /// This function must only be called from the I/O submission callback to initialize a newly
-    /// submitted I/O request. It initializes the driver's I/O context to a default value.
-    unsafe fn new_in_place(io: *mut spdk_bdev_io) -> Self {
-        unsafe {
-            (*io)
-                .driver_ctx
-                .as_mut_ptr()
-                .cast::<BDevIoCtx<T>>()
-                .write(Default::default());
-
-            // SAFETY: This type is a transparent wrapper around `NonNull<spdk_bdev_io>`.
-            transmute(NonNull::new_unchecked(io))
-        }
-    }
-    /// Returns the raw pointer to the I/O request.
-    pub(crate) fn as_ptr(&self) -> *mut spdk_bdev_io {
-        self.io.as_ptr()
-    }
-
-    /// Returns the raw pointer to the block device associated with the I/O request.
-    pub(crate) fn bdev(&self) -> *mut spdk_bdev {
-        unsafe { self.io.as_ref().bdev }
-    }
-
-    /// Returns the type of the I/O request.
-    pub fn io_type(&self) -> IoType {
-        (unsafe { self.io.as_ref().type_ }).into()
-    }
-
-    /// Returns the thread associated with the I/O request. The I/O request must be completed on
-    /// this thread.
-    pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
-        // SAFETY: The thread associated with the I/O request is guaranteed to be non-null and
-        // valid for the lifetime of the I/O request.
-        unsafe { Thread::with_owner(self, spdk_bdev_io_get_thread(self.as_ptr())) }
-    }
-
-    /// Returns the block device associated with the I/O request.
-    pub fn device(&self) -> Device<block::OwnedBy<'_, Self>> {
-        // SAFETY: The block device associated with the I/O request is guaranteed to be non-null and
-        // valid for the lifetime of the I/O request.
-        unsafe { Device::with_owner(self, self.io.as_ref().bdev) }
-    }
-
-    /// Returns the buffers associated with the I/O request.
-    pub fn buffers(&self) -> &[IoSlice<'_>] {
-        unsafe {
-            let mut iovecs = ptr::null_mut();
-            let mut iovec_count: c_int = 0;
-
-            spdk_bdev_io_get_iovec(self.as_ptr(), &mut iovecs, &mut iovec_count);
-
-            slice::from_raw_parts(iovecs as *const IoSlice<'_>, iovec_count as usize)
-        }
-    }
-
-    /// Returns the mutable buffers associated with the I/O request.
-    pub fn buffers_mut(&mut self) -> &mut [IoSliceMut<'_>] {
-        unsafe {
-            let mut iovecs = ptr::null_mut();
-            let mut iovec_count: c_int = 0;
-
-            spdk_bdev_io_get_iovec(self.as_ptr(), &mut iovecs, &mut iovec_count);
-
-            slice::from_raw_parts_mut(iovecs as *mut IoSliceMut<'_>, iovec_count as usize)
-        }
-    }
-
-    /// Returns the offset in blocks for the I/O request.
-    pub fn offset_blocks(&self) -> u64 {
-        unsafe { self.io.as_ref().u.bdev.offset_blocks }
-    }
-
-    /// Returns the length in blocks for the I/O request.
-    pub fn num_blocks(&self) -> u64 {
-        unsafe { self.io.as_ref().u.bdev.num_blocks }
-    }
-
-    /// Returns the source offset in blocks for a copy I/O request.
-    pub fn copy_source_offset_blocks(&self) -> u64 {
-        unsafe { self.io.as_ref().u.bdev.copy.src_offset_blocks }
-    }
-
-    /// Returns a reference to the internal context associated with the I/O request.
-    fn internal_ctx(&self) -> &BDevIoCtx<'_, T> {
-        unsafe { &*self.io.as_ref().driver_ctx.as_ptr().cast() }
-    }
-
-    /// Returns a mutable reference to the internal context associated with the I/O request.
-    fn internal_ctx_mut(&mut self) -> &mut BDevIoCtx<'_, T> {
-        unsafe { &mut *self.io.as_mut().driver_ctx.as_mut_ptr().cast() }
-    }
-
-    /// Returns a reference to the implementation-defined context associated with the I/O request.
-    pub fn ctx(&self) -> &T {
-        &self.internal_ctx().inner
-    }
-
-    /// Returns a mutable reference to the implementation-defined context associated with the I/O
-    /// request.
-    pub fn ctx_mut(&mut self) -> &mut T {
-        &mut self.internal_ctx_mut().inner
-    }
-
-    /// Invoked when buffers requested by [`BDevIo<T>::allocate_buffers`] have been allocated for
-    /// the I/O request.
-    ///
-    /// [`BDevIo<T>::allocate_buffers`]: method@BDevIo::allocate_buffers
-    unsafe extern "C" fn buffers_allocated(
-        _ch: *mut spdk_io_channel,
-        io: *mut spdk_bdev_io,
-        success: bool,
-    ) {
-        let mut io: Self = BDevIo::from(io);
-        let p = io
-            .internal_ctx_mut()
-            .buf_promissory
-            .take()
-            .expect("promissory present")
-            .upgrade()
-            .expect("promissory has strong references");
-
-        Promissory::set_result(p, if_else!(success, Ok(()), Err(EINVAL.into())));
-    }
-
-    /// Allocates buffers aligned to the BDev's requirement for the I/O request.
-    ///
-    /// Allocation will only occur if no buffers are assigned or the buffers are not aligned to the
-    /// BDev's requirement. If the buffers are not aligned, this call will cause a copy from the
-    /// current buffers to a bounce buffer on write or a copy from the bounce buffer to the current
-    /// buffers on read.
-    ///
-    /// If no buffers are currently assigned to this I/O request, the `length` parameter specifies
-    /// the size of the buffers to allocate in bytes. This value must be no larger than
-    /// `SPDK_BDEV_LARGE_BUF_MAX_SIZE`.
-    ///
-    /// Any buffers allocated by this method will automatically be freed on completion of this I/O
-    /// request.
-    pub async fn allocate_buffers<'a>(&'a mut self, length: u64) -> IoResult<()> {
-        Promise::with_context(PhantomData::<&'a mut Self>)
-            .request(move |p| {
-                self.internal_ctx_mut()
-                    .buf_promissory
-                    .replace(Rc::downgrade(p));
-
-                unsafe {
-                    spdk_bdev_io_get_buf(self.as_ptr(), Some(Self::buffers_allocated), length)
-                };
-
-                Poll::Pending
-            })
-            .await
-    }
-
-    /// Completes the I/O request with the specified status.
-    ///
-    /// # Safety
-    ///
-    /// This method may only be called on the thread used to submit the I/O operation.
-    ///
-    /// # Panics
-    ///
-    /// This method panics on debug builds if not called on the thread associated with the I/O.
-    unsafe fn complete(mut self, status: IoResult<()>) {
-        debug_assert!(self.thread().is_current());
-
-        let io_status = match status {
-            Ok(_) => SPDK_BDEV_IO_STATUS_SUCCESS,
-            Err(e) => match e {
-                IoError::GeneralError(errno) => unsafe {
-                    spdk_bdev_io_set_aio_status(self.as_ptr(), -errno.errno())
-                },
-                IoError::Aborted => SPDK_BDEV_IO_STATUS_ABORTED,
-                IoError::FirstFusedFailed => SPDK_BDEV_IO_STATUS_FIRST_FUSED_FAILED,
-                IoError::Miscompare => SPDK_BDEV_IO_STATUS_MISCOMPARE,
-                IoError::NoMem => SPDK_BDEV_IO_STATUS_NOMEM,
-                #[cfg(feature = "scsi")]
-                IoError::ScsiError(status) => unsafe {
-                    spdk_bdev_io_set_scsi_status(
-                        self.as_ptr(),
-                        status.sc.into(),
-                        status.sk.into(),
-                        status.asc,
-                        status.ascq,
-                    )
-                },
-                #[cfg(feature = "nvmf")]
-                IoError::NvmeError(status) => unsafe {
-                    spdk_bdev_io_set_nvme_status(
-                        self.as_ptr(),
-                        status.cdw0,
-                        status.sct.into(),
-                        status.sc.into(),
-                    )
-                },
-                IoError::Pending => panic!("I/O completed with pending status"),
-                _ => SPDK_BDEV_IO_STATUS_FAILED,
-            },
-        };
-
-        unsafe {
-            ptr::drop_in_place(self.io.as_mut().driver_ctx.as_mut_ptr() as *mut BDevIoCtx<T>);
-
-            spdk_bdev_io_complete(self.as_ptr(), io_status);
-        }
-    }
-}
-
-impl<T> From<*mut spdk_bdev_io> for BDevIo<T>
-where
-    T: Default + 'static,
-{
-    fn from(io: *mut spdk_bdev_io) -> Self {
-        Self {
-            io: NonNull::new(io).unwrap(),
-            _ctx: PhantomData,
-        }
-    }
-}
-
+use super::{IoChannelImpl, IoRequest, Module, ModuleOps, io_request::IoRequestCtx};
 /// A trait for implementing the BDev operations.
 ///
 /// The type parameter `IoChannel` is the I/O channel type for the BDev.
@@ -376,8 +54,8 @@ pub trait BDevOps: Send + Sync {
     ///
     /// The default implementation returns a per-thread I/O channel for the BDev. Implementations
     /// may override this method to provide different behavior.
-    fn get_io_channel(&self) -> Result<BDevIoChannel<Self::ChannelContext>> {
-        BDevIoChannel::from_raw(unsafe { spdk_get_io_channel(self as *const _ as *mut _) })
+    fn get_io_channel(&self) -> Result<IoChannelImpl<Self::ChannelContext>> {
+        IoChannelImpl::from_raw(unsafe { spdk_get_io_channel(self as *const _ as *mut _) })
     }
 
     /// Creates a new I/O channel for the BDev.
@@ -388,14 +66,14 @@ pub trait BDevOps: Send + Sync {
     where
         <Self as BDevOps>::IoContext: 'static,
     {
-        size_of::<BDevIoCtx<Self::IoContext>>()
+        size_of::<IoRequestCtx<Self::IoContext>>()
     }
 
     /// Handles an I/O request to the BDev.
     fn handle_io(
         this: &BDevImpl<Self>,
-        channel: &BDevIoChannel<Self::ChannelContext>,
-        io: &mut BDevIo<Self::IoContext>,
+        channel: &IoChannelImpl<Self::ChannelContext>,
+        io: &mut IoRequest<Self::IoContext>,
     ) -> impl Future<Output = std::result::Result<(), Self::IoError>>
     where
         Self: Sized;
@@ -425,16 +103,17 @@ where
 
     async fn handle_io(
         _this: &BDevImpl<Self>,
-        _channel: &BDevIoChannel<Self::ChannelContext>,
-        _io: &mut BDevIo<Self::IoContext>,
+        _channel: &IoChannelImpl<Self::ChannelContext>,
+        _io: &mut IoRequest<Self::IoContext>,
     ) -> Result<()> {
         unimplemented!("submit_request called on uninitialized value");
     }
 }
 
-/// A BDev implementation.
+/// A plug-in BDev implementation.
 ///
-/// The type parameter `T` is the type that provides the BDev I/O processing implementation.
+/// The type parameter `T` is a user-defined type that provides the BDev I/O request processing
+/// implementation.
 pub struct BDevImpl<T>
 where
     T: BDevOps,
@@ -622,8 +301,8 @@ where
     {
         // SAFETY: Both the `io_channel` and `io` pointers are guaranteed to be non-null and valid
         // for the lifetime of the I/O request.
-        let io_channel = unsafe { BDevIoChannel::from_raw_unchecked(io_channel) };
-        let mut io = unsafe { BDevIo::new_in_place(io) };
+        let io_channel = unsafe { IoChannelImpl::from_raw_unchecked(io_channel) };
+        let mut io = unsafe { IoRequest::new_in_place(io) };
 
         debug_assert!(io.thread().is_current());
 
@@ -679,13 +358,13 @@ where
     }
 }
 
-/// A builder used to create a new instance of a `BDev`.
+/// A builder used to create a new instance of a plug-in BDev based on [`BDevImpl`].
 ///
 /// Create a new instance by calling the [`new_bdev_builder()`] method of the [`Module`] managing
-/// the `BDev` type.
+/// the plug-in BDev.
 ///
 /// [`new_bdev_builder()`]: super::ModuleOps::new_bdev_builder
-pub struct BDevBuilder<'a, C, M>
+pub struct Builder<'a, C, M>
 where
     C: BDevOps,
     M: ModuleOps,
@@ -710,12 +389,12 @@ where
     _phantom: PhantomData<C>,
 }
 
-impl<'a, C, M> BDevBuilder<'a, C, M>
+impl<'a, C, M> Builder<'a, C, M>
 where
     C: BDevOps,
     M: ModuleOps,
 {
-    /// Creates a new [`BDevBuilder`] instance.
+    /// Creates a new [`Builder`] instance.
     pub(crate) fn new(
         module: &'a Module<M>,
         name: &'a CStr,
@@ -934,7 +613,7 @@ where
     }
 }
 
-impl<'a, C, M> BDevBuilder<'a, C, M>
+impl<'a, C, M> Builder<'a, C, M>
 where
     C: BDevOps + Default + Unpin,
     M: ModuleOps,
@@ -960,7 +639,7 @@ where
     }
 }
 
-impl<'a, C, M> BDevBuilder<'a, C, M>
+impl<'a, C, M> Builder<'a, C, M>
 where
     C: BDevOps + Unpin,
     M: ModuleOps,
@@ -986,7 +665,7 @@ where
     }
 }
 
-impl<'a, C, M> BDevBuilder<'a, C, M>
+impl<'a, C, M> Builder<'a, C, M>
 where
     C: BDevOps,
     M: ModuleOps,
@@ -1020,15 +699,15 @@ where
     }
 }
 
-/// A wrapper that enables [`Device`] to own a custom BDev implementation.
+/// A wrapper that enables [`Device`] to own a plug-in BDev implementation.
 #[repr(transparent)]
-pub(crate) struct OwnedImpl<T: BDevOps>(Box<BDevImpl<T>>);
+struct OwnedImpl<T: BDevOps>(Box<BDevImpl<T>>);
 
 unsafe impl<T: BDevOps> Send for OwnedImpl<T> {}
 
 impl<T: BDevOps> OwnedImpl<T> {
     /// Creates a new owned BDev instance with the specified BDev implementation.
-    pub(crate) fn new(bdev: Box<BDevImpl<T>>) -> Self {
+    fn new(bdev: Box<BDevImpl<T>>) -> Self {
         unsafe { transmute(bdev) }
     }
 }

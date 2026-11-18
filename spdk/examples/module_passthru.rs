@@ -8,7 +8,10 @@ use std::{
 };
 
 use spdk::{
-    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, Examiner, ModuleInstance, ModuleOps, malloc},
+    bdev::{
+        BDevImpl, BDevOps, Examiner, IoChannelImpl, IoRequest, MallocBuilder, ModuleInstance,
+        ModuleOps,
+    },
     block::{
         self, AsRawBDev, ClaimType, Descriptor, Device, EventHandler, EventType, IoChannel,
         IoError, IoResult, IoType, Owned,
@@ -189,8 +192,8 @@ impl BDevOps for PassthruRs<'_> {
 
     async fn handle_io(
         this: &BDevImpl<Self>,
-        channel: &BDevIoChannel<PassthruRsChannel>,
-        io: &mut BDevIo<()>,
+        channel: &IoChannelImpl<PassthruRsChannel>,
+        io: &mut IoRequest<()>,
     ) -> IoResult<()> {
         let base_desc = this.ctx().desc();
         let base_ch = &channel.ctx().ch;
@@ -324,7 +327,7 @@ async fn main() {
         .unwrap();
 
     // Create a new Malloc block device.
-    let malloc = malloc::Builder::new()
+    let malloc = MallocBuilder::new()
         .with_name(BDEV_NAME)
         .with_num_blocks(NUM_BLOCKS)
         .with_block_size(BLOCK_SIZE)

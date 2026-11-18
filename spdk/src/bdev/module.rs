@@ -10,7 +10,7 @@ use crate::{
     thread::{self},
 };
 
-use super::{BDevBuilder, BDevOps};
+use super::{BDevImplBuilder, BDevOps};
 
 /// A type representing the examiner of block devices. It is used to limit the lifetime of borrowed
 /// block devices to the scope of the examination performed by [`ModuleOps::examine_config`] and
@@ -111,13 +111,13 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
         async {}
     }
 
-    /// Creates a new [`BDevBuilder`] to build a new `BDev` instance managed by this module.
+    /// Creates a new [`BDevImplBuilder`] to build a new `BDev` instance managed by this module.
     fn new_bdev_builder<'a>(
         name: &'a CStr,
         block_size: u32,
         num_blocks: u64,
-    ) -> BDevBuilder<'a, Self::BDev, Self> {
-        BDevBuilder::new(Self::instance(), name, block_size, num_blocks)
+    ) -> BDevImplBuilder<'a, Self::BDev, Self> {
+        BDevImplBuilder::new(Self::instance(), name, block_size, num_blocks)
     }
 }
 

@@ -305,14 +305,14 @@ where
 
 impl<'a, O> Device<OwnedBy<'a, O>> {
     /// Gets a borrowed block device from an object that logically owns the device while it is in
-    /// use, e.g. [`BDevIo`] & [`IoChannel`].
+    /// use, e.g. [`IoRequest`] & [`IoChannel`].
     ///
     /// # Safety
     ///
     /// The caller must ensure that `bdev` is a non-null pointer to an `spdk_bdev` structure whose
     /// lifetime is tied to the owner.
     ///
-    /// [`BDevIo`]: crate::bdev::BDevIo
+    /// [`IoRequest`]: crate::bdev::IoRequest
     /// [`IoChannel`]: crate::block::IoChannel
     pub(crate) unsafe fn with_owner(_owner: &'a O, bdev: *mut spdk_bdev) -> Device<OwnedBy<'a, O>> {
         Device::<OwnedBy<'a, O>>(unsafe { OwnedBy::new_unchecked(bdev) })

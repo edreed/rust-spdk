@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use spdk::{
-    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleOps},
+    bdev::{BDevImpl, BDevOps, IoChannelImpl, IoRequest, ModuleOps},
     block::{Device, IoType, Owned},
     dma,
     errors::Errno,
@@ -53,8 +53,8 @@ impl BDevOps for NullRs {
 
     async fn handle_io(
         _this: &BDevImpl<Self>,
-        _channel: &BDevIoChannel<()>,
-        io: &mut BDevIo<()>,
+        _channel: &IoChannelImpl<()>,
+        io: &mut IoRequest<()>,
     ) -> spdk::Result<()> {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();
