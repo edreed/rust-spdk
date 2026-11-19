@@ -8,7 +8,7 @@ use crate::Result;
 
 use super::{AsRawBDev, descriptor::open_desc};
 
-/// A placeholder type used with [`Device`] that represents any block device.
+/// A placeholder type used with [`BDev`] that represents any block device.
 ///
 /// This type is used as a generic placeholder for any block device, without taking ownership of it.
 /// In order to keep the `spdk_bdev` alive for the lifetime of the `Any` instance, the constructor
@@ -16,7 +16,7 @@ use super::{AsRawBDev, descriptor::open_desc};
 /// instance. This may fail if opening the read-only descriptor to the block device fails. Users of
 /// this object should be prepared to handle these errors and fail gracefully.
 ///
-/// [`Device`]: super::Device
+/// [`BDev`]: super::BDev
 #[repr(transparent)]
 pub struct Any(NonNull<spdk_bdev_desc>);
 

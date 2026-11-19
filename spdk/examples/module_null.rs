@@ -1,8 +1,8 @@
 use std::io::Write;
 
 use spdk::{
-    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleOps},
-    block::{Device, IoType, Owned},
+    bdev::{BDev, IoType, Owned},
+    bdev::{BDevImpl, BDevOps, IoChannelImpl, IoRequest, ModuleOps},
     dma,
     errors::Errno,
 };
@@ -27,7 +27,7 @@ unsafe impl Sync for NullRs {}
 
 impl NullRs {
     /// Creates a new NullRs block device.
-    pub async fn new_device() -> spdk::Result<Device<Owned>> {
+    pub async fn new_device() -> spdk::Result<BDev<Owned>> {
         NullRsModule::new_bdev_builder(c"null-rs", 4096, 1)
             .build()
             .await
@@ -53,8 +53,8 @@ impl BDevOps for NullRs {
 
     async fn handle_io(
         _this: &BDevImpl<Self>,
-        _channel: &BDevIoChannel<()>,
-        io: &mut BDevIo<()>,
+        _channel: &IoChannelImpl<()>,
+        io: &mut IoRequest<()>,
     ) -> spdk::Result<()> {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();

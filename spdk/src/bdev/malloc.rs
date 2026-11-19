@@ -1,5 +1,4 @@
-//! Support for the Storage Performance Development Kit Malloc Block Device
-//! plug-in.
+//! Support for the Storage Performance Development Kit Malloc Block Device module.
 use std::{
     default::Default,
     ffi::CStr,
@@ -16,17 +15,19 @@ use spdk_sys::{
 
 use crate::{
     Result, Uuid,
-    block::{AsRawBDev, Device, Owned, OwnedOps, wait_for_examination},
+    bdev::{AsRawBDev, BDev, Owned, OwnedOps, wait_for_examination},
     thread::{Promise, Promissory},
     to_result,
 };
 
-/// Builds a [`Malloc`] instance using the Malloc Block Device module of the
-/// SPDK.
+/// Builds a [`Malloc`] BDev instance using the Malloc Block Device module of the SPDK.
 ///
-/// `Builder` implements a fluent-style interface enabling custom configuration
-/// through chaining function calls. The [`build`] method constructs a new
-/// `Malloc` instance.
+/// A `Malloc` BDev is a type of RAM disk backed by hugepage memory allocated to the SPDK
+/// application. The RAM disk is volatile and the contents will not survive deletion or a power
+/// cycle without additional support.
+///
+/// `Builder` implements a fluent-style interface enabling custom configuration through chaining
+/// function calls. The [`build`] method constructs a new `Malloc` instance.
 ///
 /// [`build`]: Builder::build
 pub struct Builder(malloc_bdev_opts);
@@ -65,24 +66,21 @@ impl Builder {
         self
     }
 
-    /// Creates a new [`Device<Malloc>`] instance that owns the underlying
-    /// `spdk_bdev` pointer.
+    /// Creates a new [`BDev<Malloc>`] instance that owns the underlying `spdk_bdev` pointer.
     ///
     /// # Notes
     ///
-    /// The returned [`Device<Malloc>`] instance owns the underlying `spdk_bdev`
-    /// pointer and will destroy it when dropped. See [`Device<T>`] for a detailed
-    /// discussion of ownership semantics and requirements.
-    pub async fn build(self) -> Result<Device<Malloc>> {
+    /// The returned [`BDev<Malloc>`] instance owns the underlying `spdk_bdev` pointer and will
+    /// destroy it when dropped. See [`BDev<T>`] for a detailed discussion of ownership semantics
+    /// and requirements.
+    pub async fn build(self) -> Result<BDev<Malloc>> {
         let mut malloc = null_mut();
 
         unsafe { to_result!(create_malloc_disk(&mut malloc, &self.0))? };
 
         wait_for_examination().await?;
 
-        Ok(Device::new(Malloc(unsafe {
-            NonNull::new_unchecked(malloc)
-        })))
+        Ok(BDev::new(Malloc(unsafe { NonNull::new_unchecked(malloc) })))
     }
 }
 

@@ -1,7 +1,7 @@
 use std::ffi::{CStr, CString};
 
 use spdk::{
-    bdev::malloc,
+    bdev::MallocBuilder,
     cli::Parser,
     net::SocketAddr,
     nvme::TransportAddr,
@@ -45,7 +45,7 @@ async fn main() {
 
     target.listen(&transport_id).unwrap();
 
-    let malloc = malloc::Builder::new()
+    let malloc = MallocBuilder::new()
         .with_name(BDEV_NAME)
         .with_num_blocks(NUM_BLOCKS)
         .with_block_size(BLOCK_SIZE)

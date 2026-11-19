@@ -187,9 +187,9 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// [`instance()`]: ../spdk/bdev/trait.ModuleInstance.html#tymethod.instance
 /// [`new_bdev_builder()`]: ../spdk/bdev/trait.ModuleOps.html#tymethod.new_bdev
-/// [`build()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build
-/// [`build_with_context()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build_with_context
-/// [`build_with_context_in_place()`]: ../spdk/bdev/struct.BDevBuilder.html#tymethod.build_with_context_in_place
+/// [`build()`]: ../spdk/bdev/struct.BDevImplBuilder.html#tymethod.build
+/// [`build_with_context()`]: ../spdk/bdev/struct.BDevImplBuilder.html#tymethod.build_with_context
+/// [`build_with_context_in_place()`]: ../spdk/bdev/struct.BDevImplBuilder.html#tymethod.build_with_context_in_place
 /// [`Module<T>`]: ../spdk/bdev/struct.Module.html
 /// [`ModuleInstance<T>`]: ../spdk/bdev/trait.ModuleInstance.html
 #[cfg(feature = "bdev-module")]

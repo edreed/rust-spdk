@@ -4,7 +4,7 @@ use std::{
     io::{Read, Write},
 };
 
-use spdk::{bdev::uring, dma, thread};
+use spdk::{bdev::UringBuilder, dma, thread};
 
 const BDEV_NAME: &CStr = c"Uring0";
 const FILENAME: &CStr = c"/tmp/uring0.img";
@@ -25,7 +25,7 @@ async fn main() {
     create_file();
 
     // Create a new io_uring block device.
-    let uring = uring::Builder::new()
+    let uring = UringBuilder::new()
         .with_name(BDEV_NAME)
         .with_filename(FILENAME)
         .with_block_size(BLOCK_SIZE)

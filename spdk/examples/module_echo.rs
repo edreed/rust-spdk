@@ -7,8 +7,8 @@ use std::{
 
 use futures::future::join;
 use spdk::{
-    bdev::{BDevImpl, BDevIo, BDevIoChannel, BDevOps, ModuleOps},
-    block::{Device, IoType, Owned},
+    bdev::{BDev, IoType, Owned},
+    bdev::{BDevImpl, BDevOps, IoChannelImpl, IoRequest, ModuleOps},
     dma,
     errors::{ENOTSUP, Errno},
     runtime::reactors,
@@ -45,7 +45,7 @@ struct Echo {
 }
 
 impl Echo {
-    async fn new_device(name: &CStr) -> spdk::Result<Device<Owned>> {
+    async fn new_device(name: &CStr) -> spdk::Result<BDev<Owned>> {
         EchoModule::new_bdev_builder(name, 4096, 2).build().await
     }
 }
@@ -55,7 +55,11 @@ unsafe impl Sync for Echo {}
 
 impl Echo {
     // The `reader `condition variable releases the lock during the await.
-    async fn do_read(&self, _channel: &BDevIoChannel<()>, io: &mut BDevIo<()>) -> spdk::Result<()> {
+    async fn do_read(
+        &self,
+        _channel: &IoChannelImpl<()>,
+        io: &mut IoRequest<()>,
+    ) -> spdk::Result<()> {
         let offset_blocks = io.offset_blocks();
         let dst_buf = io.buffers_mut();
 
@@ -88,8 +92,8 @@ impl Echo {
     // The `writer `condition variable releases the lock during the await.
     async fn do_write(
         &self,
-        _channel: &BDevIoChannel<()>,
-        io: &mut BDevIo<()>,
+        _channel: &IoChannelImpl<()>,
+        io: &mut IoRequest<()>,
     ) -> spdk::Result<()> {
         self.writer
             .wait_on_mutex(&self.src_buf, |src_buf| {
@@ -141,8 +145,8 @@ impl BDevOps for Echo {
 
     async fn handle_io(
         this: &BDevImpl<Self>,
-        channel: &BDevIoChannel<Self::ChannelContext>,
-        io: &mut BDevIo<Self::IoContext>,
+        channel: &IoChannelImpl<Self::ChannelContext>,
+        io: &mut IoRequest<Self::IoContext>,
     ) -> spdk::Result<()> {
         match io.io_type() {
             IoType::Read => this.ctx().do_read(channel, io).await,
