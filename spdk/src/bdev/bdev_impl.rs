@@ -18,9 +18,7 @@ use spdk_sys::{
 
 use crate::{
     Result, Uuid,
-    block::{
-        AsRawBDev, BDev, DifCheckFlag, DifPiFormat, DifType, IoError, IoType, Owned, OwnedOps,
-    },
+    bdev::{AsRawBDev, BDev, DifCheckFlag, DifPiFormat, DifType, IoError, IoType, Owned, OwnedOps},
     errors::Errno,
     thread::{self, Promise, Promissory},
     to_result,

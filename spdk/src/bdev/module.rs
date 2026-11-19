@@ -6,7 +6,7 @@ use spdk_sys::{
 };
 
 use crate::{
-    block::{BDev, OwnedBy},
+    bdev::{BDev, OwnedBy},
     thread::{self},
 };
 

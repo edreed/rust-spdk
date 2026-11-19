@@ -26,7 +26,7 @@ use crate::{
 
 #[cfg(feature = "bdev")]
 use crate::{
-    block::IoError,
+    bdev::IoError,
     errors::{ECANCELED, EINPROGRESS, ENOMEM},
 };
 

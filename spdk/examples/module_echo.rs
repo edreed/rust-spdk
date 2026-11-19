@@ -7,8 +7,8 @@ use std::{
 
 use futures::future::join;
 use spdk::{
+    bdev::{BDev, IoType, Owned},
     bdev::{BDevImpl, BDevOps, IoChannelImpl, IoRequest, ModuleOps},
-    block::{BDev, IoType, Owned},
     dma,
     errors::{ENOTSUP, Errno},
     runtime::reactors,

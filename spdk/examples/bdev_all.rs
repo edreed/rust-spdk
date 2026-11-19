@@ -2,7 +2,7 @@ use std::ffi::CStr;
 
 use spdk::{
     bdev::MallocBuilder,
-    block::{self, BDev, Owned},
+    bdev::{self, BDev, Owned},
 };
 
 const NUM_BLOCKS: u64 = 16536;
@@ -24,7 +24,7 @@ async fn main() {
     let malloc0 = create_bdev(c"malloc0").await;
     let malloc1 = create_bdev(c"malloc1").await;
 
-    let devices = block::all();
+    let devices = bdev::all();
 
     devices.for_each(|dev| {
         println!(

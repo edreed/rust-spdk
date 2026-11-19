@@ -21,7 +21,7 @@ use spdk_sys::{
 };
 
 use crate::{
-    block::{EventHandler, IoResult},
+    bdev::{EventHandler, IoResult},
     errors::{EINVAL, Errno},
     thread::{self, Promise, Promissory, Thread},
     to_poll_pending_on_ok,

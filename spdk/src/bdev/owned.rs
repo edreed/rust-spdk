@@ -10,7 +10,7 @@ use spdk_sys::spdk_bdev;
 
 use crate::{
     Result,
-    block::{AsRawBDev, BDev},
+    bdev::{AsRawBDev, BDev},
 };
 
 /// A trait for owned block devices.

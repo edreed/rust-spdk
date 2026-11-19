@@ -9,12 +9,12 @@ use std::{
 
 use spdk::{
     bdev::{
-        BDevImpl, BDevOps, Examiner, IoChannelImpl, IoRequest, MallocBuilder, ModuleInstance,
-        ModuleOps,
-    },
-    block::{
         self, AsRawBDev, BDev, ClaimType, Descriptor, EventHandler, EventType, IoChannel, IoError,
         IoResult, IoType, Owned,
+    },
+    bdev::{
+        BDevImpl, BDevOps, Examiner, IoChannelImpl, IoRequest, MallocBuilder, ModuleInstance,
+        ModuleOps,
     },
     dma::{self},
     errors::{EINVAL, ENODEV, ENOTSUP},
@@ -132,7 +132,7 @@ impl PassthruRsModule {
 impl ModuleOps for PassthruRsModule {
     type BDev = PassthruRs<'static>;
 
-    async fn examine_disk<'a>(&self, bdev: BDev<block::OwnedBy<'a, Examiner<Self>>>) {
+    async fn examine_disk<'a>(&self, bdev: BDev<bdev::OwnedBy<'a, Examiner<Self>>>) {
         // The following delay works around a race condition with the lvol VBDev. It opens a
         // read/write descriptor while inspecting the block device for claim suitability. The open
         // read/write descriptor prevents the PassthruRs bdev from from claiming the Malloc bdev.
@@ -251,7 +251,7 @@ impl BDevOps for PassthruRs<'_> {
 }
 
 impl EventHandler for PassthruRs<'_> {
-    fn handle_event(&self, event: EventType, _device: &BDev<block::OwnedBy<'_, Self>>) {
+    fn handle_event(&self, event: EventType, _device: &BDev<bdev::OwnedBy<'_, Self>>) {
         if matches!(event, EventType::Remove) {
             let base_name = self.desc().device().name().to_owned();
 

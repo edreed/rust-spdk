@@ -5,7 +5,7 @@ use spdk_sys::{
     spdk_nvmf_subsystem_get_next_ns,
 };
 
-use crate::block::{BDev, OwnedBy};
+use crate::bdev::{BDev, OwnedBy};
 
 use super::Subsystem;
 

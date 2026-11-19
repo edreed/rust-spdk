@@ -9,7 +9,7 @@ use spdk_sys::{
 
 use crate::{
     Result, Uuid,
-    block::{AsRawBDev, BDev, Owned, OwnedOps, wait_for_examination},
+    bdev::{AsRawBDev, BDev, Owned, OwnedOps, wait_for_examination},
     errors::EINVAL,
     thread::{Promise, Promissory},
 };
