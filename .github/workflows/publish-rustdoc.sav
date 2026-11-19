@@ -1,0 +1,35 @@
+name: Update Wiki Documentation
+
+on:
+  push:
+    branches: [ main, edreed/rust-spdk ]
+    paths:
+      - '**/*.rs'
+      - 'Cargo.toml'
+  pull_request:
+    branches: [main, edreed/rust-spdk]
+    paths:
+      - '**/*.rs'
+      - 'Cargo.toml'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Rust Wiki Docs
+        uses: tristanpoland/RustDoc-GH-Wiki@0.0.6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Optional customizations:
+          # source_path: 'src'
+          # wiki_path: 'wiki-content'
+          # commit_message: 'Update documentation from Rust code'
+          # excluded_paths: 'src/generated,src/tests'
+          # extract_private: 'false'
+          # max_definition_lines: '50'

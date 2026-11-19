@@ -1,0 +1,13 @@
+name: Update Wiki Documentation
+
+on:
+  push:
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
