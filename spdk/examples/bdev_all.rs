@@ -24,13 +24,13 @@ async fn main() {
     let malloc0 = create_bdev(c"malloc0").await;
     let malloc1 = create_bdev(c"malloc1").await;
 
-    let devices = bdev::all();
+    let bdevs = bdev::all();
 
-    devices.for_each(|dev| {
+    bdevs.for_each(|bdev| {
         println!(
             "Found \"{}\" {}",
-            dev.name().to_string_lossy(),
-            dev.product_name().to_string_lossy()
+            bdev.name().to_string_lossy(),
+            bdev.product_name().to_string_lossy()
         );
     });
 
