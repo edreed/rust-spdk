@@ -26,6 +26,7 @@ run_example bdev_hello_world --features="bdev-malloc" -- "${COMMON_ARGS[@]}"
 run_example bdev_uring --features="bdev-uring" -- "${COMMON_ARGS[@]}"
 run_example cli -- "${COMMON_ARGS[@]}" --block-size=4096 --create-new
 run_example env -- "${COMMON_ARGS[@]}" --lcores="(0-3)"
+run_example hello_world -- "${COMMON_ARGS[@]}"
 run_example interval -- "${COMMON_ARGS[@]}"
 run_example module_echo --features="bdev-module" -- "${COMMON_ARGS[@]}" --lcores="(0,1)"
 run_example module_null --features="bdev-module" -- "${COMMON_ARGS[@]}"

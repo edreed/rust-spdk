@@ -1,4 +1,6 @@
 //! Support for the Storage Performance Development Kit Malloc Block Device module.
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev-malloc")))]
+
 use std::{
     default::Default,
     ffi::CStr,
@@ -90,7 +92,17 @@ impl Default for Builder {
     }
 }
 
-/// Represents a Malloc Block Device.
+/// A RAM disk block device providing block layer access to hugepage memory allocated to the SPDK
+/// application.
+///
+/// # Example
+///
+/// The following example creates a basic `rust-spdk` application that creates an instance of the
+/// [`Malloc`] block device and then writes to and reads from it.
+///
+/// ```no_run
+#[doc = include_str!("../../examples/bdev_hello_world.rs")]
+/// ```
 #[repr(transparent)]
 pub struct Malloc(NonNull<spdk_bdev>);
 

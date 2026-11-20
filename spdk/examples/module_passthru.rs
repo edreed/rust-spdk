@@ -1,3 +1,6 @@
+//! # PassthruRs Virtual BDev Module
+//!
+//! A custom virtual BDev module that passes I/O thorugh to an underlying BDev.
 use std::{
     cell::OnceCell,
     collections::HashMap,

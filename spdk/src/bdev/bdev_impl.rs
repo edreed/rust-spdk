@@ -25,9 +25,8 @@ use crate::{
 };
 
 use super::{IoChannelImpl, IoRequest, Module, ModuleOps, io_request::IoRequestCtx};
+
 /// A trait for implementing the BDev operations.
-///
-/// The type parameter `IoChannel` is the I/O channel type for the BDev.
 pub trait BDevOps: Send + Sync {
     /// The per-I/O channel context type for the BDev.
     type ChannelContext;

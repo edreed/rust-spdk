@@ -18,6 +18,7 @@ mod define_error;
 ///
 /// [`gai_strerror`]: https://www.man7.org/linux/man-pages/man3/gai_strerror.3.html
 #[proc_macro]
+#[doc(hidden)]
 pub fn define_error(item: TokenStream) -> TokenStream {
     define_error::DefineError::new().generate(item)
 }

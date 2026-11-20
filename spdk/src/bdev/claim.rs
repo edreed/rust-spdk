@@ -1,4 +1,6 @@
 #![cfg(feature = "bdev-module")]
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev-module")))]
+
 use std::{
     ffi::CStr,
     io::{Cursor, Write},

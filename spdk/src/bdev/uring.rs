@@ -1,5 +1,7 @@
 //! Support for the Storage Performance Development Kit io_uring Block Device
 //! plug-in.
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev-uring")))]
+
 use std::{ffi::CStr, mem::zeroed, ptr::NonNull, task::Poll};
 
 use spdk_sys::{
@@ -14,13 +16,12 @@ use crate::{
     thread::{Promise, Promissory},
 };
 
-/// Builds a [`Uring`] instance using the io_uring Block Device module of the
-/// SPDK.
+/// Builds a [`Uring`] instance using the io_uring Block Device module of the SPDK.
 ///
-/// `Builder` implements a fluent-style interface enabling custom configuration
-/// through chaining function calls. The [`build`] method constructs a new
-/// `Uring` instance.
+/// [`UringBuilder`] implements a fluent-style interface enabling custom configuration through
+/// chaining function calls. The [`build`] method constructs a new `Uring` instance.
 ///
+/// [`UringBuilder`]: super::UringBuilder
 /// [`build`]: Builder::build
 #[repr(transparent)]
 pub struct Builder(bdev_uring_opts);
@@ -93,7 +94,10 @@ impl Default for Builder {
 
 /// A Linux io_uring-based BDev providing block layer access to a backing file or block device.
 ///
-/// # Examples
+/// # Example
+///
+/// The following example creates a basic `rust-spdk` application that creates an instance of the
+/// [`Uring`] block device and then writes to and reads from it.
 ///
 /// ```no_run
 #[doc = include_str!("../../examples/bdev_uring.rs")]

@@ -1,9 +1,14 @@
+//! Rust macro definitions to facilitate development of the `rust-spdk` crate.
+//!
+//! These macros are intended only for use in the implementation of this crate.
+
 /// Convert an SPDK integer status return value to a [`Result`].
 ///
 /// A status return value either indicates success (0) or an error (<0). A
 /// success return is converted to `Ok(())` while an error return is converted
 /// to `Err(Errno)` containing the error code.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! to_result {
     ($r:expr) => {
         match $r {
@@ -23,6 +28,7 @@ macro_rules! to_result {
 /// `size` is the positive integer value returned. An error return (`< 0`) is
 /// converted to `Err(Errno)` containing the error code.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! to_result_size {
     ($r:expr) => {
         match { $r } {
@@ -41,6 +47,7 @@ macro_rules! to_result_size {
 ///
 /// [`Poll`]: enum@std::task::Poll
 #[macro_export]
+#[doc(hidden)]
 macro_rules! to_poll_pending_on_ok {
     ($r:expr) => {
         match $crate::to_result!($r) {
@@ -76,6 +83,7 @@ macro_rules! to_poll_pending_on_ok {
 ///
 /// [`Poll`]: enum@std::task::Poll
 #[macro_export]
+#[doc(hidden)]
 macro_rules! to_poll_pending_on_err {
     ($e:expr, $r:expr) => {
         match $crate::to_result!($r) {

@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev-module")))]
+
 use std::{ffi::CStr, fmt::Debug, future::Future, marker::PhantomData};
 
 use spdk_sys::{

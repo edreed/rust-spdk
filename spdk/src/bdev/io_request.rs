@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev-module")))]
+
 use std::{
     io::{IoSlice, IoSliceMut},
     marker::PhantomData,
