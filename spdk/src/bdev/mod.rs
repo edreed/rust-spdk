@@ -1,13 +1,71 @@
-//! Support for the Storage Performance Development Kit plug-in block devices and modules.
+//! Support for the Storage Performance Development Kit plug-in block devices (BDevs) and modules.
 //!
-//! See [Block Device User Guide] for more information about available plug-ins.
+//! # Supported Block Device (BDev) Modules
 //!
-//! See [Writing a Custom Block Device Module] for more information about
-//! writing a custom plug-in block device module.
+//! The `rust-spdk` crate currently provides support for the following SPDK-provided block device
+//! modules. To use one of these BDevs, add the feature from the `Feature` column to the `rust-spdk`
+//! dependency in your `Cargo.toml` file.
 //!
+//! | Module           | Feature       | Builder           |
+//! |------------------|---------------|-------------------|
+//! | [Linux AIO BDev] | `bdev-aio`    | [`Aio::new`]      |
+//! | [Malloc BDev]    | `bdev-malloc` | [`MallocBuilder`] |
+//! | [Uring BDev]     | `bdev-uring`  | [`UringBuilder`]  |
+//!
+//! See [Block Device User Guide] for more information about the SPDK-provided block device modules
+//! in the table above.
+//!
+//! # Custom Block Device (BDev) Modules Using `rust-spdk`
+//!
+//! The `rust-spdk` crate supports writing custom block device (BDev) modules in asynchronous Rust.
+//! Add the `bdev-module` feature to the `rust-spdk` dependency in your `Cargo.toml` file to enable
+//! this support.
+//!
+//! The first step is to define a `struct` representing the context of your custom BDev. Provide the
+//! custom BDev's implementation using the [`BDevOps`] trait. If necessary, you can also provide
+//! channel- and/or I/O-specific contexts by defining a `struct` for each and tying them to your
+//! custom BDev through the [`BDevOps::ChannelContext`] and [`BDevOps::IoContext] associated types,
+//! respectively. These associated types can be assigned the unit (`()`) type if no additional
+//! context is needed by your custom BDev.
+//!
+//! Next, define a `struct` representing the global module context for your custom BDev. Provide the
+//! custom BDev's implementation using the [`ModuleOps`] trait, assigning your custom BDev `struct`
+//! to the [`ModuleOps::BDev`] associated type. All of the `ModuleOps` traits methods are provided
+//! for you, so you are not required to provide any implementations for it. However, global module
+//! initialization and finalization can be performed by providing your own implementations of the
+//! [`ModuleOps::init`] and [`ModuleOps::fini`] methods, respectively. Virtual BDevs may also
+//! provide implementations of the [`ModuleOps::examine_config`] and [`ModuleOps::examine_disk`]
+//! methods to examine and claim ownership of, if necessary, other BDev instances as they are
+//! registered with the SPDK BDev subsystem.
+//!
+//! Finally, decorate your module `struct` with the [`spdk::module`] attribute and start using it
+//! from your `rust-spdk` application. The [`ModuleOps::new_bdev_builder`] returns a builder object
+//! that you use to create a new instance of your custom BDev.
+//!
+//! ## Example
+//!
+//! The following example implements a simple BDev that ignores writes and returns zeroed blocks on
+//! read.
+//!
+//! ```no_run
+#![doc = include_str!("../../examples/module_null.rs")]
+//!```
+//!
+//! The [Echo BDev Module] and [PassthruRs Virtual BDev Module] examples demonstrate more complex BDev implementations.
+//!
+//! See [Writing a Custom Block Device Module] for general information about writing a custom
+//! plug-in block device modules for the SPDK.
+//!
+//! [Linux AIO BDev]: crate::bdev::Aio
+//! [Malloc BDev]: crate::bdev::Malloc
+//! [Uring BDev]: crate::bdev::Uring
 //! [Block Device User Guide]: https://spdk.io/doc/bdev.html
 //! [Writing a Custom Block Device Module]: https://spdk.io/doc/bdev_module.html
+//! [`spdk::module`]: crate::module
+//! [Echo BDev Module]: https://github.com/edreed/rust-spdk/blob/main/spdk/examples/module_echo.rs
+//! [PassthruRs Virtual BDev Module]: https://github.com/edreed/rust-spdk/blob/main/spdk/examples/module_passthru.rs
 #![cfg(feature = "bdev")]
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev")))]
 
 mod any;
 mod descriptor;
@@ -107,12 +165,12 @@ pub trait AsRawBDev {
 /// Represents a block device.
 ///
 /// The type `T` determines how the `BDev` manages the underlying `spdk_bdev` lifetime. If `T`
-/// implements [`OwnedOps`] it means that the `BDev` is responsible for managing the lifetime of
-/// the underlying `spdk_bdev`. The [`BDev::destroy()`] method must be used to explicitly destroy
-/// the device when it is no longer needed. `BDev` instances that own the lifetime of the
-/// underlying `spdk_bdev` can be shared with other SPDK threads by reference safely and are
-/// therefore `Sync` as long as `T` is also `Sync`. Since the `BDev::destroy()` method must be
-/// called on the thread on which the block device was created, it is not `Send`.
+/// implements [`OwnedOps`] it means that the `BDev` is responsible for managing the lifetime of the
+/// underlying `spdk_bdev`. The [`BDev::destroy()`] method must be used to explicitly destroy the
+/// device when it is no longer needed. `BDev` instances that own the lifetime of the underlying
+/// `spdk_bdev` can be shared with other SPDK threads by reference safely and are therefore `Sync`
+/// as long as `T` is also `Sync`. Since the `BDev::destroy()` method must be called on the thread
+/// on which the block device was created, it is not `Send`.
 ///
 /// If `T` does not implement [`OwnedOps`] (e.g. [`OwnedBy`] and [`Any`]), the `BDev` does not
 /// manage the lifetime of the underlying `spdk_bdev` and may be shared by reference or by value
@@ -167,8 +225,8 @@ where
 
     /// Opens and claims the block device with the specified claim type and module.
     ///
-    /// If the claim type is [`ReadManyWriteNone`], the returned [`Descriptor`] is read-only. Othwerise,
-    /// it is read-write.
+    /// If the claim type is [`ReadManyWriteNone`], the returned [`Descriptor`] is read-only.
+    /// Othwerise, it is read-write.
     ///
     /// [`ReadManyWriteNone`]: ClaimType::ReadManyWriteNone
     #[cfg(feature = "bdev-module")]
@@ -397,16 +455,15 @@ unsafe impl<O> Send for BDev<OwnedBy<'_, O>> {}
 impl BDev<Any> {
     /// Get a [`BDev`] by its name.
     ///
-    /// A `BDev<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
-    /// It ensures that the underlying `spdk_bdev` remains valid for the lifetime of the
-    /// `BDev<Any>` instance but cannot destroy it. However, a call to [`BDev::destroy()`] by
-    /// another task will be deferred until all `BDev<Any>` instances referencing the same
-    /// `spdk_bdev` are dropped.
+    /// A `BDev<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance. It
+    /// ensures that the underlying `spdk_bdev` remains valid for the lifetime of the `BDev<Any>`
+    /// instance but cannot destroy it. However, a call to [`BDev::destroy()`] by another task will
+    /// be deferred until all `BDev<Any>` instances referencing the same `spdk_bdev` are dropped.
     ///
     /// # Returns
     ///
-    /// This method returns `Ok(dev)` if the device exists and `Err(`[`ENODEV`]`)` if no block device
-    /// with the given name exists. It may return other errors if initialization of the
+    /// This method returns `Ok(dev)` if the device exists and `Err(`[`ENODEV`]`)` if no block
+    /// device with the given name exists. It may return other errors if initialization of the
     /// `BDev<Any>` instance fails. See [`Any`] for details.
     ///
     /// [`ENODEV`]: crate::errors::ENODEV
@@ -416,11 +473,10 @@ impl BDev<Any> {
 
     /// Get a [`BDev`] for a raw `spdk_bdev` pointer.
     ///
-    /// A `BDev<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance.
-    /// It ensures that the underlying `spdk_bdev` remains valid for the lifetime of the
-    /// `BDev<Any>` instance but cannot destroy it. However, a call to [`BDev::destroy()`] by
-    /// another task will be deferred until all `BDev<Any>` instances referencing the same
-    /// `spdk_bdev` are dropped.
+    /// A `BDev<Any>` instance is a non-owning reference to the underlying `spdk_bdev` instance. It
+    /// ensures that the underlying `spdk_bdev` remains valid for the lifetime of the `BDev<Any>`
+    /// instance but cannot destroy it. However, a call to [`BDev::destroy()`] by another task will
+    /// be deferred until all `BDev<Any>` instances referencing the same `spdk_bdev` are dropped.
     ///
     /// # Returns
     ///

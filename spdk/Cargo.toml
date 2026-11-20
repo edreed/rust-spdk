@@ -6,6 +6,8 @@ rust-version = "1.100.0"
 
 [package.metadata.docs.rs]
 all-features = true
+features = ["document-features"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 aquamarine = "0.6.0"
@@ -23,6 +25,7 @@ static_assertions = "1.1.0"
 bitflags = "2.13.2"
 lock_api = "0.5.0"
 event-listener = "5.4.2"
+document-features = "0.2.12"
 
 [dev-dependencies]
 laboratory = "2.0.0"
@@ -32,17 +35,41 @@ comfy-table = "8.0.1"
 
 [features]
 default = []
+
+## Enables basic block device (BDev) support.
 bdev = ["spdk-sys/bdev"]
+
+## Enables support for the Linux AIO BDev.
 bdev-aio = ["bdev", "spdk-sys/bdev-aio"]
+
+## Enables support for the Malloc BDev.
 bdev-malloc = ["bdev", "spdk-sys/bdev-malloc"]
+
+## Enables support for writing custom BDev modules.
 bdev-module = ["bdev", "spdk-macros/bdev-module", "spdk-sys/bdev-module"]
+
+## Enables support for the Uring BDev.
 bdev-uring = ["bdev", "spdk-sys/bdev-uring"]
+
+## Enables support for JSON serialization and deserialization through the SPDK.
 json = ["spdk-sys/json"]
+
+## Enables writing JSON-RPC functions.
 json-rpc = ["json", "spdk-macros/json-rpc", "spdk-sys/json-rpc"]
+
+## Enables SPDK-based network socket support.
 net = ["spdk-sys/net"]
+
+## Enables NVMe.
 nvme = ["spdk-sys/nvme"]
+
+## Enables the `vfio-user` transport for the NVMe-oF target.
 nvme-vfio-user = ["nvme", "spdk-sys/nvme-vfio-user"]
+
+## Enables the NVMe-oF target.
 nvmf = ["bdev", "net", "nvme", "spdk-sys/nvmf"]
+
+## Enables SCSI.
 scsi = ["spdk-sys/scsi"]
 
 [[example]]

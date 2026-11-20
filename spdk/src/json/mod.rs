@@ -1,5 +1,6 @@
 #![cfg(feature = "json")]
-//! JSON serialization and deserialization using the SPDK.
+#![cfg_attr(docsrs, doc(cfg(feature = "json")))]
+//! JSON serialization and deserialization and JSON-RPC support using the SPDK.
 mod rpc;
 mod serde;
 
@@ -8,4 +9,5 @@ pub use serde::{
 };
 
 #[cfg(feature = "json-rpc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json-rpc")))]
 pub use rpc::{Infallible as RpcInfallible, RpcCall, RpcError, rpc_call};

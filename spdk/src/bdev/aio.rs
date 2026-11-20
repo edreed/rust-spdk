@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev-aio")))]
+
 use std::{
     ffi::{CStr, CString},
     mem::transmute,
@@ -23,6 +25,9 @@ use crate::{
 /// A Linux AIO-based BDev providing block layer access to a backing file or block device.
 ///
 /// # Examples
+///
+/// The following example creates a basic `rust-spdk` application that creates an instance of the
+/// [`Aio`] block device and then writes to and reads from it.
 ///
 /// ```no_run
 #[doc = include_str!("../../examples/bdev_aio.rs")]

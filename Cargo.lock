@@ -1113,6 +1113,7 @@ dependencies = [
  "async-fs",
  "bitflags 2.13.2",
  "comfy-table",
+ "document-features",
  "event-listener",
  "futures",
  "itertools 0.15.0",

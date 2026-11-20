@@ -146,10 +146,7 @@ pub fn parser(input: TokenStream) -> TokenStream {
 /// # Usage
 ///
 /// ```no_run
-/// #[spdk::main]
-/// async fn main() {
-///     println!("Hello, World!");
-/// }
+#[doc = include_str!("../../spdk/examples/hello_world.rs")]
 /// ```
 #[proc_macro_attribute]
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -241,6 +238,7 @@ pub fn jsonrpc(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// [`strerror`]: https://www.man7.org/linux/man-pages/man3/strerror.3.html
 #[proc_macro]
+#[doc(hidden)]
 pub fn define_errno(item: TokenStream) -> TokenStream {
     define_errno::DefineErrno::new().generate(item)
 }

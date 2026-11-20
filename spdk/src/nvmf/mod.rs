@@ -1,5 +1,7 @@
 //! Support for the SPDK NVMe over Fabrics (NVMe-oF) target.
 #![cfg(feature = "nvmf")]
+#![cfg_attr(docsrs, doc(cfg(feature = "nvmf")))]
+
 mod host;
 mod namespace;
 mod subsystem;

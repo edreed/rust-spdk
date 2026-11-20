@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, doc(cfg(feature = "bdev-module")))]
+
 use std::{marker::PhantomData, mem::transmute, ptr::NonNull};
 
 use spdk_sys::{spdk_io_channel, spdk_io_channel_get_ctx, spdk_io_channel_get_thread};

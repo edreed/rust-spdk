@@ -1,3 +1,4 @@
+//! A Universally Unique Identifier (UUID) implemented by the SPDK.
 use std::{
     cmp::Ordering,
     ffi::{CStr, CString},

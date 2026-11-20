@@ -1,20 +1,14 @@
+//! # NullRs BVDev Module
+//!
+//! A custom block device module that ignores write requests and returns zeroed blocks for reads.
 use std::io::Write;
 
 use spdk::{
-    bdev::{BDev, IoType, Owned},
-    bdev::{BDevImpl, BDevOps, IoChannelImpl, IoRequest, ModuleOps},
+    bdev::{BDev, BDevImpl, BDevOps, IoChannelImpl, IoRequest, IoType, ModuleOps, Owned},
     dma,
     errors::Errno,
+    thread,
 };
-
-/// Implements the NullRs block device module.
-#[spdk::module(product_name = "Null Disk")]
-#[derive(Debug, Default)]
-struct NullRsModule;
-
-impl ModuleOps for NullRsModule {
-    type BDev = NullRs;
-}
 
 /// Implements the NullRs block device.
 ///
@@ -26,9 +20,12 @@ unsafe impl Send for NullRs {}
 unsafe impl Sync for NullRs {}
 
 impl NullRs {
+    const BLOCK_SIZE: u32 = 4096;
+    const NUM_BLOCKS: u64 = 65536;
+
     /// Creates a new NullRs block device.
     pub async fn new_device() -> spdk::Result<BDev<Owned>> {
-        NullRsModule::new_bdev_builder(c"null-rs", 4096, 1)
+        NullRsModule::new_bdev_builder(c"null-rs", Self::BLOCK_SIZE, Self::NUM_BLOCKS)
             .build()
             .await
     }
@@ -66,20 +63,34 @@ impl BDevOps for NullRs {
     }
 }
 
+/// Implements the NullRs block device module.
+#[spdk::module(product_name = "Null Disk")]
+#[derive(Debug, Default)]
+struct NullRsModule;
+
+impl ModuleOps for NullRsModule {
+    type BDev = NullRs;
+}
+
 /// A program that creates and writes to the NullRs block device.
 #[spdk::main]
 async fn main() {
     let null = NullRs::new_device().await.unwrap();
-    let desc = null.open(true).unwrap();
-    let ch = desc.io_channel().unwrap();
-    let layout = null.layout_for_blocks(1).unwrap();
-    let mut buf = dma::Buffer::new_zeroed(layout).unwrap();
 
-    write!(buf.cursor_mut(), "Hello, World!").unwrap();
+    thread::spawn_local(async {
+        // Open the NullRs block device in a separate asynchronous task to scope the lifetime of
+        // the descriptor and I/O channel. These must be dropped before the NullRs block device can
+        // be destroyed.
+        let desc = null.open(true).unwrap();
+        let ch = desc.io_channel().unwrap();
+        let layout = null.layout_for_blocks(1).unwrap();
+        let mut buf = dma::Buffer::new_zeroed(layout).unwrap();
 
-    ch.write_at(&desc, &buf, 0).await.unwrap();
+        write!(buf.cursor_mut(), "Hello, World!").unwrap();
 
-    drop(ch);
-    drop(desc);
+        ch.write_at(&desc, &buf, 0).await.unwrap();
+    })
+    .await;
+
     null.destroy().await.unwrap();
 }

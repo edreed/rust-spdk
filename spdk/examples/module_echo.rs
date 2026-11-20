@@ -1,3 +1,6 @@
+//! # Echo BDev Module
+//!
+//! A custom block device module that satisfies read requests from a separate write request.
 use std::{
     ffi::CStr,
     io::{BufRead, IoSlice, Write},
@@ -16,25 +19,6 @@ use spdk::{
     task::{self},
     thread,
 };
-
-/// Implements the Echo block device module.
-#[spdk::module]
-#[derive(Debug, Default)]
-struct EchoModule;
-
-impl ModuleOps for EchoModule {
-    type BDev = Echo;
-
-    async fn init(&self) {
-        task::yield_now().await;
-        println!("Echo module initialized.");
-    }
-
-    async fn fini(&self) {
-        task::yield_now().await;
-        println!("Echo module finalized.");
-    }
-}
 
 /// Implements the Echo block device.
 #[derive(Default)]
@@ -153,6 +137,25 @@ impl BDevOps for Echo {
             IoType::Write => this.ctx().do_write(channel, io).await,
             _ => Err(ENOTSUP),
         }
+    }
+}
+
+/// Implements the Echo block device module.
+#[spdk::module]
+#[derive(Debug, Default)]
+struct EchoModule;
+
+impl ModuleOps for EchoModule {
+    type BDev = Echo;
+
+    async fn init(&self) {
+        task::yield_now().await;
+        println!("Echo module initialized.");
+    }
+
+    async fn fini(&self) {
+        task::yield_now().await;
+        println!("Echo module finalized.");
     }
 }
 

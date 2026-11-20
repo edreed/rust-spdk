@@ -4,6 +4,9 @@
 //! This module provides asynchronous networking functionality for the Transmission Control Protocol
 //! using the Storage Performance Development Kit socket library and modules. It also provides
 //! services for converting and resolving socket addresses.
+#![cfg(feature = "net")]
+#![cfg_attr(docsrs, doc(cfg(feature = "net")))]
+
 mod addr;
 mod group;
 mod listener;

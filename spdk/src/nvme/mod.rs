@@ -1,4 +1,6 @@
+//! Support for NVMe features of the Storage Performance Development Kit.
 #![cfg(feature = "nvme")]
+#![cfg_attr(docsrs, doc(cfg(feature = "nvme")))]
 
 mod status;
 mod transport;
