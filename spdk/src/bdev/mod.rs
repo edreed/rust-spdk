@@ -24,7 +24,7 @@
 //! The first step is to define a `struct` representing the context of your custom BDev. Provide the
 //! custom BDev's implementation using the [`BDevOps`] trait. If necessary, you can also provide
 //! channel- and/or I/O-specific contexts by defining a `struct` for each and tying them to your
-//! custom BDev through the [`BDevOps::ChannelContext`] and [`BDevOps::IoContext] associated types,
+//! custom BDev through the [`BDevOps::ChannelContext`] and [`BDevOps::IoContext`] associated types,
 //! respectively. These associated types can be assigned the unit (`()`) type if no additional
 //! context is needed by your custom BDev.
 //!
