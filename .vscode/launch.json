@@ -51,6 +51,29 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'bdev_uring'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=bdev_uring",
+                    "--package=spdk",
+                    "--features=bdev-uring"
+                ],
+                "filter": {
+                    "name": "bdev_uring",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'devices'",
             "cargo": {
                 "args": [

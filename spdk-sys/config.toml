@@ -1,0 +1,3 @@
+[spdk]
+repository = "https://github.com/spdk/spdk.git"
+version = "v26.09"
