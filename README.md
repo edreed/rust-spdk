@@ -216,8 +216,8 @@ async fn main() {
 }
 ```
 
-The [Echo BDev Module] and [PassthruRs Virtual BDev Module] examples
-demonstrate more complex BDev implementations.
+The [Echo BDev Module] and [PassthruRs Virtual BDev Module] examples demonstrate more complex BDev
+implementations.
 
 ## Feature Flags
 
@@ -238,6 +238,57 @@ demonstrate more complex BDev implementations.
 
 Full documentation can be found [here](https://edreed.github.io/doc/rust-spdk/spdk/index.html).
 
+## Usage
+
+Add the following dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+rust-spdk = { git = "https://github.com/edreed/rust-spdk", branch = "main" }
+```
+
+You then need to build and install the SPDK. The script `scripts/setup-devenv.sh` handles installing
+all of the SPDK's dependencies, builds and installs it into the default locations described in the
+following table.
+
+| Description | Environment Override | Default Location                                   |
+|-------------|----------------------|----------------------------------------------------|
+| Sources     | `SPDK_SRC_DIR`       | `/usr/local/src/spdk-${SPDK_VERSION}`              |
+| Libraries   | `SPDK_SHARE_DIR`     | `/usr/local/share/spdk-${SPDK_VERSION}/${PROFILE}` |
+
+`SPDK_VERSION` is the SPDK release version currently supported by `rust-spdk`. Curently, this is
+`v26.09`. `PROFILE` is either `release` or `debug`. The `debug` profile is used if debug information
+is generated during the build. See [Profiles / Profile settings / debug][DBG] in "The Cargo Book"
+for more information on controlling debug information generation.
+
+You can also provide your own copy of the SPDK sources and libraries by specifying paths to them in
+the `SPDK_SRC_DIR` and `SPDK_SHARE_DIR` environment variables when building your application. The
+following example clones the SPDK into `/spdk/src`, and then builds and installs it to
+`/spdk/share`.
+
+```sh
+export SPDK_SRC=/spdk/src
+export SPDK_INSTALL=/spdk/share
+
+# Clone and install the SPDK
+mkdir -p "$SPDK_SRC"
+git clone https://github.com/spdk/spdk.git "$SPDK_SRC$"
+cd "$SPDK_SRC"
+./configure --prefix "$SPDK_INSTALL" --with-uring --with-vfio-user
+make
+make install
+
+# The libvfio-user directory must be manually copied to the install location
+mkdir -p "$SPDK_INSTALL/libvfio-user"
+cp -R build/libvfio-user/usr/share/local/* "$SPDK_INSTALL/libvfio-user"
+```
+
+Build your Rust project with your installation of the SPDK.
+
+```sh
+SPDK_SRC_DIR=/spdk/src SPDK_SHARE_DIR=/spdk/share cargo build
+```
+
 ## License
 
 Licensed under the [MIT license](LICENSE).
@@ -249,6 +300,8 @@ Licensed under the [MIT license](LICENSE).
 [ADEX]: https://github.com/edreed/rust-spdk/tree/main/spdk/examples
 [SPDK]: https://www.spdk.io/doc/about.html
 [Echo BDev Module]: https://github.com/edreed/rust-spdk/blob/main/spdk/examples/module_echo.rs
-[PassthruRs Virtual BDev Module]: https://github.com/edreed/rust-spdk/blob/main/spdk/examples/module_passthru.rs
+[PassthruRs Virtual BDev Module]:
+    https://github.com/edreed/rust-spdk/blob/main/spdk/examples/module_passthru.rs
 [Message Passing and Concurrency]: https://spdk.io/doc/concurrency.html
 [Event Framework]: https://spdk.io/doc/event.html
+[DBG]: https://doc.rust-lang.org/cargo/reference/profiles.html#debug

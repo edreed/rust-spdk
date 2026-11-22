@@ -1,6 +1,8 @@
 use std::{
     env,
-    fs::canonicalize,
+    fmt::Display,
+    fs::File,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -8,18 +10,15 @@ use bindgen::callbacks::{
     IntKind::{self, Custom},
     ParseCallbacks,
 };
-use fs_extra::dir;
 use itertools::Itertools;
-use lazy_regex::regex_replace_all;
+use lazy_regex::{regex_is_match, regex_replace_all};
 use pkg_config::Library;
+use serde::Deserialize;
 use ternary_rs::if_else;
 
-use crate::{
-    AutotoolsOption::{Disable, With},
-    BindgenOption::{
-        AllowFunction, AllowType, AllowVar, BlockType, ConstifiedEnumModule, OpaqueType,
-        RustifiedEnum, RustifiedNonExhaustiveEnum,
-    },
+use crate::BindgenOption::{
+    AllowFunction, AllowType, AllowVar, BlockType, ConstifiedEnumModule, OpaqueType, RustifiedEnum,
+    RustifiedNonExhaustiveEnum,
 };
 
 /// Implements the [`ParseCallbacks`] trait to workaround issues in the [`doxygen_rs`] crate's handling
@@ -76,35 +75,6 @@ impl ParseCallbacks for OverrideCallbacks {
                 is_signed: false,
             }),
             _ => None,
-        }
-    }
-}
-
-/// An enumeration of [`autotools`] configuration options.
-#[allow(dead_code)]
-#[derive(Copy, Clone, Debug)]
-enum AutotoolsOption<'a> {
-    /// Pass `--enable-<opt>[=<optarg>]` to the `configure` script.
-    Enable(&'a str, Option<&'a str>),
-
-    /// Pass `--disable-<opt>[=<optarg>]` to the `configure` script.
-    Disable(&'a str, Option<&'a str>),
-
-    /// Pass `--with-<opt>[=<optarg>]` to the `configure` script.
-    With(&'a str, Option<&'a str>),
-
-    /// Pass `--without-<opt>[=<optarg>]` to the `configure` script.
-    Without(&'a str, Option<&'a str>),
-}
-
-impl AutotoolsOption<'_> {
-    /// Apply this option to the [`autotools::Config`].
-    fn apply(&self, config: &mut autotools::Config) {
-        match self {
-            Self::Enable(opt, optarg) => _ = config.enable(opt, optarg.as_ref()),
-            Self::Disable(opt, optarg) => _ = config.disable(opt, optarg.as_ref()),
-            Self::With(opt, optarg) => _ = config.with(opt, optarg.as_ref()),
-            Self::Without(opt, optarg) => _ = config.with(opt, optarg.as_ref()),
         }
     }
 }
@@ -178,9 +148,6 @@ struct Feature<'a> {
     /// [The Cargo Book / Features / Build scripts]: https://doc.rust-lang.org/cargo/reference/features.html#build-scripts
     name: &'a str,
 
-    /// The [`autotools`] configuration options.
-    autotools_opts: &'a [AutotoolsOption<'a>],
-
     /// The [`pkg_config`] libraries to include in the build output.
     pkgconfigs: &'a [&'a str],
 
@@ -194,7 +161,7 @@ struct Feature<'a> {
     /// The additional paths to search for libraries.
     additional_link_paths: &'a [&'a str],
 
-    /// The additional paths to search for include files.
+    /// The additional paths to search for include files relative to the SPDK source root directory.
     additional_include_paths: &'a [&'a str],
 
     /// The [`bindgen`] configuration options.
@@ -205,7 +172,6 @@ impl<'a> Feature<'a> {
     /// Creates a new [`Feature`] instance.
     const fn new(
         name: &'a str,
-        autotools_opts: &'a [AutotoolsOption<'a>],
         pkgconfigs: &'a [&'a str],
         additional_link_libs: &'a [&'a str],
         additional_link_paths: &'a [&'a str],
@@ -214,7 +180,6 @@ impl<'a> Feature<'a> {
     ) -> Self {
         Self {
             name,
-            autotools_opts,
             pkgconfigs,
             additional_link_libs,
             additional_link_paths,
@@ -234,11 +199,6 @@ impl<'a> Feature<'a> {
     /// Returns whether the feature is enabled.
     fn is_enabled(&self) -> bool {
         env::var_os(self.name).is_some()
-    }
-
-    /// Returns the [`autotools`] configuration options.
-    fn autotools_opts(&self) -> &[AutotoolsOption<'_>] {
-        self.autotools_opts
     }
 
     /// Returns the [`pkg_config`] libraries to include in the build output.
@@ -275,21 +235,14 @@ impl<'a> Feature<'a> {
 const ALL_FEATURES: [Feature; 13] = [
     Feature::new(
         "CARGO_FEATURE_BASE",
-        [
-            Disable("apps", None),
-            Disable("examples", None),
-            Disable("tests", None),
-            Disable("unit-tests", None),
-        ]
-        .as_slice(),
         ["spdk_env_dpdk", "spdk_event", "spdk_syslibs"].as_slice(),
         [
             "cargo:rustc-link-lib=static:+whole-archive,-bundle=isal",
             "cargo:rustc-link-lib=static:+whole-archive,-bundle=isal_crypto",
         ]
         .as_slice(),
-        ["spdk/isa-l/.libs", "spdk/isa-l-crypto/.libs"].as_slice(),
-        ["spdk/include", "spdk/module"].as_slice(),
+        ["/usr/lib64", "libvfio-user/lib"].as_slice(),
+        ["include"].as_slice(),
         [
             AllowFunction("spdk_.*"),
             AllowType("spdk_.*"),
@@ -299,7 +252,6 @@ const ALL_FEATURES: [Feature; 13] = [
     ),
     Feature::new(
         "CARGO_FEATURE_BDEV",
-        [].as_slice(),
         ["spdk_bdev", "spdk_event_bdev"].as_slice(),
         [].as_slice(),
         [].as_slice(),
@@ -315,20 +267,18 @@ const ALL_FEATURES: [Feature; 13] = [
     ),
     Feature::new(
         "CARGO_FEATURE_BDEV_AIO",
-        [].as_slice(),
         ["spdk_bdev_aio"].as_slice(),
         [].as_slice(),
         [].as_slice(),
-        [].as_slice(),
+        ["module"].as_slice(),
         [AllowFunction(r"\w+_aio_\w+")].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_BDEV_MALLOC",
-        [].as_slice(),
         ["spdk_bdev_malloc"].as_slice(),
         [].as_slice(),
         [].as_slice(),
-        [].as_slice(),
+        ["module"].as_slice(),
         [
             AllowFunction(".*_malloc_disk"),
             AllowType("malloc_bdev_opts"),
@@ -342,20 +292,17 @@ const ALL_FEATURES: [Feature; 13] = [
         [].as_slice(),
         [].as_slice(),
         [].as_slice(),
-        [].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_BDEV_URING",
-        [With("uring", None)].as_slice(),
         ["spdk_bdev_uring"].as_slice(),
-        ["cargo:rustc-link-lib=static=uring"].as_slice(),
-        ["/usr/lib64"].as_slice(),
         [].as_slice(),
+        [].as_slice(),
+        ["module"].as_slice(),
         [AllowFunction(r"\w+_uring_\w+"), AllowType(r"\w+_uring_\w+")].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_JSON",
-        [].as_slice(),
         ["spdk_json"].as_slice(),
         [].as_slice(),
         [].as_slice(),
@@ -364,7 +311,6 @@ const ALL_FEATURES: [Feature; 13] = [
     ),
     Feature::new(
         "CARGO_FEATURE_JSON_RPC",
-        [].as_slice(),
         ["spdk_rpc"].as_slice(),
         [].as_slice(),
         [].as_slice(),
@@ -373,7 +319,6 @@ const ALL_FEATURES: [Feature; 13] = [
     ),
     Feature::new(
         "CARGO_FEATURE_NET",
-        [].as_slice(),
         ["spdk_sock", "spdk_event_sock"].as_slice(),
         [].as_slice(),
         [].as_slice(),
@@ -382,7 +327,6 @@ const ALL_FEATURES: [Feature; 13] = [
     ),
     Feature::new(
         "CARGO_FEATURE_NVME",
-        [].as_slice(),
         ["spdk_nvme"].as_slice(),
         [].as_slice(),
         [].as_slice(),
@@ -396,16 +340,14 @@ const ALL_FEATURES: [Feature; 13] = [
     ),
     Feature::new(
         "CARGO_FEATURE_NVME_VFIO_USER",
-        [AutotoolsOption::With("vfio-user", None)].as_slice(),
         ["spdk_vfio_user"].as_slice(),
         ["cargo:rustc-link-lib=static=vfio-user"].as_slice(),
-        ["spdk/build/libvfio-user/usr/local/lib"].as_slice(),
-        ["spdk/build/libvfio-user/usr/local/include"].as_slice(),
+        ["libvfio-user/lib"].as_slice(),
+        [].as_slice(),
         [].as_slice(),
     ),
     Feature::new(
         "CARGO_FEATURE_NVMF",
-        [].as_slice(),
         ["spdk_nvmf", "spdk_event_nvmf"].as_slice(),
         [].as_slice(),
         [].as_slice(),
@@ -419,11 +361,10 @@ const ALL_FEATURES: [Feature; 13] = [
     ),
     Feature::new(
         "CARGO_FEATURE_SCSI",
-        [].as_slice(),
         ["spdk_scsi"].as_slice(),
         [].as_slice(),
         [].as_slice(),
-        [].as_slice(),
+        ["include"].as_slice(),
         [ConstifiedEnumModule(r"spdk_scsi_(asc|ascq|sense|status)")].as_slice(),
     ),
 ];
@@ -444,14 +385,6 @@ impl<'a> Features<'a> {
             .collect();
 
         Self { features }
-    }
-
-    /// Applies the [`autotools`] configuration for enabled features.
-    fn apply_autotools_options(&self, config: &mut autotools::Config) {
-        self.features
-            .iter()
-            .flat_map(|f| f.autotools_opts().iter())
-            .for_each(|f| f.apply(config));
     }
 
     /// Returns the [`pkg_config`] libraries required by the enabled features.
@@ -487,35 +420,33 @@ impl<'a> Features<'a> {
     }
 
     /// Returns additional paths to search for libraries.
-    fn additional_link_paths<P>(&self, out_dir: P, profile: BuildProfile) -> Vec<PathBuf>
+    fn additional_link_paths<P>(&self, spdk_dir: P, _profile: BuildProfile) -> Vec<PathBuf>
     where
         P: AsRef<Path>,
     {
         self.features
             .iter()
             .flat_map(|f| {
-                f.additional_link_paths().iter().copied().map(|p| {
-                    out_dir
-                        .as_ref()
-                        .join(p.replace("${profile}", profile.as_str()))
-                })
+                f.additional_link_paths()
+                    .iter()
+                    .copied()
+                    .map(|p| spdk_dir.as_ref().join(p))
             })
             .collect()
     }
 
     /// Returns additional paths to search for include files.
-    fn additional_include_paths<P>(&self, out_dir: P, profile: BuildProfile) -> Vec<PathBuf>
+    fn additional_include_paths<P>(&self, spdk_src_dir: P, _profile: BuildProfile) -> Vec<PathBuf>
     where
         P: AsRef<Path>,
     {
         self.features
             .iter()
             .flat_map(|f| {
-                f.additional_include_paths().iter().copied().map(|p| {
-                    out_dir
-                        .as_ref()
-                        .join(p.replace("${profile}", profile.as_str()))
-                })
+                f.additional_include_paths()
+                    .iter()
+                    .copied()
+                    .map(|p| spdk_src_dir.as_ref().join(p))
             })
             .collect()
     }
@@ -544,12 +475,47 @@ enum BuildProfile {
     Release,
 }
 
-impl BuildProfile {
-    fn as_str(&self) -> &'static str {
-        match self {
+impl Display for BuildProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             Self::Debug => "debug",
             Self::Release => "release",
-        }
+        };
+
+        f.write_str(s)
+    }
+}
+
+/// The SPDK configuration stored in `${GITROOT}/.config/config.toml`
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct SpdkConfig {
+    repository: String,
+    version: String,
+}
+
+/// The configuration stored in `${GITROOT}/.config/config.toml`
+#[derive(Deserialize)]
+struct Config {
+    spdk: SpdkConfig,
+}
+
+impl Config {
+    /// Creates a new [`Config`] instance from the contents of the `${GITROOT}/.config/config.toml`
+    /// file.
+    fn new() -> Self {
+        let config_path = PathBuf::from(
+            env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by build"),
+        )
+        .join("config.toml");
+        let mut config_file = File::open(&config_path).expect(".config/config.toml present");
+        let mut config = String::new();
+
+        config_file
+            .read_to_string(&mut config)
+            .expect("config read");
+
+        toml::from_str(&config).expect("config contents valid")
     }
 }
 
@@ -558,11 +524,17 @@ struct Builder<'a> {
     /// The features currently enabled for this build.
     features: Features<'a>,
 
-    /// The directory containing SPDK sources.
+    /// The SPDK source directory, e.g. "/usr/local/src/spdk-vXX.XX".
     spdk_src_dir: PathBuf,
+
+    /// The SPDK artifacts directory, e.g. "/usr/local/share/spdk-vXX.XX".
+    spdk_share_dir: PathBuf,
 
     /// The build output directory.
     out_dir: PathBuf,
+
+    /// The path to the inline function wrappers generated by bindgen.
+    spdk_wrappers: PathBuf,
 
     /// The build profile, i.e. "debug" or "release".
     profile: BuildProfile,
@@ -571,49 +543,30 @@ struct Builder<'a> {
 impl Builder<'_> {
     /// Creates a new [`Builder`] instance.
     fn new() -> Self {
+        let config = Config::new();
+
+        let profile = if_else!(
+            env::var("DEBUG").unwrap_or("false".into()).parse().unwrap(),
+            BuildProfile::Debug,
+            BuildProfile::Release
+        );
+        let spdk_src_dir = PathBuf::from(
+            env::var_os("SPDK_SRC_DIR")
+                .unwrap_or_else(|| format!("/usr/local/src/spdk-{}", config.spdk.version).into()),
+        );
+        let spdk_share_dir = PathBuf::from(env::var_os("SPDK_SHARE_DIR").unwrap_or_else(|| {
+            format!("/usr/local/share/spdk-{}/{}", config.spdk.version, profile).into()
+        }));
+        let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("$OUT_DIR set by build"));
+        let spdk_wrappers = out_dir.join("wrappers.c");
+
         Self {
             features: Features::new(ALL_FEATURES.as_slice()),
-            spdk_src_dir: canonicalize("spdk").expect("spdk submodule to be initialized"),
-            out_dir: PathBuf::from(env::var_os("OUT_DIR").expect("$OUT_DIR set by build")),
-            profile: if_else!(
-                env::var("DEBUG").unwrap_or("false".into()).parse().unwrap(),
-                BuildProfile::Debug,
-                BuildProfile::Release
-            ),
-        }
-    }
-
-    /// Builds the SPDK.
-    fn build_spdk(&self) {
-        let spdk_dir = self.out_dir.join("spdk");
-
-        if !spdk_dir.exists() {
-            let copy_options = dir::CopyOptions::new().overwrite(true);
-
-            dir::copy(&self.spdk_src_dir, &self.out_dir, &copy_options)
-                .expect("$OUT_DIR is writeable");
-        }
-
-        let spdk_pkgconfig_dir = spdk_dir.join("build/lib/pkgconfig");
-
-        if !spdk_pkgconfig_dir.exists() {
-            let mut config = autotools::Config::new(spdk_dir);
-
-            config
-                .forbid("--disable-shared")
-                .forbid("--enable-static")
-                .config_option("prefix", Some(""))
-                .insource(true);
-
-            self.features.apply_autotools_options(&mut config);
-
-            if env::var("DEBUG").unwrap_or("false".into()).parse().unwrap() {
-                config.enable("debug", None);
-            } else {
-                config.disable("debug", None);
-            }
-
-            let _dst = config.make_target("all").build();
+            spdk_src_dir,
+            spdk_share_dir,
+            out_dir,
+            spdk_wrappers,
+            profile,
         }
     }
 
@@ -621,7 +574,7 @@ impl Builder<'_> {
     /// the output binary, and returns the include search paths and features defines need to create
     /// the FFI bindings.
     fn emit_dependencies(&self) -> (Vec<PathBuf>, Vec<String>) {
-        let spdk_pkgconfig_dir = self.out_dir.join("spdk/build/lib/pkgconfig");
+        let spdk_pkgconfig_dir = self.spdk_share_dir.join("lib/pkgconfig");
         let old_pkg_config_path = env::var("PKG_CONFIG_PATH").unwrap_or("".into());
 
         unsafe {
@@ -651,7 +604,7 @@ impl Builder<'_> {
             .cloned()
             .chain(
                 self.features
-                    .additional_link_paths(&self.out_dir, self.profile),
+                    .additional_link_paths(&self.spdk_share_dir, self.profile),
             )
             .collect();
 
@@ -666,7 +619,7 @@ impl Builder<'_> {
             .cloned()
             .chain(
                 self.features
-                    .additional_include_paths(&self.out_dir, self.profile),
+                    .additional_include_paths(&self.spdk_src_dir, self.profile),
             )
             .collect();
 
@@ -676,8 +629,12 @@ impl Builder<'_> {
                 library.libs.iter().map(|lib| {
                     let libname = format!("lib{}.a", lib);
 
-                    if library.link_paths.iter().any(|p| p.join(&libname).exists()) {
-                        format!("cargo:rustc-link-lib=static:+whole-archive,-bundle={}", lib)
+                    if link_paths.iter().any(|p| p.join(&libname).exists()) {
+                        if regex_is_match!(r#"lib(rte|spdk)_\w+\.a"#, &libname) {
+                            format!("cargo:rustc-link-lib=static:+whole-archive,-bundle={}", lib)
+                        } else {
+                            format!("cargo:rustc-link-lib=static={}", lib)
+                        }
                     } else {
                         format!("cargo:rustc-link-lib=dylib={}", lib)
                     }
@@ -692,7 +649,6 @@ impl Builder<'_> {
 
     /// Generates the SPDK FFI bindings.
     fn generate_bindings(&self, include_paths: &[PathBuf], defines: &[String]) {
-        let spdk_wrappers = self.out_dir.join("spdk/build/wrappers.c");
         let builder = bindgen::Builder::default()
             .header("wrapper.h")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -705,7 +661,7 @@ impl Builder<'_> {
             )
             .clang_args(defines.iter().map(|d| format!("-D{}", d)))
             .wrap_static_fns(true)
-            .wrap_static_fns_path(&spdk_wrappers)
+            .wrap_static_fns_path(&self.spdk_wrappers)
             .wrap_unsafe_ops(true)
             .prepend_enum_name(false)
             .generate_cstr(true)
@@ -721,11 +677,10 @@ impl Builder<'_> {
 
     /// Builds the macro function wrappers and extra function into the `spdk_extras` library.
     fn build_extras(&self, include_paths: &[PathBuf], defines: &[String]) {
-        let spdk_wrappers = self.out_dir.join("spdk/build/wrappers.c");
         let mut extras = cc::Build::new();
 
-        if spdk_wrappers.exists() {
-            extras.file(spdk_wrappers);
+        if self.spdk_wrappers.exists() {
+            extras.file(&self.spdk_wrappers);
         }
 
         extras
@@ -748,8 +703,6 @@ fn main() {
     println!("cargo:rerun-if-changed=ext.c");
 
     let builder = Builder::new();
-
-    builder.build_spdk();
 
     let (include_paths, defines) = builder.emit_dependencies();
 
