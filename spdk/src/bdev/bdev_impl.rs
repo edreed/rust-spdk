@@ -18,7 +18,10 @@ use spdk_sys::{
 
 use crate::{
     Result, Uuid,
-    bdev::{AsRawBDev, BDev, DifCheckFlag, DifPiFormat, DifType, IoError, IoType, Owned, OwnedOps},
+    bdev::{
+        AsRawBDev, BDev, DifCheckFlag, DifPiFormat, DifType, IoError, IoType, Owned, OwnedBy,
+        OwnedOps,
+    },
     errors::Errno,
     thread::{self, Promise, Promissory},
     to_result,
@@ -180,6 +183,12 @@ where
                 Poll::Pending
             })
             .await
+    }
+
+    /// Borrows this BDev implementation as a [`BDev`] object that is owned by the implementation.
+    pub fn as_bdev(&self) -> BDev<OwnedBy<'_, Self>> {
+        // SAFETY: A BDev implementation logically owns itself.
+        unsafe { BDev::with_owner(self, addr_of!(self.bdev) as *mut _) }
     }
 
     /// Consumes the boxed instance and returns a [`BDev<Owned>`] instance that owns the BDev.
@@ -365,6 +374,8 @@ where
     physical_block_size: u32,
     buffer_alignment: u8,
     optimal_io_boundary: u32,
+    split_on_write_unit: bool,
+    split_on_optimal_io_boundary: bool,
     metadata_size: Option<u32>,
     is_metadata_interleaved: bool,
     dif_type: DifType,
@@ -398,6 +409,8 @@ where
             physical_block_size: 0,
             buffer_alignment: 0,
             optimal_io_boundary: 0,
+            split_on_write_unit: false,
+            split_on_optimal_io_boundary: false,
             metadata_size: None,
             is_metadata_interleaved: false,
             dif_type: DifType::Disabled,
@@ -437,6 +450,10 @@ where
         bdev.phys_blocklen = self.physical_block_size;
         bdev.required_alignment = self.buffer_alignment;
         bdev.optimal_io_boundary = self.optimal_io_boundary;
+        bdev.__bindgen_anon_1
+            .set_split_on_write_unit(self.split_on_write_unit as u32);
+        bdev.__bindgen_anon_1
+            .set_split_on_optimal_io_boundary(self.split_on_optimal_io_boundary as u32);
         bdev.md_len = self.metadata_size.unwrap_or(0);
         bdev.__bindgen_anon_1
             .set_md_interleave(self.is_metadata_interleaved as u32);
@@ -489,6 +506,16 @@ where
     /// If not explicitly specified, no boundary is assumed.
     pub fn with_optimal_io_boundary(mut self, boundary: u32) -> Self {
         self.optimal_io_boundary = boundary;
+        self
+    }
+
+    pub fn with_split_on_write_unit(mut self, split: bool) -> Self {
+        self.split_on_write_unit = split;
+        self
+    }
+
+    pub fn with_split_on_optimal_io_bounary(mut self, split: bool) -> Self {
+        self.split_on_optimal_io_boundary = split;
         self
     }
 

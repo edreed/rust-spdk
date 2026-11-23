@@ -167,6 +167,29 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'module_raid5'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=module_raid5",
+                    "--package=spdk",
+                    "--features=bdev-malloc,bdev-module,json-rpc"
+                ],
+                "filter": {
+                    "name": "module_raid5",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                "--iova-mode=va",
+                "--huge-dir=/mnt/hugepages",
+                "--logflag=all"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug example 'nvmf'",
             "cargo": {
                 "args": [

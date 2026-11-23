@@ -23,6 +23,8 @@ mod promise;
 mod thread_cell;
 mod unowned;
 
+#[cfg(feature = "bdev")]
+use std::mem::transmute;
 use std::{
     ffi::{CStr, c_void},
     fmt::{self, Debug, Formatter},
@@ -216,7 +218,7 @@ where
     ///
     /// The indirection of `fut_gen` instead of receiving a `Future` directly allows for futures
     /// that may not be `Send` once started.
-    pub fn spawn<'a, G, F, R>(&'a self, fut_gen: G) -> JoinHandle<'a, F, R>
+    pub fn spawn<'a, G, F, R>(&self, fut_gen: G) -> JoinHandle<'a, F, R>
     where
         G: FnOnce() -> F + Send + 'a,
         F: Future<Output = R> + 'a,
@@ -270,8 +272,30 @@ impl Thread<Owned> {
 
 #[cfg(feature = "bdev")]
 impl<'a, T> Thread<OwnedBy<'a, T>> {
-    pub(crate) unsafe fn with_owner(owner: &'a T, thread: *mut spdk_thread) -> Self {
-        Self(unsafe { OwnedBy::with_owner(owner, thread) })
+    /// Creates a `Thread<OwnedBy<'a, T>>` instance for the given owner and its thread.
+    ///
+    /// The lifetime of the returned [`Thread`] is tied to the lifetime of its owner, effectively
+    /// allowing a borrow by value.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the `Thread` instance passed to this function and ensure the thread
+    /// outlives the returned instance.
+    pub unsafe fn with_owner(owner: &'a T, thread: &Thread<Owned>) -> Self {
+        unsafe { transmute(OwnedBy::with_owner(owner, thread.as_ptr())) }
+    }
+
+    /// Creates a `Thread<OwnedBy<'a, T>>` instance for the given owner and its thread.
+    ///
+    /// The lifetime of the returned [`Thread`] is tied to the lifetime of its owner, effectively
+    /// allowing a borrow by value.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the raw `spdk_thread` pointer passed to this function and ensure the
+    /// thread outlives the returned instance.
+    pub(crate) unsafe fn with_owner_from_raw(owner: &'a T, thread: *mut spdk_thread) -> Self {
+        unsafe { transmute(OwnedBy::with_owner(owner, thread)) }
     }
 }
 

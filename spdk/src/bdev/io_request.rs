@@ -104,7 +104,7 @@ where
     pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
         // SAFETY: The thread associated with the I/O request is guaranteed to be non-null and
         // valid for the lifetime of the I/O request.
-        unsafe { Thread::with_owner(self, spdk_bdev_io_get_thread(self.as_ptr())) }
+        unsafe { Thread::with_owner_from_raw(self, spdk_bdev_io_get_thread(self.as_ptr())) }
     }
 
     /// Returns the block device associated with the I/O request.

@@ -14,6 +14,9 @@ pub struct RawSpinLock {
     spinlock: OnceLock<Box<spdk_spinlock>>,
 }
 
+unsafe impl Send for RawSpinLock {}
+unsafe impl Sync for RawSpinLock {}
+
 impl RawSpinLock {
     /// Creates a new [`RawSpinLock`] instance.
     pub const fn new() -> Self {

@@ -101,6 +101,10 @@ name = "module_passthru"
 required-features = ["bdev-malloc", "bdev-module"]
 
 [[example]]
+name = "module_raid5"
+required-features = ["bdev-malloc", "bdev-module", "json-rpc"]
+
+[[example]]
 name = "net_group"
 required-features = ["net"]
 

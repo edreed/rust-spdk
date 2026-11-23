@@ -304,7 +304,7 @@ impl PassthruRs<'_> {
             let desc = base.claim(
                 ClaimType::ReadManyWriteOne(&name),
                 PassthruRsModule::instance(),
-                &passthru,
+                &*passthru,
             )?;
 
             passthru.desc.set(desc).map_err(|_| EINVAL)?;

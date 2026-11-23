@@ -57,6 +57,8 @@ impl<T> IoChannelImpl<T> {
     pub fn thread(&self) -> Thread<thread::OwnedBy<'_, Self>> {
         // SAFETY: The thread associated with the I/O channel is guaranteed to be non-null and
         // valid for the lifetime of the I/O channel.
-        unsafe { Thread::with_owner(self, spdk_io_channel_get_thread(self.channel.as_ptr())) }
+        unsafe {
+            Thread::with_owner_from_raw(self, spdk_io_channel_get_thread(self.channel.as_ptr()))
+        }
     }
 }

@@ -78,6 +78,7 @@ use std::{
     alloc::{Layout, LayoutError},
     ffi::CStr,
     fmt::{self, Debug, Formatter},
+    mem::transmute,
 };
 
 use spdk_sys::{
@@ -444,7 +445,9 @@ impl<'a, O> BDev<OwnedBy<'a, O>> {
     /// [`IoRequest`]: crate::bdev::IoRequest
     /// [`IoChannel`]: crate::bdev::IoChannel
     pub(crate) unsafe fn with_owner(_owner: &'a O, bdev: *mut spdk_bdev) -> BDev<OwnedBy<'a, O>> {
-        BDev::<OwnedBy<'a, O>>(unsafe { OwnedBy::new_unchecked(bdev) })
+        // SAFETY: Caller must ensure that `bdev` is non-null and valid, and `BDev<T>` is a
+        // transparent wrapper around `OwnedBy::<'a, O>`.
+        unsafe { transmute(OwnedBy::<'a, O>::new_unchecked(bdev)) }
     }
 }
 
