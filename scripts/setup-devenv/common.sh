@@ -11,6 +11,7 @@ install_spdk_profile() {
         --disable-examples \
         --disable-tests \
         --disable-unit-tests \
+        --with-ublk \
         --with-uring \
         --with-vfio-user \
         --without-shared \

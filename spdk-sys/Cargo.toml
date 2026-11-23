@@ -33,6 +33,7 @@ nvme = ["base", "bdev"]
 nvme-vfio-user = ["base", "nvme"]
 nvmf = ["base", "bdev"]
 scsi = ["base", "bdev"]
+ublk = ["base", "bdev"]
 
 [dependencies]
 bitfields = "3.2.4"

@@ -72,6 +72,9 @@ nvmf = ["bdev", "net", "nvme", "spdk-sys/nvmf"]
 ## Enables SCSI.
 scsi = ["spdk-sys/scsi"]
 
+## Enables the ublk target.
+ublk = ["spdk-sys/ublk"]
+
 [[example]]
 name = "bdev_aio"
 required-features = ["bdev-aio"]

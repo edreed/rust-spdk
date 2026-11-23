@@ -232,7 +232,7 @@ impl<'a> Feature<'a> {
 }
 
 /// An array of all features supported by the `spdk-sys` crate.
-const ALL_FEATURES: [Feature; 13] = [
+const ALL_FEATURES: [Feature; 14] = [
     Feature::new(
         "CARGO_FEATURE_BASE",
         ["spdk_env_dpdk", "spdk_event", "spdk_syslibs"].as_slice(),
@@ -366,6 +366,14 @@ const ALL_FEATURES: [Feature; 13] = [
         [].as_slice(),
         ["include"].as_slice(),
         [ConstifiedEnumModule(r"spdk_scsi_(asc|ascq|sense|status)")].as_slice(),
+    ),
+    Feature::new(
+        "CARGO_FEATURE_UBLK",
+        ["spdk_event_ublk", "spdk_ublk"].as_slice(),
+        [].as_slice(),
+        [].as_slice(),
+        ["include"].as_slice(),
+        [].as_slice(),
     ),
 ];
 
