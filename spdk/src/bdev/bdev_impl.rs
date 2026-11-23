@@ -111,6 +111,7 @@ where
 ///
 /// The type parameter `T` is a user-defined type that provides the BDev I/O request processing
 /// implementation.
+#[repr(C)]
 pub struct BDevImpl<T>
 where
     T: BDevOps,
