@@ -8,6 +8,12 @@ print_banner() {
     echo "=============================================================================="
 }
 
+print_banner_minor() {
+    echo "------------------------------------------------------------------------------"
+    echo "$*"
+    echo "------------------------------------------------------------------------------"
+}
+
 run_example() {
     local EXAMPLE="$1"
     shift
@@ -17,6 +23,36 @@ run_example() {
     print_banner "Example ${EXAMPLE} completed successfully"
     echo
 }
+
+verify_jsonrpc() {
+    local JSONRPC="${GITROOT}/target/debug/examples/jsonrpc"
+
+    print_banner_minor 'Building "jsonrpc" application'
+    cargo build --example jsonrpc --features=json-rpc
+
+    print_banner_minor 'Starting "jsonrpc" application'
+    "$JSONRPC" "${COMMON_ARGS[@]}" &
+
+    sleep 1
+
+    print_banner_minor 'Calling "hello_world" RPC function'
+    "$SPDKRPC" hello_world
+
+    print_banner_minor 'Calling "print_message" RPC function'
+    "$SPDKRPC" print_message "Hello, There!"
+
+    print_banner_minor 'Calling "add_two" RPC function'
+    "$SPDKRPC" add_two 41 1
+
+    print_banner_minor 'Calling "guess_number" RPC function'
+    "$SPDKRPC" guess_number 5
+
+    print_banner_minor 'Stopping "jsonrpc" application'
+    "$SPDKRPC" spdk_kill_instance SIGINT
+}
+
+GITROOT="$(git rev-parse --show-toplevel)"
+SPDKRPC="${GITROOT}/scripts/spdk_rpc.sh"
 
 COMMON_ARGS=("--iova-mode=va" "--huge-dir=/mnt/hugepages")
 
@@ -36,3 +72,5 @@ run_example reactor -- "${COMMON_ARGS[@]}"
 run_example runtime -- "${COMMON_ARGS[@]}"
 run_example sleep -- "${COMMON_ARGS[@]}"
 run_example thread -- "${COMMON_ARGS[@]}"
+
+verify_jsonrpc
