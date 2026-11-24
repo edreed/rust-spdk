@@ -16,7 +16,13 @@ fi
 
 # Install the toml-cli tool if not already installed.
 if [[ -z "$(command -v toml)" ]]; then
-    cargo install toml
+    cargo install toml-cli
+fi
+
+# Install UV if not already installed
+if [[ -z "$(command -v uv)" ]]; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    source "${HOME}/.profile"
 fi
 
 # The remainder of this script must be run as root.
