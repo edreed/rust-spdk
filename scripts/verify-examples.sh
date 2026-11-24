@@ -36,19 +36,19 @@ verify_jsonrpc() {
     sleep 1
 
     print_banner_minor 'Calling "hello_world" RPC function'
-    "$SPDKRPC" hello_world
+    "$SPDKRPC" --plugin jsonrpc_plugin hello_world
 
     print_banner_minor 'Calling "print_message" RPC function'
-    "$SPDKRPC" print_message "Hello, There!"
+    "$SPDKRPC" --plugin jsonrpc_plugin print_message "Hello, There!"
 
     print_banner_minor 'Calling "add_two" RPC function'
-    "$SPDKRPC" add_two 41 1
+    "$SPDKRPC" --plugin jsonrpc_plugin add_two 41 1
 
     print_banner_minor 'Calling "guess_number" RPC function'
-    "$SPDKRPC" guess_number 5
+    "$SPDKRPC" --plugin jsonrpc_plugin guess_number 5
 
     print_banner_minor 'Stopping "jsonrpc" application'
-    "$SPDKRPC" spdk_kill_instance SIGINT
+    "$SPDKRPC" --plugin jsonrpc_plugin spdk_kill_instance SIGINT
 }
 
 GITROOT="$(git rev-parse --show-toplevel)"
