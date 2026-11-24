@@ -37,11 +37,6 @@ install_spdk_profile() {
 
 GITROOT="$(git rev-parse --show-toplevel)"
 
-# Install UV if not already installed
-if [[ -z "$(command -v uv)" ]]; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-fi
-
 # Clone the SPDK repo at the supported version, install dependencies, build and install it.
 SPDK_REPO="$(toml get --raw "${GITROOT}/spdk-sys/config.toml" spdk.repository)"
 SPDK_VERSION="$(toml get --raw "${GITROOT}/spdk-sys/config.toml" spdk.version)"
