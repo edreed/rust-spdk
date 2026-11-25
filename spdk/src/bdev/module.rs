@@ -70,7 +70,7 @@ where
 /// A trait defining BDev module operations.
 pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
     /// The BDev type implemented by the module.
-    type BDev: BDevOps;
+    type BDev<'bdev>: BDevOps;
 
     /// Initializes the module.
     fn init(&self) -> impl Future<Output = ()> {
@@ -114,11 +114,11 @@ pub trait ModuleOps: ModuleInstance<Self> + Default + 'static {
     }
 
     /// Creates a new [`BDevImplBuilder`] to build a new `BDev` instance managed by this module.
-    fn new_bdev_builder<'a>(
+    fn new_bdev_builder<'a, 'bdev>(
         name: &'a CStr,
         block_size: u32,
         num_blocks: u64,
-    ) -> BDevImplBuilder<'a, Self::BDev, Self> {
+    ) -> BDevImplBuilder<'a, Self::BDev<'bdev>, Self> {
         BDevImplBuilder::new(Self::instance(), name, block_size, num_blocks)
     }
 }

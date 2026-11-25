@@ -69,7 +69,7 @@ impl BDevOps for NullRs {
 struct NullRsModule;
 
 impl ModuleOps for NullRsModule {
-    type BDev = NullRs;
+    type BDev<'bdev> = NullRs;
 }
 
 /// A program that creates and writes to the NullRs block device.

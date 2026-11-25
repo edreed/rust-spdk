@@ -21,7 +21,7 @@ use super::{Executor, RawJoinHandleVTable, ResultState, TaskBase};
 /// Framework.
 pub(crate) trait ArcTask: TaskBase {
     /// The type of value produced by the task when it completes.
-    type Output: Send + 'static;
+    type Output: Send;
 
     /// Schedules a task for execution on its target, consuming the task in the process.
     fn schedule(arc_self: Arc<Self>) {
@@ -139,7 +139,7 @@ pub(crate) struct RemoteTask<'a, E, F, R>
 where
     E: Executor + 'static,
     F: Future<Output = R> + 'a,
-    R: Send + 'static,
+    R: Send + 'a,
 {
     executor: E,
     result: Mutex<ResultState<R>>,
@@ -151,7 +151,7 @@ unsafe impl<'a, E, F, R> Send for RemoteTask<'a, E, F, R>
 where
     E: Executor + 'static,
     F: Future<Output = R> + 'a,
-    R: Send + 'static,
+    R: Send + 'a,
 {
 }
 
@@ -159,7 +159,7 @@ impl<'a, E, F, R> RemoteTask<'a, E, F, R>
 where
     E: Executor + 'static,
     F: Future<Output = R> + 'a,
-    R: Send + 'static,
+    R: Send + 'a,
 {
     /// Constructs a new `RemoteTask` from a [`Future`] to be scheduled on the specified [`Executor`].
     pub(crate) fn new(executor: E, fut: F) -> Arc<Self> {
@@ -175,7 +175,7 @@ where
 impl<'a, F, R> TaskBase for RemoteTask<'a, Reactor, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: Send + 'static,
+    R: Send + 'a,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor
@@ -186,7 +186,7 @@ impl<'a, T, F, R> TaskBase for RemoteTask<'a, Thread<T>, F, R>
 where
     T: AsRawThread,
     F: Future<Output = R> + 'a,
-    R: Send + 'static,
+    R: Send + 'a,
 {
     fn executor(&self) -> impl Executor + 'static {
         // SAFETY: The scheduling implementation only uses the returned owned thread instance for
@@ -198,8 +198,8 @@ where
 impl<'a, E, F, R> ArcTask for RemoteTask<'a, E, F, R>
 where
     E: Executor + 'static,
-    R: Send + 'static,
     F: Future<Output = R> + 'a,
+    R: Send + 'a,
     RemoteTask<'a, E, F, R>: TaskBase,
 {
     type Output = R;

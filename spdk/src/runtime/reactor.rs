@@ -148,7 +148,7 @@ impl Reactor {
     where
         G: FnOnce() -> F + Send + 'a,
         F: Future<Output = R> + 'a,
-        R: Send + 'static,
+        R: Send + 'a,
     {
         let task = RemoteTask::new(*self, fut_gen());
 
@@ -164,9 +164,9 @@ impl Reactor {
     /// that may not be `Send` once started.
     pub fn spawn_detached<G, F, R>(&self, fut_gen: G)
     where
-        G: FnOnce() -> F + Send + 'static,
-        F: Future<Output = R> + 'static,
-        R: Send + 'static,
+        G: FnOnce() -> F + Send,
+        F: Future<Output = R>,
+        R: Send,
     {
         let task = RemoteTask::new(*self, fut_gen());
 
@@ -192,7 +192,7 @@ impl Executor for Reactor {
 pub fn spawn_local<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     let task = LocalTask::new(Reactor::current(), fut);
 
@@ -205,7 +205,7 @@ where
 /// completion independently of the current task.
 pub fn spawn_local_detached<F, R>(fut: F)
 where
-    F: Future<Output = R> + 'static,
+    F: Future<Output = R>,
     R: 'static,
 {
     let task = LocalTask::new(Reactor::current(), fut);

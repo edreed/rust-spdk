@@ -220,7 +220,7 @@ where
     where
         G: FnOnce() -> F + Send + 'a,
         F: Future<Output = R> + 'a,
-        R: Send + 'static,
+        R: Send + 'a,
     {
         // SAFETY: Once scheduled, the task will only be accessed on the SPDK thread, ensuring that
         // the unowned reference remains valid.
@@ -244,8 +244,8 @@ where
     /// detached task coordinating by other means.
     pub unsafe fn spawn_detached<G, F, R>(&self, fut_gen: G)
     where
-        G: FnOnce() -> F + Send + 'static,
-        F: Future<Output = R> + 'static,
+        G: FnOnce() -> F + Send,
+        F: Future<Output = R>,
         R: Send + 'static,
     {
         // SAFETY: Once scheduled, the task will only be accessed on the SPDK thread, ensuring that
@@ -327,9 +327,10 @@ pub fn is_application() -> bool {
 ///
 /// If the current system thread is an SPDK thread, this function returns `Ok` with the result of
 /// the function object. Otherwise, it returns `Err(EINVAL)`.
-pub fn try_with_current<F, R>(f: F) -> Result<R>
+pub fn try_with_current<'a, F, R>(f: F) -> Result<R>
 where
-    F: FnOnce(&Thread<Unowned>) -> R,
+    F: FnOnce(&Thread<Unowned>) -> R + 'a,
+    R: 'a,
 {
     // SAFTEY: The `Thread` instance is passed as a shared reference to the function object.
     unsafe { Unowned::new(spdk_get_thread()) }
@@ -343,9 +344,10 @@ where
 /// # Panics
 ///
 /// This function panics if the current system thread is not an SPDK thread.
-pub fn with_current<F, R>(f: F) -> R
+pub fn with_current<'a, F, R>(f: F) -> R
 where
-    F: FnOnce(&Thread<Unowned>) -> R,
+    F: FnOnce(&Thread<Unowned>) -> R + 'a,
+    R: 'a,
 {
     try_with_current(f).expect("called on SPDK thread")
 }
@@ -359,7 +361,7 @@ pub fn spawn<'a, G, F, R>(name: &CStr, cpuset: &CpuSet, fut_gen: G) -> Result<Jo
 where
     G: FnOnce() -> F + Send + 'a,
     F: Future<Output = R> + 'a,
-    R: Send + 'static,
+    R: Send + 'a,
 {
     let thread = Thread::new(name, cpuset)?;
     let fut = fut_gen();
@@ -382,8 +384,8 @@ where
 /// that may not be `Send` once started.
 pub fn spawn_detached<G, F, R>(name: &CStr, cpuset: &CpuSet, fut_gen: G) -> Result<()>
 where
-    G: FnOnce() -> F + Send + 'static,
-    F: Future<Output = R> + 'static,
+    G: FnOnce() -> F + Send,
+    F: Future<Output = R>,
     R: Send + 'static,
 {
     let thread = Thread::new(name, cpuset)?;
@@ -406,7 +408,7 @@ where
 pub fn spawn_local<'a, F, R>(fut: F) -> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     with_current(|current| {
         // SAFETY: `JoinHandle` is `must_use` to ensure that the current thread remains valid for the
@@ -429,7 +431,7 @@ where
 /// coordinating by other means.
 pub unsafe fn spawn_local_detached<F, R>(fut: F)
 where
-    F: Future<Output = R> + 'static,
+    F: Future<Output = R>,
     R: 'static,
 {
     with_current(|current| {
