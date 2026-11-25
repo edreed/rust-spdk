@@ -133,7 +133,7 @@ impl PassthruRsModule {
 }
 
 impl ModuleOps for PassthruRsModule {
-    type BDev = PassthruRs<'static>;
+    type BDev<'bdev> = PassthruRs<'bdev>;
 
     async fn examine_disk<'a>(&self, bdev: BDev<bdev::OwnedBy<'a, Examiner<Self>>>) {
         // The following delay works around a race condition with the lvol VBDev. It opens a

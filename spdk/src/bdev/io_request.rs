@@ -44,7 +44,7 @@ type AllocateBuffersPromissory<'a, T> = Promissory<(), IoError, PhantomData<&'a 
 #[derive(Default)]
 pub(super) struct IoRequestCtx<'a, T>
 where
-    T: Default + 'static,
+    T: Default,
 {
     buf_promissory: Option<Weak<AllocateBuffersPromissory<'a, T>>>,
     inner: T,
@@ -56,7 +56,7 @@ where
 #[repr(transparent)]
 pub struct IoRequest<T>
 where
-    T: Default + 'static,
+    T: Default,
 {
     io: NonNull<spdk_bdev_io>,
     _ctx: PhantomData<T>,
@@ -64,7 +64,7 @@ where
 
 impl<T> IoRequest<T>
 where
-    T: Default + 'static,
+    T: Default,
 {
     /// Initializes a newly submitted I/O request.
     ///

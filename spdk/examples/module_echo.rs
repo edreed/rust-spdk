@@ -146,7 +146,7 @@ impl BDevOps for Echo {
 struct EchoModule;
 
 impl ModuleOps for EchoModule {
-    type BDev = Echo;
+    type BDev<'bdev> = Echo;
 
     async fn init(&self) {
         task::yield_now().await;

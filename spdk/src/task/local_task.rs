@@ -20,7 +20,7 @@ use super::{Executor, RawJoinHandleVTable, ResultState, TaskBase};
 /// A way of scheduling and executing an asynchronous task on the current executor in the SPDK Event
 /// Framework.
 pub(crate) trait RcTask: TaskBase {
-    type Output: 'static;
+    type Output;
 
     /// Schedules a task for execution on its target, consuming the task in the process.
     fn schedule(rc_self: Rc<Self>) {
@@ -145,7 +145,7 @@ pub(crate) struct LocalTask<'a, E, F, T>
 where
     E: Executor + 'static,
     F: Future<Output = T> + 'a,
-    T: 'static,
+    T: 'a,
 {
     executor: E,
     result: RefCell<ResultState<T>>,
@@ -157,7 +157,7 @@ unsafe impl<'a, E, F, T> Send for LocalTask<'a, E, F, T>
 where
     E: Executor + 'static,
     F: Future<Output = T> + 'a,
-    T: 'static,
+    T: 'a,
 {
 }
 
@@ -165,7 +165,7 @@ impl<'a, E, F, R> LocalTask<'a, E, F, R>
 where
     E: Executor + 'static,
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     /// Constructs a new `LocalTask` from a [`Future`] to be scheduled on the specified [`Executor`].
     pub(crate) fn new(executor: E, fut: F) -> Rc<Self> {
@@ -181,7 +181,7 @@ where
 impl<'a, F, R> TaskBase for LocalTask<'a, Reactor, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     fn executor(&self) -> impl Executor + 'static {
         self.executor
@@ -192,7 +192,7 @@ impl<'a, T, F, R> TaskBase for LocalTask<'a, Thread<T>, F, R>
 where
     T: AsRawThread,
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     fn executor(&self) -> impl Executor + 'static {
         // SAFETY: The scheduling implementation only uses the returned owned thread instance for
@@ -204,8 +204,8 @@ where
 impl<'a, E, F, R> RcTask for LocalTask<'a, E, F, R>
 where
     E: Executor + 'static,
-    R: 'static,
     F: Future<Output = R> + 'a,
+    R: 'a,
     LocalTask<'a, E, F, R>: TaskBase,
 {
     type Output = R;

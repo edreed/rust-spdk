@@ -59,10 +59,7 @@ pub trait BDevOps: Send + Sync {
     fn new_io_channel(&mut self) -> Result<Self::ChannelContext>;
 
     /// Returns the size in bytes of the per-I/O context.
-    fn get_io_context_size() -> usize
-    where
-        <Self as BDevOps>::IoContext: 'static,
-    {
+    fn get_io_context_size() -> usize {
         size_of::<IoRequestCtx<Self::IoContext>>()
     }
 
@@ -292,11 +289,7 @@ where
     /// # Panics
     ///
     /// This method panics on debug builds if not called on the thread associated with the I/O.
-    unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io)
-    where
-        <T as BDevOps>::IoContext: 'static,
-        <T as BDevOps>::ChannelContext: 'static,
-    {
+    unsafe extern "C" fn submit_request(io_channel: *mut spdk_io_channel, io: *mut spdk_bdev_io) {
         // SAFETY: Both the `io_channel` and `io` pointers are guaranteed to be non-null and valid
         // for the lifetime of the I/O request.
         let io_channel = unsafe { IoChannelImpl::from_raw_unchecked(io_channel) };
@@ -324,11 +317,7 @@ where
             .map_or(ptr::null_mut(), |channel| channel.into_raw())
     }
 
-    fn vtable() -> &'static spdk_bdev_fn_table
-    where
-        <T as BDevOps>::IoContext: 'static,
-        <T as BDevOps>::ChannelContext: 'static,
-    {
+    fn vtable() -> &'static spdk_bdev_fn_table {
         &spdk_bdev_fn_table {
             io_type_supported: Some(Self::io_type_supported),
             submit_request: Some(Self::submit_request),
@@ -431,11 +420,7 @@ where
     /// this point, so dereferecing it results in **undefined behavior**. This method simply stores
     /// the pointer value in the `spdk_bdev`'s `ctxt` field. The caller must ensure that the context
     /// is properly initialized before this field can be deferenced.
-    unsafe fn init_bdev(&self, bdev: &mut spdk_bdev, ctx: *mut c_void)
-    where
-        <C as BDevOps>::IoContext: 'static,
-        <C as BDevOps>::ChannelContext: 'static,
-    {
+    unsafe fn init_bdev(&self, bdev: &mut spdk_bdev, ctx: *mut c_void) {
         bdev.ctxt = ctx;
         bdev.name = self.name.to_owned().into_raw();
 
@@ -617,11 +602,7 @@ where
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the context initialized to default values.
-    pub async fn build(self) -> Result<BDev<Owned>>
-    where
-        <C as BDevOps>::IoContext: 'static,
-        <C as BDevOps>::ChannelContext: 'static,
-    {
+    pub async fn build(self) -> Result<BDev<Owned>> {
         let mut bdev = Box::new(BDevImpl {
             bdev: unsafe { mem::zeroed() },
             ctx: C::default(),
@@ -643,11 +624,7 @@ where
     M: ModuleOps,
 {
     /// Builds and registers a new `BDev` instance with the specified context.
-    pub async fn build_with_context(self, ctx: C) -> Result<BDev<Owned>>
-    where
-        <C as BDevOps>::IoContext: 'static,
-        <C as BDevOps>::ChannelContext: 'static,
-    {
+    pub async fn build_with_context(self, ctx: C) -> Result<BDev<Owned>> {
         let mut bdev = Box::new(BDevImpl {
             bdev: unsafe { mem::zeroed() },
             ctx,
@@ -672,9 +649,7 @@ where
     /// specified initialization function.
     pub async fn build_with_context_in_place<I>(self, init_fn: I) -> Result<BDev<Owned>>
     where
-        I: AsyncFnOnce(Pin<&mut MaybeUninit<C>>) -> Result<()>,
-        <C as BDevOps>::IoContext: 'static,
-        <C as BDevOps>::ChannelContext: 'static,
+        I: AsyncFnOnce(Pin<&mut MaybeUninit<C>>) -> Result<()> + 'a,
     {
         let mut bdev = Box::new(BDevImpl {
             bdev: unsafe { mem::zeroed() },
