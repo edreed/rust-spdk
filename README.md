@@ -125,10 +125,10 @@ read.
 use std::io::Write;
 
 use spdk::{
-   bdev::{BDev, BDevImpl, BDevOps, IoChannelImpl, IoRequest, IoType, ModuleOps, Owned},
-   dma,
-   errors::Errno,
-   thread,
+    bdev::{BDev, BDevImpl, BDevOps, IoChannelImpl, IoRequest, IoType, ModuleOps, Owned},
+    dma,
+    errors::Errno,
+    thread,
 };
 
 /// Implements the NullRs block device.
@@ -153,35 +153,35 @@ impl NullRs {
 }
 
 impl BDevOps for NullRs {
-   type ChannelContext = ();
-   type IoContext = ();
-   type IoError = Errno;
+    type ChannelContext = ();
+    type IoContext = ();
+    type IoError = Errno;
 
-   async fn destruct(&mut self) -> spdk::Result<()> {
-       Ok(())
-   }
+    async fn destruct(&mut self) -> spdk::Result<()> {
+        Ok(())
+    }
 
-   fn io_type_supported(&self, io_type: IoType) -> bool {
-       matches!(io_type, IoType::Read | IoType::Write)
-   }
+    fn io_type_supported(&self, io_type: IoType) -> bool {
+        matches!(io_type, IoType::Read | IoType::Write)
+    }
 
-   fn new_io_channel(&mut self) -> spdk::Result<()> {
-       Ok(())
-   }
+    fn new_io_channel(&mut self) -> spdk::Result<()> {
+        Ok(())
+    }
 
-   async fn handle_io(
-       _this: &BDevImpl<Self>,
-       _channel: &IoChannelImpl<()>,
-       io: &mut IoRequest<()>,
-   ) -> spdk::Result<()> {
-       if io.io_type() == IoType::Read {
-           let dst = io.buffers_mut();
+    async fn handle_io(
+        _this: &BDevImpl<Self>,
+        _channel: &IoChannelImpl<()>,
+        io: &mut IoRequest<()>,
+    ) -> spdk::Result<()> {
+        if io.io_type() == IoType::Read {
+            let dst = io.buffers_mut();
 
-           dst[0].fill(0);
-       }
+            dst[0].fill(0);
+        }
 
-       Ok(())
-   }
+        Ok(())
+    }
 }
 
 /// Implements the NullRs block device module.
@@ -190,7 +190,7 @@ impl BDevOps for NullRs {
 struct NullRsModule;
 
 impl ModuleOps for NullRsModule {
-   type BDev = NullRs;
+    type BDev<'bdev> = NullRs;
 }
 
 /// A program that creates and writes to the NullRs block device.
@@ -210,7 +210,8 @@ async fn main() {
         write!(buf.cursor_mut(), "Hello, World!").unwrap();
 
         ch.write_at(&desc, &buf, 0).await.unwrap();
-    }).await;
+    })
+    .await;
 
     null.destroy().await.unwrap();
 }
