@@ -18,10 +18,7 @@ use crate::task::{
 /// [`RawJoinHandle`] object. The vtable is used to construct a [`RawJoinHandle`] that is embedded
 /// in a [`JoinHandle`]. The vtable is used by `JoinHandle` to orchestrate receiving the result of
 /// an asynchronous operation.
-pub(crate) struct RawJoinHandleVTable<R>
-where
-    R: 'static,
-{
+pub(crate) struct RawJoinHandleVTable<R> {
     /// This function is called when a [`JoinHandle`] is polled through its [`Future`] trait
     /// implementation. It returns a [`Poll<T>`] value indicating whether the task has completed
     /// and, if so, the result of the task.
@@ -33,11 +30,8 @@ where
 }
 
 /// A raw handle to a task that can be used to await the result of the task.
-pub(crate) struct RawJoinHandle<R>
-where
-    R: 'static,
-{
-    vtable: &'static RawJoinHandleVTable<R>,
+pub(crate) struct RawJoinHandle<R> {
+    vtable: *const RawJoinHandleVTable<R>,
     data: *mut (),
 }
 
@@ -51,7 +45,7 @@ where
 pub struct JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     raw: RawJoinHandle<R>,
     _task: PhantomData<&'a F>,
@@ -60,10 +54,10 @@ where
 impl<'a, F, R> JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     /// Creates a new `JoinHandle` with the specified `data` pointer and `vtable`.
-    const unsafe fn new(data: *mut (), vtable: &'static RawJoinHandleVTable<R>) -> Self {
+    const unsafe fn new(data: *mut (), vtable: *const RawJoinHandleVTable<R>) -> Self {
         Self {
             raw: RawJoinHandle { vtable, data },
             _task: PhantomData,
@@ -96,21 +90,21 @@ where
 impl<'a, F, R> Future for JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     type Output = R;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        unsafe { (self.raw.vtable.poll_result)(self.raw.data, cx) }
+        unsafe { ((*self.raw.vtable).poll_result)(self.raw.data, cx) }
     }
 }
 
 impl<'a, F, R> Drop for JoinHandle<'a, F, R>
 where
     F: Future<Output = R> + 'a,
-    R: 'static,
+    R: 'a,
 {
     fn drop(&mut self) {
-        unsafe { (self.raw.vtable.drop)(self.raw.data) }
+        unsafe { ((*self.raw.vtable).drop)(self.raw.data) }
     }
 }

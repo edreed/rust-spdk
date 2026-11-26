@@ -127,7 +127,7 @@ unsafe fn join_handle_drop<J: ArcTask>(data: *mut ()) {
 /// Gets the [`RawJoinHandleVTable`] used by a [`JoinHandle`] to poll a task.
 ///
 /// [`JoinHandle`]: super::JoinHandle
-pub(crate) const fn join_handle_vtable<J: ArcTask>() -> &'static RawJoinHandleVTable<J::Output> {
+pub(crate) const fn join_handle_vtable<J: ArcTask>() -> *const RawJoinHandleVTable<J::Output> {
     &RawJoinHandleVTable {
         poll_result: join_handle_poll_result::<J>,
         drop: join_handle_drop::<J>,
