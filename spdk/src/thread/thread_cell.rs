@@ -32,10 +32,10 @@ where
     ///
     /// The caller must ensure that the closure is only called from the associated thread. If this
     /// is not the case, undefined behavior may occur.
-    pub unsafe fn with_unchecked<F, R>(&self, f: F) -> R
+    pub unsafe fn with_unchecked<'a, F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut U) -> R,
-        R: 'static,
+        F: FnOnce(&mut U) -> R + 'a,
+        R: 'a,
     {
         f(unsafe { &mut *self.value.get() })
     }
@@ -44,10 +44,10 @@ where
     ///
     /// If called from the associated thread, the closure is executed immediately and its result is
     /// returned wrapped in `Some`. Otherwise, `None` is returned.
-    pub fn try_with<F, R>(&self, f: F) -> Option<R>
+    pub fn try_with<'a, F, R>(&self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut U) -> R,
-        R: 'static,
+        F: FnOnce(&mut U) -> R + 'a,
+        R: 'a,
     {
         if self.thread.is_current() {
             return Some(f(unsafe { &mut *self.value.get() }));
@@ -61,20 +61,20 @@ where
     /// If called from the associated thread, the closure is executed immediately. Otherwise, it is
     /// spawned on the associated thread and awaited.
     ///
-    /// The indirection of `fut_gen` instead of receiving an `FnOnce` directly allows for functions
+    /// The indirection of `fn_gen` instead of receiving an `FnOnce` directly allows for functions
     /// that may not be `Send` once invoked.
-    pub async fn with<'a, G, F, R>(&self, fut_gen: G) -> R
+    pub async fn with<'a, G, F, R>(&self, fn_gen: G) -> R
     where
         G: FnOnce() -> F + Send + 'a,
         F: FnOnce(&mut U) -> R + 'a,
-        R: Send + 'static,
+        R: Send + 'a,
     {
         if self.thread.is_current() {
-            return fut_gen()(unsafe { &mut *self.value.get() });
+            return fn_gen()(unsafe { &mut *self.value.get() });
         }
 
         self.thread
-            .spawn(move || async move { fut_gen()(unsafe { &mut *self.value.get() }) })
+            .spawn(move || async move { fn_gen()(unsafe { &mut *self.value.get() }) })
             .await
     }
 }
