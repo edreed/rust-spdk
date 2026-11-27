@@ -193,10 +193,10 @@ impl BDevOps for PassthruRs<'_> {
         })
     }
 
-    async fn handle_io(
-        this: &BDevImpl<Self>,
-        channel: &IoChannelImpl<PassthruRsChannel>,
-        io: &mut IoRequest<()>,
+    async fn handle_io<'io>(
+        this: &'io BDevImpl<Self>,
+        channel: &'io IoChannelImpl<Self::ChannelContext>,
+        io: &'io mut IoRequest<Self::IoContext>,
     ) -> IoResult<()> {
         let base_desc = this.ctx().desc();
         let base_ch = &channel.ctx().ch;

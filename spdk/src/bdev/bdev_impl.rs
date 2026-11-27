@@ -64,10 +64,10 @@ pub trait BDevOps: Send + Sync {
     }
 
     /// Handles an I/O request to the BDev.
-    fn handle_io(
-        this: &BDevImpl<Self>,
-        channel: &IoChannelImpl<Self::ChannelContext>,
-        io: &mut IoRequest<Self::IoContext>,
+    fn handle_io<'io>(
+        this: &'io BDevImpl<Self>,
+        channel: &'io IoChannelImpl<Self::ChannelContext>,
+        io: &'io mut IoRequest<Self::IoContext>,
     ) -> impl Future<Output = std::result::Result<(), Self::IoError>>
     where
         Self: Sized;
@@ -95,12 +95,12 @@ where
         unimplemented!("new_io_channel called on uninitialized value");
     }
 
-    async fn handle_io(
-        _this: &BDevImpl<Self>,
-        _channel: &IoChannelImpl<Self::ChannelContext>,
-        _io: &mut IoRequest<Self::IoContext>,
+    async fn handle_io<'io>(
+        _this: &'io BDevImpl<Self>,
+        _channel: &'io IoChannelImpl<Self::ChannelContext>,
+        _io: &'io mut IoRequest<Self::IoContext>,
     ) -> Result<()> {
-        unimplemented!("submit_request called on uninitialized value");
+        unimplemented!("handle_io called on uninitialized value");
     }
 }
 

@@ -22,22 +22,22 @@ use spdk::{
 
 /// Implements the Echo block device.
 #[derive(Default)]
-struct Echo {
+struct Echo<'io> {
     reader: Condvar,
     writer: Condvar,
-    src_buf: SpinLock<Option<&'static [IoSlice<'static>]>>,
+    src_buf: SpinLock<Option<&'io [IoSlice<'io>]>>,
 }
 
-impl Echo {
+impl Echo<'_> {
     async fn new_device(name: &CStr) -> spdk::Result<BDev<Owned>> {
         EchoModule::new_bdev_builder(name, 4096, 2).build().await
     }
 }
 
-unsafe impl Send for Echo {}
-unsafe impl Sync for Echo {}
+unsafe impl Send for Echo<'_> {}
+unsafe impl Sync for Echo<'_> {}
 
-impl Echo {
+impl<'io> Echo<'io> {
     // The `reader `condition variable releases the lock during the await.
     async fn do_read(
         &self,
@@ -77,7 +77,7 @@ impl Echo {
     async fn do_write(
         &self,
         _channel: &IoChannelImpl<()>,
-        io: &mut IoRequest<()>,
+        io: &'io mut IoRequest<()>,
     ) -> spdk::Result<()> {
         self.writer
             .wait_on_mutex(&self.src_buf, |src_buf| {
@@ -85,10 +85,7 @@ impl Echo {
                     return ControlFlow::Continue(());
                 }
 
-                // SAFETY: We will wait for the reader to consume the buffer before returning from `do_write`.
-                unsafe {
-                    *src_buf = Some(transmute::<&[IoSlice<'_>], &[IoSlice<'_>]>(io.buffers()))
-                };
+                *src_buf = Some(io.buffers());
 
                 ControlFlow::Break(())
             })
@@ -110,7 +107,7 @@ impl Echo {
     }
 }
 
-impl BDevOps for Echo {
+impl BDevOps for Echo<'_> {
     type ChannelContext = ();
     type IoContext = ();
     type IoError = Errno;
@@ -127,11 +124,15 @@ impl BDevOps for Echo {
         Ok(())
     }
 
-    async fn handle_io(
-        this: &BDevImpl<Self>,
-        channel: &IoChannelImpl<Self::ChannelContext>,
-        io: &mut IoRequest<Self::IoContext>,
+    async fn handle_io<'io>(
+        this: &'io BDevImpl<Self>,
+        channel: &'io IoChannelImpl<Self::ChannelContext>,
+        io: &'io mut IoRequest<Self::IoContext>,
     ) -> spdk::Result<()> {
+        // SAFETY: We "extend" the lifetime parameter of the `Echo` structure to match the I/O
+        // lifetime since this is its intended purpose.
+        let this = unsafe { transmute::<&BDevImpl<Echo<'_>>, &BDevImpl<Echo<'io>>>(this) };
+
         match io.io_type() {
             IoType::Read => this.ctx().do_read(channel, io).await,
             IoType::Write => this.ctx().do_write(channel, io).await,
@@ -146,7 +147,7 @@ impl BDevOps for Echo {
 struct EchoModule;
 
 impl ModuleOps for EchoModule {
-    type BDev<'bdev> = Echo;
+    type BDev<'io> = Echo<'io>;
 
     async fn init(&self) {
         task::yield_now().await;

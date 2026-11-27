@@ -48,10 +48,10 @@ impl BDevOps for NullRs {
         Ok(())
     }
 
-    async fn handle_io(
-        _this: &BDevImpl<Self>,
-        _channel: &IoChannelImpl<()>,
-        io: &mut IoRequest<()>,
+    async fn handle_io<'io>(
+        _this: &'io BDevImpl<Self>,
+        _channel: &'io IoChannelImpl<Self::ChannelContext>,
+        io: &'io mut IoRequest<Self::IoContext>,
     ) -> spdk::Result<()> {
         if io.io_type() == IoType::Read {
             let dst = io.buffers_mut();
